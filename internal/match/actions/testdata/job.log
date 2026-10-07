@@ -1,0 +1,50 @@
+﻿2026-10-07T12:35:18.6565846Z Current runner version: '2.337.0'
+2026-10-07T12:35:18.6591498Z ##[group]Runner Image Provisioner
+2026-10-07T12:35:18.6592446Z Hosted Compute Agent
+2026-10-07T12:35:18.6593155Z Version: 20260901.588
+2026-10-07T12:35:18.6593819Z Commit: f88ec8081b781fac6c440065ac7ff9e710ce3d0b
+2026-10-07T12:35:18.6594613Z Build Date: 2026-09-01T19:56:44Z
+2026-10-07T12:35:18.6595428Z Worker ID: {14dd9e2b-48fb-4bf7-8c68-7dd3ce1b308b}
+2026-10-07T12:35:18.6596233Z Azure Region: westus
+2026-10-07T12:35:18.6596876Z ##[endgroup]
+2026-10-07T12:35:18.6598554Z ##[group]Operating System
+2026-10-07T12:35:18.6599209Z Ubuntu
+2026-10-07T12:35:18.6599846Z 24.04.5
+2026-10-07T12:35:18.6600382Z LTS
+2026-10-07T12:35:18.6600963Z ##[endgroup]
+2026-10-07T12:35:18.6601778Z ##[group]Runner Image
+2026-10-07T12:35:18.6602441Z Image: ubuntu-24.04
+2026-10-07T12:35:18.6603121Z Version: 20260927.320.1
+2026-10-07T12:35:18.6604373Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260927.320/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-07T12:35:18.6606024Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260927.320
+2026-10-07T12:35:18.6607013Z ##[endgroup]
+2026-10-07T12:35:18.6608187Z ##[group]GITHUB_TOKEN Permissions
+2026-10-07T12:35:18.6610083Z Issues: write
+2026-10-07T12:35:18.6610825Z Metadata: read
+2026-10-07T12:35:18.6611781Z ##[endgroup]
+2026-10-07T12:35:18.6613965Z Secret source: Actions
+2026-10-07T12:35:18.6615387Z Cache mode: write
+2026-10-07T12:35:18.6616141Z Prepare workflow directory
+2026-10-07T12:35:18.7007479Z Prepare all required actions
+2026-10-07T12:35:18.7054696Z Getting action download info
+2026-10-07T12:35:19.0290553Z Download action repository 'lee-dohm/no-response@9bb0a4b5e6a45046f00353d5de7d90fb8bd773bb' (SHA:9bb0a4b5e6a45046f00353d5de7d90fb8bd773bb)
+2026-10-07T12:35:19.4152779Z Uses: desktop/gh-cli-and-desktop-shared-workflows/.github/workflows/triage-no-response-close.yml@df758d511475056e61d6d3a123621a854f10c646
+2026-10-07T12:35:19.4157708Z ##[group] Inputs
+2026-10-07T12:35:19.4159017Z   days_until_close: 14
+2026-10-07T12:35:19.4159736Z   response_required_label: more-info-needed
+2026-10-07T12:35:19.4160449Z ##[endgroup]
+2026-10-07T12:35:19.4161436Z Complete job name: no-response / noResponse
+2026-10-07T12:35:19.5021918Z ##[group]Run lee-dohm/no-response@9bb0a4b5e6a45046f00353d5de7d90fb8bd773bb
+2026-10-07T12:35:19.5023087Z with:
+2026-10-07T12:35:19.5027010Z   token: ***
+2026-10-07T12:35:19.5029246Z   closeComment: Thank you for your issue!
+We haven't gotten a response to our questions above. With only the information that is currently in the issue, we don't have enough information to take action. We're going to close this but don't hesitate to reach out if you have or find the answers we need. If you answer our questions above, this issue will automatically reopen.
+
+2026-10-07T12:35:19.5031719Z   daysUntilClose: 14
+2026-10-07T12:35:19.5032257Z   responseRequiredLabel: more-info-needed
+2026-10-07T12:35:19.5032874Z   responseRequiredColor: ffffff
+2026-10-07T12:35:19.5033663Z ##[endgroup]
+2026-10-07T12:35:19.5743856Z (node:2151) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-10-07T12:35:19.5746795Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-07T12:35:23.7006717Z Cleaning up orphan processes
+2026-10-07T12:35:23.7300911Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: lee-dohm/no-response@9bb0a4b5e6a45046f00353d5de7d90fb8bd773bb. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
