@@ -1,0 +1,108 @@
+{
+  "incident": {
+    "id": "axios-2026-03",
+    "title": "axios malicious release",
+    "window": {
+      "start": "2026-03-31T00:21:00Z",
+      "end": "2026-03-31T03:21:00Z"
+    },
+    "refs": [
+      "https://osv.dev/vulnerability/MAL-2026-2307"
+    ]
+  },
+  "incident_id": "axios-2026-03",
+  "window_start": "2026-03-31T00:21:00Z",
+  "window_end": "2026-03-31T03:21:00Z",
+  "runs_scanned": 3,
+  "jobs_scanned": 5,
+  "findings": [
+    {
+      "run": {
+        "repo": "o/app",
+        "run_id": 42,
+        "workflow": ".github/workflows/ci.yml",
+        "head_sha": "abcdef1234567",
+        "run_url": "https://github.com/o/app/actions/runs/42",
+        "created_at": "2026-03-31T01:21:00Z",
+        "job_id": 7,
+        "job": "build",
+        "job_url": "https://github.com/o/app/actions/runs/42/job/7"
+      },
+      "status": "AFFECTED",
+      "evidence": [
+        {
+          "kind": "npm",
+          "detail": "axios@1.14.1 in package-lock.json at abcdef1"
+        }
+      ],
+      "exposure": {
+        "secrets": [
+          "NPM_TOKEN"
+        ],
+        "id_token_write": true,
+        "job_matched": true
+      }
+    },
+    {
+      "run": {
+        "repo": "o/old",
+        "run_id": 9,
+        "workflow": ".github/workflows/ci.yml",
+        "head_sha": "",
+        "run_url": "",
+        "created_at": "0001-01-01T00:00:00Z"
+      },
+      "status": "UNCHECKED",
+      "evidence": [
+        {
+          "kind": "note",
+          "detail": "jobs unavailable: deleted by GitHub retention (HTTP 410)"
+        }
+      ]
+    }
+  ],
+  "rotation": [
+    {
+      "name": "OIDC token (id-token: write)",
+      "tier": 1,
+      "reason": "review cloud roles",
+      "runs": [
+        {
+          "repo": "o/app",
+          "run_id": 42,
+          "workflow": ".github/workflows/ci.yml",
+          "head_sha": "abcdef1234567",
+          "run_url": "https://github.com/o/app/actions/runs/42",
+          "created_at": "2026-03-31T01:21:00Z",
+          "job_id": 7,
+          "job": "build",
+          "job_url": "https://github.com/o/app/actions/runs/42/job/7"
+        }
+      ]
+    },
+    {
+      "name": "NPM_TOKEN",
+      "tier": 2,
+      "reason": "rotate",
+      "runs": [
+        {
+          "repo": "o/app",
+          "run_id": 42,
+          "workflow": ".github/workflows/ci.yml",
+          "head_sha": "abcdef1234567",
+          "run_url": "https://github.com/o/app/actions/runs/42",
+          "created_at": "2026-03-31T01:21:00Z",
+          "job_id": 7,
+          "job": "build",
+          "job_url": "https://github.com/o/app/actions/runs/42/job/7"
+        }
+      ]
+    }
+  ],
+  "skipped": [
+    {
+      "repo": "o/private",
+      "reason": "no access (HTTP 403/404)"
+    }
+  ]
+}
