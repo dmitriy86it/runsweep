@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/dmitriy86it/runsweep/internal/incident"
@@ -211,6 +212,16 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			switch {
 			case logErr == nil:
 				st, ev = actions.MatchLog(log, s.inc.Actions)
+				// A log without download records (truncated, unexpected format) proves nothing about remote uses.
+				uses := allUses(wf)
+				if wj != nil {
+					uses = wj.Uses
+				}
+				if len(actions.ParseDownloads(log)) == 0 && slices.ContainsFunc(uses, remote) {
+					ust, uev := actions.MatchUses(uses, s.inc.Actions)
+					st = model.Worse(model.Worse(st, ust), model.Unchecked)
+					ev = append(append(ev, uev...), note("job log has no action download records"))
+				}
 			case wj != nil:
 				st, ev = actions.MatchUses(wj.Uses, s.inc.Actions)
 			case wf != nil: // job not identified: judge by every job's uses
@@ -249,7 +260,15 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 	return out, len(jobs), nil
 }
 
+// remote reports whether a `uses:` is downloaded by the runner (not a local path or docker image).
+func remote(u string) bool {
+	return !strings.HasPrefix(u, "./") && !strings.HasPrefix(u, "docker://")
+}
+
 func allUses(wf *workflow.Workflow) []string {
+	if wf == nil {
+		return nil
+	}
 	ids := make([]string, 0, len(wf.Jobs))
 	for id := range wf.Jobs {
 		ids = append(ids, id)

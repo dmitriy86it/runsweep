@@ -40,7 +40,8 @@ func fixture() *sourcetest.Fake {
 	f.Jobs[1] = []source.Job{{ID: 10, Name: "build"}, {ID: 11, Name: "lint"}}
 	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(ciYAML))
 	f.AddFile("o/a", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
-	f.Logs[10] = "2026-03-31T01:00:00Z ##[group]GITHUB_TOKEN Permissions\n2026-03-31T01:00:00Z Contents: write\n2026-03-31T01:00:00Z ##[endgroup]\n"
+	f.Logs[10] = "2026-03-31T01:00:00Z Download action repository 'tj-actions/changed-files@v45' (SHA:1111111111111111111111111111111111111111)\n" +
+		"2026-03-31T01:00:00Z ##[group]GITHUB_TOKEN Permissions\n2026-03-31T01:00:00Z Contents: write\n2026-03-31T01:00:00Z ##[endgroup]\n"
 	f.Logs[11] = ""
 	return f
 }
@@ -306,5 +307,22 @@ jobs:
 		if got[k] != v {
 			t.Fatalf("%s: %v (all: %v)", k, got[k], got)
 		}
+	}
+}
+
+func TestScanLogWithoutDownloadsFallsBackToUses(t *testing.T) {
+	f := fixture()
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1] // no npm hit
+	f.Logs[10] = "2026-03-31T01:00:00Z log without download records\n"
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	res, err := Run(context.Background(), f, actOnly, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// build's log has no download records but the job uses tj-actions/changed-files@v45 (mutable ref);
+	// lint has no remote uses and stays clean.
+	if len(res.Findings) != 1 || res.Findings[0].Run.Job != "build" || res.Findings[0].Status != model.Possible ||
+		!hasNote(res.Findings[0], "job log has no action download records") {
+		t.Fatalf("%+v", res.Findings)
 	}
 }
