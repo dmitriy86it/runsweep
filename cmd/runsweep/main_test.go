@@ -203,3 +203,13 @@ func TestAllSkippedWithOrgOverlap(t *testing.T) {
 		t.Fatalf("got %d: %s", code, errb.String())
 	}
 }
+
+func TestEmptyOrgExitsTwo(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--org", "o"}, &out, &errb, fakeDeps(sourcetest.New())); code != 2 {
+		t.Fatalf("got %d", code)
+	}
+	if !strings.Contains(errb.String(), "no repositories to scan") || out.Len() == 0 {
+		t.Fatalf("stderr=%q stdout=%q", errb.String(), out.String())
+	}
+}

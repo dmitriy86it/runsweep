@@ -170,6 +170,9 @@ func scanCmd(d deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if res.ReposTargeted == 0 {
+				return errors.New("no repositories to scan (does the token have access to the organization?)")
+			}
 			if n := len(res.Skipped); n > 0 {
 				noun := "repositories"
 				if n == 1 {
