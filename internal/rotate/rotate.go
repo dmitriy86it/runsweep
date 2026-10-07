@@ -12,8 +12,8 @@ import (
 
 // Name-based tiers are a heuristic; the report says so.
 var (
-	cloudRe   = regexp.MustCompile(`(?i)(AWS|AZURE|ARM_|GCP|GOOGLE|GCLOUD|GKE|SERVICE_ACCOUNT|DIGITALOCEAN|CLOUDFLARE|HCLOUD|OCI_)`)
-	publishRe = regexp.MustCompile(`(?i)(NPM|NODE_AUTH|PYPI|TWINE|DOCKER|REGISTRY|GHCR|PAT|GH_TOKEN|DEPLOY|SSH|KUBE|HELM|SIGN|GPG|COSIGN|RELEASE|PUBLISH|CARGO|RUBYGEMS|NUGET)`)
+	cloudRe   = regexp.MustCompile(`(?i)(AWS|AZURE|ARM_|GCP|GOOGLE|GCLOUD|GKE|SERVICE_ACCOUNT|DIGITALOCEAN|CLOUDFLARE|HCLOUD|OCI_|SECRET_ACCESS_KEY|ACCESS_KEY_ID)`)
+	publishRe = regexp.MustCompile(`(?i)(NPM|NODE_AUTH|PYPI|TWINE|DOCKER|REGISTRY|GHCR|PAT|GH_TOKEN|DEPLOY|SSH|KUBE|HELM|SIGN|GPG|COSIGN|RELEASE|PUBLISH|CARGO|RUBYGEMS|NUGET|PERSONAL_ACCESS|ACCESS_TOKEN|VAULT|TF_|TERRAFORM|PULUMI|PRIVATE_KEY|VERCEL|NETLIFY|FLY_|HEROKU|ARGOCD|PASSWORD)`)
 )
 
 func Tier(secret string) int {
@@ -43,6 +43,12 @@ func Plan(findings []model.Finding) []model.RotationItem {
 		if tier < it.Tier {
 			it.Tier, it.Reason = tier, reason
 		}
+		// Skip duplicate runs
+		for _, existing := range it.Runs {
+			if existing.Repo == run.Repo && existing.RunID == run.RunID && existing.JobID == run.JobID && existing.Job == run.Job {
+				return
+			}
+		}
 		it.Runs = append(it.Runs, run)
 	}
 	for _, f := range findings {
@@ -63,6 +69,9 @@ func Plan(findings []model.Finding) []model.RotationItem {
 				"reusable workflow received every secret — list them in repo/org settings and rotate", f.Run)
 		}
 		for _, s := range e.Secrets {
+			if s == "GITHUB_TOKEN" {
+				continue
+			}
 			t := Tier(s)
 			add(s, t, reasons[t], f.Run)
 		}
@@ -80,6 +89,16 @@ func Plan(findings []model.Finding) []model.RotationItem {
 	}
 	out := make([]model.RotationItem, 0, len(items))
 	for _, it := range items {
+		// Sort runs within each item by (Repo, RunID, Job)
+		sort.Slice(it.Runs, func(a, b int) bool {
+			if it.Runs[a].Repo != it.Runs[b].Repo {
+				return it.Runs[a].Repo < it.Runs[b].Repo
+			}
+			if it.Runs[a].RunID != it.Runs[b].RunID {
+				return it.Runs[a].RunID < it.Runs[b].RunID
+			}
+			return it.Runs[a].Job < it.Runs[b].Job
+		})
 		out = append(out, *it)
 	}
 	sort.Slice(out, func(a, b int) bool {
