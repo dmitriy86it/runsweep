@@ -25,6 +25,9 @@ const (
 
 var maxLogBytes int64 = 64 << 20 // var so tests can shrink it
 
+// backoff between retries of transient failures (network errors, HTTP 5xx).
+var backoff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
+
 // Client is a GitHub REST API client implementing source.Source.
 type Client struct {
 	gh    *github.Client
@@ -75,8 +78,14 @@ func split(repo string) (string, string) {
 	return o, r
 }
 
-// do runs f with the concurrency limit, retrying on rate limits and mapping errors.
+// transient reports a failure worth retrying: no HTTP response (network error) or HTTP 5xx.
+func transient(ctx context.Context, status int, err error) bool {
+	return ctx.Err() == nil && (status == 0 && err != nil || status >= 500)
+}
+
+// do runs f with the concurrency limit, retrying on rate limits and transient errors and mapping errors.
 func (c *Client) do(ctx context.Context, f func() (*github.Response, error)) error {
+	tries := 0
 	for attempt := 0; ; attempt++ {
 		select {
 		case c.sem <- struct{}{}:
@@ -91,6 +100,21 @@ func (c *Client) do(ctx context.Context, f func() (*github.Response, error)) err
 		var rl *github.RateLimitError
 		var ab *github.AbuseRateLimitError
 		var wait time.Duration
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
+		if transient(ctx, status, err) {
+			if tries == len(backoff) {
+				return mapErr(resp, err)
+			}
+			c.Logf("transient error, retrying in %s: %v", backoff[tries], err)
+			if err := c.Sleep(ctx, backoff[tries]); err != nil {
+				return err
+			}
+			tries++
+			continue
+		}
 		switch {
 		case errors.As(err, &rl):
 			wait = time.Until(rl.Rate.Reset.Time) + time.Second
@@ -243,30 +267,47 @@ func (c *Client) JobLog(ctx context.Context, repo string, jobID int64) (string, 
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	for try := 0; ; try++ {
+		log, status, err := c.downloadLog(ctx, u.String())
+		if !transient(ctx, status, err) && status != http.StatusTooManyRequests {
+			return log, err
+		}
+		if try == len(backoff) {
+			return "", fmt.Errorf("%w: %v", source.ErrIncomplete, err)
+		}
+		c.Logf("job log download failed, retrying in %s: %v", backoff[try], err)
+		if err := c.Sleep(ctx, backoff[try]); err != nil {
+			return "", err
+		}
+	}
+}
+
+// downloadLog fetches the signed log URL; status is 0 when no HTTP response was received.
+func (c *Client) downloadLog(ctx context.Context, u string) (string, int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return "", err
+		return "", -1, err // not retryable
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", err
+		return "", 0, fmt.Errorf("download job log: %w", errors.Unwrap(err)) // drop the signed URL from *url.Error
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusGone, http.StatusNotFound:
-		return "", source.ErrGone
+		return "", resp.StatusCode, source.ErrGone
 	default:
-		return "", fmt.Errorf("download job log: HTTP %d", resp.StatusCode)
+		return "", resp.StatusCode, fmt.Errorf("download job log: HTTP %d", resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxLogBytes+1))
 	if err != nil {
-		return "", err
+		return "", 0, err // body cut mid-transfer: retry
 	}
 	if int64(len(b)) > maxLogBytes {
-		return "", fmt.Errorf("%w: job log exceeds %d MB", source.ErrIncomplete, maxLogBytes>>20)
+		return "", resp.StatusCode, fmt.Errorf("%w: job log exceeds %d MB", source.ErrIncomplete, maxLogBytes>>20)
 	}
-	return string(b), nil
+	return string(b), resp.StatusCode, nil
 }
 
 // Tree returns the git tree of a commit.

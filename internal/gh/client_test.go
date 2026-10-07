@@ -263,3 +263,79 @@ func TestPagination(t *testing.T) {
 		t.Fatalf("%v %v", jobs, err)
 	}
 }
+
+func recordSleeps(c *Client) *[]time.Duration {
+	var mu sync.Mutex
+	var d []time.Duration
+	c.Sleep = func(_ context.Context, x time.Duration) error { mu.Lock(); d = append(d, x); mu.Unlock(); return nil }
+	return &d
+}
+
+func TestRetriesTransientErrors(t *testing.T) {
+	var n atomic.Int32
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch n.Add(1) {
+		case 1:
+			w.Header().Set("Connection", "close") // next request on a fresh connection, which the transport never retries
+			w.WriteHeader(http.StatusBadGateway)
+		case 2: // network error: drop the connection
+			conn, _, _ := w.(http.Hijacker).Hijack()
+			_ = conn.Close()
+		default:
+			_, _ = fmt.Fprint(w, `{"total_count":1,"jobs":[{"id":5,"name":"build"}]}`)
+		}
+	}))
+	sleeps := recordSleeps(c)
+	jobs, err := c.ListJobs(context.Background(), "o/r", 1)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("%v %v", jobs, err)
+	}
+	if fmt.Sprint(*sleeps) != "[1s 2s]" {
+		t.Fatalf("backoff %v", *sleeps)
+	}
+}
+
+func TestPersistent5xxGivesUp(t *testing.T) {
+	var n atomic.Int32
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		n.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	sleeps := recordSleeps(c)
+	if _, err := c.ListJobs(context.Background(), "o/r", 1); err == nil {
+		t.Fatal("want error")
+	}
+	if n.Load() != 4 || fmt.Sprint(*sleeps) != "[1s 2s 4s]" {
+		t.Fatalf("calls %d backoff %v", n.Load(), *sleeps)
+	}
+}
+
+func TestJobLogDownloadRetries(t *testing.T) {
+	var hits atomic.Int32
+	var status atomic.Int32 // status served after the first 503
+	status.Store(http.StatusOK)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if hits.Add(1) == 1 || status.Load() != http.StatusOK {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = fmt.Fprint(w, "log body")
+	}))
+	t.Cleanup(target.Close)
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/signed", http.StatusFound)
+	}))
+	sleeps := recordSleeps(c)
+	if log, err := c.JobLog(context.Background(), "o/r", 7); err != nil || log != "log body" {
+		t.Fatalf("%q %v", log, err)
+	}
+	hits.Store(0)
+	status.Store(http.StatusServiceUnavailable)
+	*sleeps = nil
+	if _, err := c.JobLog(context.Background(), "o/r", 7); !errors.Is(err, source.ErrIncomplete) {
+		t.Fatalf("want ErrIncomplete, got %v", err)
+	}
+	if hits.Load() != 4 || fmt.Sprint(*sleeps) != "[1s 2s 4s]" {
+		t.Fatalf("hits %d backoff %v", hits.Load(), *sleeps)
+	}
+}
