@@ -245,7 +245,7 @@ func (c *Client) ListJobs(ctx context.Context, repo string, runID int64) ([]sour
 			return nil, err
 		}
 		for _, j := range jobs.Jobs {
-			out = append(out, source.Job{ID: j.GetID(), Name: j.GetName(), URL: j.GetHTMLURL()})
+			out = append(out, source.Job{ID: j.GetID(), Name: j.GetName(), URL: j.GetHTMLURL(), Conclusion: j.GetConclusion()})
 		}
 		if resp.NextPage == 0 {
 			return out, nil

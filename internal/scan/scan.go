@@ -188,6 +188,9 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 
 	var out []model.Finding
 	for _, job := range jobs {
+		if job.Conclusion == "skipped" {
+			continue // never ran: no runner, no install, no log
+		}
 		f := model.Finding{Run: ref(repo, run, job)}
 		var wj *workflow.Job
 		if wf != nil {

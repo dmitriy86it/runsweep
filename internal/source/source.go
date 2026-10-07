@@ -31,6 +31,8 @@ type Job struct {
 	ID   int64
 	Name string // display name from the API
 	URL  string
+	// Conclusion from the API ("success", "skipped", ...); empty while running.
+	Conclusion string
 }
 
 // TreeEntry is one entry of a git tree.

@@ -282,12 +282,12 @@ func TestRetriesTransientErrors(t *testing.T) {
 			conn, _, _ := w.(http.Hijacker).Hijack()
 			_ = conn.Close()
 		default:
-			_, _ = fmt.Fprint(w, `{"total_count":1,"jobs":[{"id":5,"name":"build"}]}`)
+			_, _ = fmt.Fprint(w, `{"total_count":1,"jobs":[{"id":5,"name":"build","conclusion":"skipped"}]}`)
 		}
 	}))
 	sleeps := recordSleeps(c)
 	jobs, err := c.ListJobs(context.Background(), "o/r", 1)
-	if err != nil || len(jobs) != 1 {
+	if err != nil || len(jobs) != 1 || jobs[0].Conclusion != "skipped" {
 		t.Fatalf("%v %v", jobs, err)
 	}
 	if fmt.Sprint(*sleeps) != "[1s 2s]" {

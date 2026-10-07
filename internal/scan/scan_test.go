@@ -326,3 +326,17 @@ func TestScanLogWithoutDownloadsFallsBackToUses(t *testing.T) {
 		t.Fatalf("%+v", res.Findings)
 	}
 }
+
+func TestScanSkippedJobNeverRan(t *testing.T) {
+	f := fixture()
+	f.Jobs[1] = append(f.Jobs[1], source.Job{ID: 12, Name: "lint", Conclusion: "skipped"})
+	f.Jobs[1][0].Conclusion = "skipped" // build: would be AFFECTED by npm if it had run
+	f.GoneLogs[10], f.GoneLogs[12] = true, true // GitHub has no log for skipped jobs
+	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 0 || res.JobsScanned != 3 {
+		t.Fatalf("%+v", res)
+	}
+}
