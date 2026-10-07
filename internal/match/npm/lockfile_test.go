@@ -1,13 +1,17 @@
 package npm
 
 import (
+	"maps"
 	"os"
-	"slices"
 	"testing"
 )
 
-func has(pkgs []Pkg, name, ver string) bool {
-	return slices.Contains(pkgs, Pkg{name, ver})
+func pkgSet(pkgs []Pkg) map[Pkg]bool {
+	m := make(map[Pkg]bool)
+	for _, p := range pkgs {
+		m[p] = true
+	}
+	return m
 }
 
 func TestParsers(t *testing.T) {
@@ -20,8 +24,8 @@ func TestParsers(t *testing.T) {
 		{"pnpm-lock-v9.yaml", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}, {"react-dom", "18.2.0"}}},
 		{"pnpm-lock-v6.yaml", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}}},
 		{"pnpm-lock-v5.yaml", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}}},
-		{"yarn-v1.lock", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}}},
-		{"yarn-berry.lock", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}}},
+		{"yarn-v1.lock", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}, {"is-number", "7.0.0"}, {"foo", "1.2.3"}}},
+		{"yarn-berry.lock", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}, {"is-number", "7.0.0"}, {"foo", "1.0.0"}}},
 	}
 	names := map[string]string{"package-lock-v3.json": "package-lock.json", "package-lock-v1.json": "package-lock.json",
 		"pnpm-lock-v9.yaml": "pnpm-lock.yaml", "pnpm-lock-v6.yaml": "pnpm-lock.yaml", "pnpm-lock-v5.yaml": "pnpm-lock.yaml",
@@ -35,13 +39,11 @@ func TestParsers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", c.file, err)
 		}
-		for _, w := range c.want {
-			if !has(got, w.Name, w.Version) {
-				t.Errorf("%s: missing %v in %v", c.file, w, got)
-			}
-		}
-		if has(got, "web", "") || has(got, "app", "") {
-			t.Errorf("%s: root/link entries must be skipped: %v", c.file, got)
+		// Compare exact sets: all wanted packages present, no extra packages (excluding root/link)
+		gotSet := pkgSet(got)
+		wantSet := pkgSet(c.want)
+		if !maps.Equal(gotSet, wantSet) {
+			t.Errorf("%s: got %v, want %v", c.file, got, c.want)
 		}
 	}
 }

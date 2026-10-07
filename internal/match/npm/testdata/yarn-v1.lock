@@ -7,3 +7,12 @@
 axios@^1.0.0, axios@^1.14.0:
   version "1.14.1"
   resolved "https://registry.yarnpkg.com/axios/-/axios-1.14.1.tgz"
+
+alias@npm:is-number@^7:
+  version "7.0.0"
+
+"foo@git+ssh://git@github.com/o/r.git#abc123":
+  version "1.2.3"
+
+"workspace@workspace:packages/workspace":
+  version "0.0.0-use.local"

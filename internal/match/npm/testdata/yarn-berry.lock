@@ -6,3 +6,15 @@ __metadata:
 
 "axios@npm:^1.0.0, axios@npm:^1.14.0":
   version: 1.14.1
+
+"alias@npm:is-number@^7.0.0":
+  version: 7.0.0
+
+"bar@npm:foo@^1.0.0, foo@npm:^1.0.0":
+  version: 1.0.0
+
+"foo@patch:foo@npm%3A1.0.0#...":
+  version: 1.0.0
+
+"workspace@workspace:packages/workspace":
+  version: 0.0.0-use.local

@@ -116,10 +116,11 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 	return out, nil
 }
 
-// ParseYarnLock handles yarn v1 and berry. npm aliases are reported under the alias name.
+// ParseYarnLock handles yarn v1 and berry.
 func ParseYarnLock(b []byte) ([]Pkg, error) {
 	var out []Pkg
-	var name string
+	var names map[string]bool // tracks distinct real package names for current entry
+	var version string
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 	for sc.Scan() {
@@ -127,25 +128,91 @@ func ParseYarnLock(b []byte) ([]Pkg, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		// Header line: not indented, ends with ":"
 		if !strings.HasPrefix(line, " ") && strings.HasSuffix(line, ":") {
-			spec := strings.Trim(strings.SplitN(strings.TrimSuffix(line, ":"), ",", 2)[0], `" `)
-			name = ""
-			if at := strings.LastIndex(strings.SplitN(spec, "@npm:", 2)[0], "@"); at > 0 {
-				name = spec[:at]
-			} else if i := strings.Index(spec, "@npm:"); i > 0 {
-				name = spec[:i]
+			// Emit any pending entry
+			if version != "" && names != nil {
+				for name := range names {
+					out = append(out, Pkg{name, version})
+				}
 			}
-			if spec == "__metadata" {
-				name = ""
+
+			headerContent := strings.TrimSuffix(line, ":")
+			headerContent = strings.Trim(headerContent, `" `)
+
+			// Skip __metadata
+			if headerContent == "__metadata" {
+				names = nil
+				version = ""
+				continue
 			}
+
+			// Parse all comma-separated specs
+			specs := strings.Split(headerContent, ",")
+			names = make(map[string]bool)
+			for _, spec := range specs {
+				spec = strings.TrimSpace(spec)
+				if name := extractYarnPackageName(spec); name != "" {
+					names[name] = true
+				}
+			}
+			version = ""
 			continue
 		}
+		// Version line: indented, starts with "version"
 		t := strings.TrimSpace(line)
-		if name != "" && (strings.HasPrefix(t, "version ") || strings.HasPrefix(t, "version:")) {
+		if names != nil && len(names) > 0 && (strings.HasPrefix(t, "version ") || strings.HasPrefix(t, "version:")) {
 			v := strings.Trim(strings.TrimSpace(strings.TrimLeft(strings.TrimPrefix(t, "version"), ": ")), `"`)
-			out = append(out, Pkg{name, v})
-			name = ""
+			// Skip workspace entries
+			if v != "0.0.0-use.local" {
+				version = v
+			} else {
+				names = nil
+			}
+		}
+	}
+	// Emit final pending entry
+	if version != "" && names != nil {
+		for name := range names {
+			out = append(out, Pkg{name, version})
 		}
 	}
 	return out, sc.Err()
+}
+
+// extractYarnPackageName extracts the real package name from a yarn spec.
+// Handles aliases (foo@npm:bar@^1 -> bar), scoped packages (@scope/pkg@1.0.0 -> @scope/pkg),
+// and regular names (axios@^1.0.0 -> axios).
+func extractYarnPackageName(spec string) string {
+	if spec == "" {
+		return ""
+	}
+	// Find first "@" at index > 0 (separates package name from version range)
+	at := strings.Index(spec[1:], "@")
+	if at < 0 {
+		// No @ found, bare name
+		return spec
+	}
+	at++ // adjust for substring offset
+	name := spec[:at]
+	remainder := spec[at+1:] // skip the "@"
+
+	// Check if this is an alias (starts with "npm:")
+	if strings.HasPrefix(remainder, "npm:") {
+		// Extract what comes after "npm:"
+		afterNpm := remainder[4:] // skip "npm:"
+
+		// If there's an "@" at index > 0, it means there's a real package name
+		// e.g., "npm:is-number@^7" -> extract "is-number"
+		// For scoped: "npm:@scope/pkg@range" -> find @ at index > 0 in afterNpm
+		if i := strings.Index(afterNpm[1:], "@"); i >= 0 {
+			return afterNpm[:i+1]
+		}
+
+		// No second @, so this is not an alias (e.g., "@scope/pkg@npm:^2.0.0")
+		// Return the original package name
+		return name
+	}
+
+	return name
 }
