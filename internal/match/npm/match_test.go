@@ -161,3 +161,29 @@ func TestMatchWorkspaceRootLockfile(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchEvidenceDeterministic(t *testing.T) {
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{
+		"node_modules/a":{"version":"1.0.0"},"node_modules/b":{"version":"1.0.0"},"node_modules/c":{"version":"1.0.0"},
+		"node_modules/d":{"version":"1.0.0"},"node_modules/x/node_modules/a":{"version":"2.0.0"},"node_modules/e":{"version":"1.0.0"}}}`))
+	var bad []incident.NPMPackage
+	for _, n := range []string{"a", "b", "c", "d", "e"} {
+		bad = append(bad, incident.NPMPackage{Name: n, Versions: []string{"1.0.0", "2.0.0"}})
+	}
+	var first []model.Evidence
+	for i := range 20 {
+		r, err := Match(context.Background(), f, "o/r", "s1", bad)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = r.Evidence
+		} else if !slices.Equal(first, r.Evidence) {
+			t.Fatalf("evidence order changed:\n%v\n%v", first, r.Evidence)
+		}
+	}
+	if len(first) != 6 || !strings.HasPrefix(first[0].Detail, "a@1.0.0 ") || !strings.HasPrefix(first[1].Detail, "a@2.0.0 ") {
+		t.Fatalf("%v", first)
+	}
+}

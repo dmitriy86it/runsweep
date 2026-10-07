@@ -4,6 +4,7 @@ package npm
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -35,17 +36,22 @@ func InNodeModules(p string) bool {
 	return p == "node_modules" || strings.HasPrefix(p, "node_modules/") || strings.Contains(p, "/node_modules/")
 }
 
-// ParseLockfile dispatches on the file's base name.
+// ParseLockfile dispatches on the file's base name. Packages come back sorted and distinct.
 func ParseLockfile(p string, b []byte) ([]Pkg, error) {
+	var pkgs []Pkg
+	var err error
 	switch path.Base(p) {
 	case "package-lock.json", "npm-shrinkwrap.json":
-		return ParsePackageLock(b)
+		pkgs, err = ParsePackageLock(b)
 	case "pnpm-lock.yaml":
-		return ParsePnpmLock(b)
+		pkgs, err = ParsePnpmLock(b)
 	case "yarn.lock":
-		return ParseYarnLock(b)
+		pkgs, err = ParseYarnLock(b)
+	default:
+		return nil, fmt.Errorf("not a lockfile: %s", p)
 	}
-	return nil, fmt.Errorf("not a lockfile: %s", p)
+	slices.SortFunc(pkgs, func(a, b Pkg) int { return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Version, b.Version)) })
+	return slices.Compact(pkgs), err
 }
 
 type depV1 struct {
