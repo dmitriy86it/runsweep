@@ -9,15 +9,15 @@ import (
 )
 
 type Fake struct {
-	Orgs      map[string][]string             // org -> repos
-	Runs      map[string][]source.Run         // repo -> runs
-	Jobs      map[int64][]source.Job          // run ID -> jobs
-	Logs      map[int64]string                // job ID -> log
-	GoneLogs  map[int64]bool                  // job ID -> 410
-	Trees     map[string][]source.TreeEntry   // repo@sha -> entries
-	Truncated map[string]bool                 // repo@sha
-	Blobs     map[string][]byte               // blob SHA -> content
-	NoAccess  map[string]bool                 // repo -> 403
+	Orgs      map[string][]string           // org -> repos
+	Runs      map[string][]source.Run       // repo -> runs
+	Jobs      map[int64][]source.Job        // run ID -> jobs
+	Logs      map[int64]string              // job ID -> log
+	GoneLogs  map[int64]bool                // job ID -> 410
+	Trees     map[string][]source.TreeEntry // repo@sha -> entries
+	Truncated map[string]bool               // repo@sha
+	Blobs     map[string][]byte             // blob SHA -> content
+	NoAccess  map[string]bool               // repo -> 403
 }
 
 func New() *Fake {

@@ -1,0 +1,15 @@
+id: axios-2026-03
+title: "axios 1.14.1 / 0.30.4 malicious release"
+# start: npm registry time["1.14.1"] = 2026-03-31T00:21:58.168Z (rounded down to the second).
+# end: 03:15:30Z is APPROXIMATE: StepSecurity infers the unpublish time from the registry
+# document's `modified` field; npm exposes no per-version unpublish timestamp.
+window: {start: 2026-03-31T00:21:58Z, end: 2026-03-31T03:15:30Z}
+npm:
+  - {name: axios, versions: ["1.14.1", "0.30.4"]}
+iocs:
+  domains: [sfrclak.com]
+  ips: [142.11.206.73]
+refs:
+  - https://osv.dev/vulnerability/MAL-2026-2307
+  - https://registry.npmjs.org/axios
+  - https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan

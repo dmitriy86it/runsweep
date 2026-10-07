@@ -1,0 +1,13 @@
+id: tj-actions-2025-03
+title: "tj-actions/changed-files compromised (CVE-2025-30066)"
+# start: StepSecurity says the incident started ~16:00 UTC on 2025-03-14 (approximate, "around 9:00 AM PT").
+# end: 2025-03-15 14:00 UTC, when GitHub removed the action (StepSecurity timeline); clean versions restored 22:00 UTC.
+window: {start: 2025-03-14T16:00:00Z, end: 2025-03-15T14:00:00Z}
+actions:
+  # malicious commit; tags v1.0.0, v35.7.7-sec, v44.5.1 (and most others) were moved to it
+  - {uses: tj-actions/changed-files, shas: ["0e58ed8671d6b60d0890c21b07f8835ace038e67"]}
+iocs:
+  domains: [gist.githubusercontent.com]
+refs:
+  - https://github.com/advisories/GHSA-mrrh-fwg8-r2c3
+  - https://www.stepsecurity.io/blog/harden-runner-detection-tj-actions-changed-files-action-is-compromised

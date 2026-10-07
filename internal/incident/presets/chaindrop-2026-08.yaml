@@ -1,0 +1,35 @@
+id: chaindrop-2026-08
+title: "Shai-Hulud wave: keyv / cacheable npm family (2026-08-04)"
+# start: earliest npm registry publish time among listed versions (keyv@6.0.0 = 2026-08-04T09:35:00.763Z).
+# end: 2026-08-05T23:59:59Z is APPROXIMATE. No source gives a removal time; this is end of the day
+# of Aikido's update (2026-08-05). Widened on purpose so the sweep errs toward over-reporting.
+# Only the 11 packages named in Aikido's primary list; the worm spread to 444+ packages (1381 versions),
+# which are not enumerated here. Each version has its own OSV MAL entry (see MAL ids in refs).
+window: {start: 2026-08-04T09:35:00Z, end: 2026-08-05T23:59:59Z}
+npm:
+  - {name: keyv, versions: ["6.0.0"]}
+  - {name: flat-cache, versions: ["6.1.24"]}
+  - {name: file-entry-cache, versions: ["11.1.6"]}
+  - {name: cacheable-request, versions: ["13.0.20"]}
+  - {name: cacheable, versions: ["2.5.1"]}
+  - {name: "@cacheable/memory", versions: ["2.2.1"]}
+  - {name: cache-manager, versions: ["7.2.10"]}
+  - {name: "@cacheable/node-cache", versions: ["3.1.2"]}
+  - {name: "@cacheable/utils", versions: ["2.5.1"]}
+  - {name: "@cacheable/net", versions: ["2.1.1"]}
+  - {name: ecto, versions: ["5.0.1"]}
+iocs:
+  files: [setup.mjs, Math_Symbol.js, math_init.js]
+refs:
+  - https://www.aikido.dev/blog/keyv-and-friends-compromised-in-npm-supply-chain-attack
+  - https://osv.dev/vulnerability/MAL-2026-11524
+  - https://osv.dev/vulnerability/MAL-2026-11971
+  - https://osv.dev/vulnerability/MAL-2026-11970
+  - https://osv.dev/vulnerability/MAL-2026-11964
+  - https://osv.dev/vulnerability/MAL-2026-11963
+  - https://osv.dev/vulnerability/MAL-2026-11558
+  - https://osv.dev/vulnerability/MAL-2026-11523
+  - https://osv.dev/vulnerability/MAL-2026-11560
+  - https://osv.dev/vulnerability/MAL-2026-11561
+  - https://osv.dev/vulnerability/MAL-2026-11559
+  - https://osv.dev/vulnerability/MAL-2026-11966
