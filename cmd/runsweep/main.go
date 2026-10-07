@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -43,8 +45,38 @@ func newGitHub(token string) (source.Source, error) {
 	return c, nil
 }
 
+var (
+	repoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	orgRe  = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+)
+
+func validateTargets(repos []string, org string) error {
+	for _, r := range repos {
+		owner, name, _ := strings.Cut(r, "/")
+		if !repoRe.MatchString(r) || owner == "." || owner == ".." || name == "." || name == ".." {
+			return fmt.Errorf("invalid --repo %q: want owner/name", r)
+		}
+	}
+	if org != "" && !orgRe.MatchString(org) {
+		return fmt.Errorf("invalid --org %q", org)
+	}
+	return nil
+}
+
+// counting records how many repositories the scan will cover.
+type counting struct {
+	source.Source
+	orgRepos int
+}
+
+func (c *counting) ListRepos(ctx context.Context, org string) ([]string, error) {
+	r, err := c.Source.ListRepos(ctx, org)
+	c.orgRepos = len(r)
+	return r, err
+}
+
 func githubToken() (string, error) {
-	if t := os.Getenv("GITHUB_TOKEN"); t != "" {
+	if t := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); t != "" {
 		return t, nil
 	}
 	out, err := exec.Command("gh", "auth", "token").Output()
@@ -83,6 +115,9 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		return 0
 	case errors.Is(err, errFindings):
 		return 1
+	case errors.Is(err, context.Canceled):
+		fmt.Fprintln(stderr, "error: interrupted")
+		return 2
 	default:
 		fmt.Fprintln(stderr, "error:", err)
 		return 2
@@ -103,6 +138,9 @@ func scanCmd(d deps) *cobra.Command {
 			}
 			if format != "md" && format != "json" {
 				return fmt.Errorf("--format must be md or json, got %q", format)
+			}
+			if err := validateTargets(repos, org); err != nil {
+				return err
 			}
 			inc, err := incident.Load(incRef)
 			if err != nil {
@@ -128,10 +166,11 @@ func scanCmd(d deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			src, err := d.newSource(token)
+			base, err := d.newSource(token)
 			if err != nil {
 				return err
 			}
+			src := &counting{Source: base}
 			logf := func(f string, a ...any) { fmt.Fprintf(c.ErrOrStderr(), f+"\n", a...) }
 			res, err := scan.Run(c.Context(), src, inc, scan.Options{Repos: repos, Org: org, Logf: logf})
 			if err != nil {
@@ -144,6 +183,13 @@ func scanCmd(d deps) *cobra.Command {
 			}
 			if err != nil {
 				return err
+			}
+			if n := len(res.Skipped); n > 0 {
+				fmt.Fprintf(c.ErrOrStderr(), "warning: %d repositories skipped (see report)\n", n)
+				total := len(slices.Compact(slices.Sorted(slices.Values(repos)))) + src.orgRepos
+				if res.RunsScanned == 0 && n >= total {
+					return errors.New("no repository could be scanned (missing access?)")
+				}
 			}
 			if res.Count(model.Affected)+res.Count(model.Possible) > 0 {
 				return errFindings
