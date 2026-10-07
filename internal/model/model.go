@@ -83,7 +83,7 @@ type RotationItem struct {
 	Runs   []RunRef `json:"runs"`
 }
 
-// Skip records a job or repository that could not be checked, and why.
+// Skip records a repository that could not be scanned and why.
 type Skip struct {
 	Repo   string `json:"repo"`
 	Reason string `json:"reason"`

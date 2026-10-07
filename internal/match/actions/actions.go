@@ -10,7 +10,7 @@ import (
 	"github.com/dmitriy86it/runsweep/internal/model"
 )
 
-// Download is a compromised action download found in a job log.
+// Download is an action download recorded in a job log.
 type Download struct{ Uses, Ref, SHA string }
 
 var downloadRe = regexp.MustCompile(`Download action repository '([^'@]+)@([^']+)' \(SHA:([0-9a-f]{40})\)`)
