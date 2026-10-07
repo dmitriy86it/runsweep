@@ -339,3 +339,18 @@ func TestJobLogDownloadRetries(t *testing.T) {
 		t.Fatalf("hits %d backoff %v", hits.Load(), *sleeps)
 	}
 }
+
+func TestBlobTooBig(t *testing.T) {
+	old := maxBlobBytes
+	maxBlobBytes = 10
+	t.Cleanup(func() { maxBlobBytes = old })
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, strings.TrimPrefix(r.URL.Path, "/repos/o/r/git/blobs/"))
+	}))
+	if b, err := c.Blob(context.Background(), "o/r", "0123456789"); err != nil || string(b) != "0123456789" {
+		t.Fatalf("%q %v", b, err)
+	}
+	if _, err := c.Blob(context.Background(), "o/r", "0123456789a"); !errors.Is(err, source.ErrIncomplete) {
+		t.Fatalf("want ErrIncomplete, got %v", err)
+	}
+}

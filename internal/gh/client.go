@@ -2,6 +2,7 @@
 package gh
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -23,7 +24,10 @@ const (
 	runsCap     = 1000 // GitHub returns at most 1000 runs for a `created` filter
 )
 
-var maxLogBytes int64 = 64 << 20 // var so tests can shrink it
+var (
+	maxLogBytes  int64 = 64 << 20 // vars so tests can shrink them
+	maxBlobBytes       = 32 << 20
+)
 
 // backoff between retries of transient failures (network errors, HTTP 5xx).
 var backoff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
@@ -346,16 +350,31 @@ func (c *Client) Blob(ctx context.Context, repo, blobSHA string) ([]byte, error)
 		return v.([]byte), nil
 	}
 	owner, name := split(repo)
-	var b []byte
+	var buf capBuf
 	err := c.do(ctx, func() (*github.Response, error) {
-		var resp *github.Response
-		var err error
-		b, resp, err = c.gh.Git.GetBlobRaw(ctx, owner, name, blobSHA)
-		return resp, err
+		// GetBlobRaw with a size cap: stream into capBuf instead of reading the whole body.
+		req, err := c.gh.NewRequest(ctx, http.MethodGet, fmt.Sprintf("repos/%v/%v/git/blobs/%v", owner, name, blobSHA), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/vnd.github.v3.raw")
+		buf.b.Reset()
+		return c.gh.Do(req, &buf)
 	})
 	if err != nil {
 		return nil, err
 	}
+	b := buf.b.Bytes()
 	c.cache.Store(key, b)
 	return b, nil
+}
+
+// capBuf fails writes past maxBlobBytes. Not an embedded bytes.Buffer: io.Copy would use its ReadFrom.
+type capBuf struct{ b bytes.Buffer }
+
+func (c *capBuf) Write(p []byte) (int, error) {
+	if c.b.Len()+len(p) > maxBlobBytes {
+		return 0, fmt.Errorf("%w: blob exceeds %d MB", source.ErrIncomplete, maxBlobBytes>>20)
+	}
+	return c.b.Write(p)
 }
