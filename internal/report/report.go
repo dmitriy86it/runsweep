@@ -121,10 +121,21 @@ func tier(n int) string {
 	return fmt.Sprint(n)
 }
 
-// cellEscaper flattens line breaks and escapes pipes so text stays in one table cell.
-var cellEscaper = strings.NewReplacer("|", `\|`, "\r\n", " ", "\n", " ", "\r", " ")
+// cell keeps text in one table cell: line breaks flattened, pipes escaped, control characters dropped.
+func cell(s string) string { return strings.ReplaceAll(Clean(s), "|", `\|`) }
 
-func cell(s string) string { return cellEscaper.Replace(s) }
+var newlines = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
+
+// Clean makes repo-derived text safe for a terminal: CR/LF become spaces; C0/C1 controls, DEL
+// and Unicode line/paragraph separators are dropped (no escape sequences reach the terminal).
+func Clean(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r >= 0x7f && r <= 0x9f || r == '\u2028' || r == '\u2029' {
+			return -1
+		}
+		return r
+	}, newlines.Replace(s))
+}
 
 // code renders untrusted text as an inline code span, which GFM does not interpret
 // (no links, images, HTML, mentions or autolinks). Empty input gives an empty cell.

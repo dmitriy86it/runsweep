@@ -40,7 +40,7 @@ func newGitHub(token string) (source.Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	c.Logf = func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) }
+	c.Logf = func(f string, a ...any) { fmt.Fprintln(os.Stderr, report.Clean(fmt.Sprintf(f, a...))) }
 	return c, nil
 }
 
@@ -106,7 +106,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 		_, _ = fmt.Fprintln(stderr, "error: interrupted")
 		return 2
 	default:
-		_, _ = fmt.Fprintln(stderr, "error:", err)
+		_, _ = fmt.Fprintln(stderr, "error:", report.Clean(err.Error()))
 		return 2
 	}
 }
@@ -157,7 +157,7 @@ func scanCmd(d deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logf := func(f string, a ...any) { _, _ = fmt.Fprintf(c.ErrOrStderr(), f+"\n", a...) }
+			logf := func(f string, a ...any) { _, _ = fmt.Fprintln(c.ErrOrStderr(), report.Clean(fmt.Sprintf(f, a...))) }
 			res, err := scan.Run(c.Context(), src, inc, scan.Options{Repos: repos, Org: org, Logf: logf})
 			if err != nil {
 				return err

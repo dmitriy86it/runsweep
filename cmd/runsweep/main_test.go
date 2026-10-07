@@ -213,3 +213,22 @@ func TestEmptyOrgExitsTwo(t *testing.T) {
 		t.Fatalf("stderr=%q stdout=%q", errb.String(), out.String())
 	}
 }
+
+func TestNoTerminalEscapesInOutput(t *testing.T) {
+	evil := "\x1b]0;pwned\x07\x1b[2J"
+	f := sourcetest.New()
+	f.Orgs["o"] = []string{"o/a" + evil}
+	f.Runs["o/a"+evil] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
+	f.Jobs[1] = []source.Job{{ID: 2, Name: "build" + evil}}
+	f.AddFile("o/a"+evil, "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--org", "o"}, &out, &errb, fakeDeps(f)); code != 1 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "o/a]0;pwned") {
+		t.Fatalf("progress line missing: %q", errb.String())
+	}
+	if strings.ContainsAny(out.String()+errb.String(), "\x1b\x07") {
+		t.Fatalf("escape leaked:\nstdout %q\nstderr %q", out.String(), errb.String())
+	}
+}

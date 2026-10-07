@@ -174,3 +174,19 @@ func TestJSONEmptyAndUTC(t *testing.T) {
 		t.Fatal("caller's Result mutated")
 	}
 }
+
+func TestMarkdownStripsTerminalEscapes(t *testing.T) {
+	inc, res := sample()
+	evil := "\x1b]0;pwned\x07\x1b[2J\u0085  \x7f"
+	inc.Title = evil
+	inc.Refs = []string{evil}
+	res.Findings[0].Run.Job = evil
+	res.Skipped[0].Repo = evil
+	var b bytes.Buffer
+	if err := Markdown(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(b.String(), "\x1b\x07\u0085  \x7f") {
+		t.Fatalf("control characters leaked: %q", b.String())
+	}
+}
