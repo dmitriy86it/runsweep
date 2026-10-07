@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"sync"
@@ -17,6 +18,8 @@ import (
 	"github.com/dmitriy86it/runsweep/internal/source"
 	"github.com/dmitriy86it/runsweep/internal/workflow"
 )
+
+var installLogRe = regexp.MustCompile(`npm (ci|install)|added \d+ packages|yarn install|pnpm install|Lockfile is up to date|bun install`)
 
 // Options configures a scan.
 type Options struct {
@@ -189,18 +192,18 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		if wf != nil {
 			wj, _ = wf.FindJob(job.Name) // nil when not found or ambiguous
 		}
-		if npmRes.Status > model.Clean && (wj == nil || wj.InstallsNPM()) {
-			f.Status = model.Worse(f.Status, npmRes.Status)
-			f.Evidence = append(f.Evidence, npmRes.Evidence...)
-		}
-
 		var log string
 		var logErr = source.ErrGone
-		if len(s.inc.Actions) > 0 || f.Status >= model.Possible {
+		if len(s.inc.Actions) > 0 || npmRes.Status > model.Clean {
 			log, logErr = s.src.JobLog(ctx, repo, job.ID)
 			if logErr != nil && !soft(logErr) {
 				return nil, 0, logErr
 			}
+		}
+		// Drop npm evidence only on positive evidence the job cannot install packages.
+		if npmRes.Status > model.Clean && (wj == nil || wj.MayInstallNPM() || logErr == nil && installLogRe.MatchString(log)) {
+			f.Status = model.Worse(f.Status, npmRes.Status)
+			f.Evidence = append(f.Evidence, npmRes.Evidence...)
 		}
 		if len(s.inc.Actions) > 0 {
 			var st model.Status

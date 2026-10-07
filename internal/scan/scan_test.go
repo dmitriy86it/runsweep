@@ -259,3 +259,52 @@ func TestScanReposTargetedDeduped(t *testing.T) {
 		t.Fatalf("ReposTargeted = %d, want 2", res.ReposTargeted)
 	}
 }
+
+func TestScanNPMHiddenInstallIsAffected(t *testing.T) {
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "build"}, {ID: 11, Name: "reuse / test"}, {ID: 12, Name: "plain"}, {ID: 13, Name: "logged"}}
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(`on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: make test
+  reuse:
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+  plain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo hi
+  logged:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo hi
+`))
+	f.AddFile("o/a", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	f.Logs[10], f.Logs[11], f.Logs[12] = "", "", ""
+	f.Logs[13] = "2026-03-31T01:00:00Z added 312 packages in 4s\n"
+	npmOnly := &incident.Incident{ID: "t", Window: inc.Window, NPM: inc.NPM}
+	res, err := Run(context.Background(), f, npmOnly, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]model.Status{}
+	for _, fd := range res.Findings {
+		got[fd.Run.Job] = fd.Status
+	}
+	want := map[string]model.Status{"build": model.Affected, "reuse / test": model.Affected, "logged": model.Affected}
+	if len(got) != len(want) {
+		t.Fatalf("%v", got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("%s: %v (all: %v)", k, got[k], got)
+		}
+	}
+}

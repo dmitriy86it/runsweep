@@ -39,8 +39,10 @@ var (
 	namedRe   = regexp.MustCompile(`^(\.[A-Za-z_]|\[\s*['"])`)
 	// package-manager binary as a word anywhere in a script; over-reports (e.g. `echo npm`) by design
 	installRe = regexp.MustCompile(`(?:^|[^\w./-])(npm|npx|yarn|pnpm|pnpx|bun|bunx)(?:$|[^\w.-])`)
-	tplRe     = regexp.MustCompile(`\$\{\{.*?\}\}`)
-	matrixRe  = regexp.MustCompile(` \([^)]*\)$`)
+	// opaque runners and scripts that may install npm packages without naming npm in the workflow
+	opaqueRe = regexp.MustCompile(`(?:^|[^\w./-])(?:(?:make|task|just|mise|nx|turbo|lerna|rush|corepack|python3?|node)(?:$|[^\w.-])|(?:ba|z)?sh\s+\S)|(?:^|[\s;&|(])\./[\w-]|\.sh\b`)
+	tplRe    = regexp.MustCompile(`\$\{\{.*?\}\}`)
+	matrixRe = regexp.MustCompile(` \([^)]*\)$`)
 )
 
 // Parse parses a workflow YAML file.
@@ -189,6 +191,26 @@ func (j *Job) InstallsNPM() bool {
 		}
 	}
 	return false
+}
+
+// MayInstallNPM is false only on positive evidence that the job cannot install npm packages:
+// every `uses:` is a known non-installing action and no `run:` calls a package manager or an opaque
+// script/runner. Local and third-party actions and reusable workflows may install.
+func (j *Job) MayInstallNPM() bool {
+	if j.InstallsNPM() {
+		return true
+	}
+	for _, u := range j.Uses {
+		name, _, _ := strings.Cut(strings.ToLower(u), "@")
+		switch {
+		case strings.HasPrefix(name, "actions/setup-"):
+		case slices.Contains([]string{"actions/checkout", "actions/cache", "actions/upload-artifact",
+			"actions/download-artifact", "actions/github-script"}, name):
+		default:
+			return true
+		}
+	}
+	return slices.ContainsFunc(j.Runs, opaqueRe.MatchString)
 }
 
 // Exposure returns everything job j could read. Workflow-level env secrets are included.

@@ -296,3 +296,28 @@ func TestCloudRolesDedupeAndCopy(t *testing.T) {
 		t.Error("Exposure aliases job slice")
 	}
 }
+
+func TestMayInstallNPM(t *testing.T) {
+	for name, tc := range map[string]struct {
+		j    Job
+		want bool
+	}{
+		"checkout+echo":   {Job{Uses: []string{"actions/checkout@v4", "actions/setup-node@v4", "actions/cache@v4"}, Runs: []string{"echo hi"}}, false},
+		"local action":    {Job{Uses: []string{"actions/checkout@v4", "./.github/actions/setup"}}, true},
+		"reusable":        {Job{Uses: []string{"./.github/workflows/build.yml"}}, true},
+		"third-party":     {Job{Uses: []string{"some/action@v1"}}, true},
+		"make":            {Job{Runs: []string{"make test"}}, true},
+		"bash -c":         {Job{Runs: []string{"bash -c 'x'"}}, true},
+		"script":          {Job{Runs: []string{"./scripts/build"}}, true},
+		"sh file":         {Job{Runs: []string{"ci/run.sh"}}, true},
+		"python":          {Job{Runs: []string{"python3 build.py"}}, true},
+		"npm":             {Job{Runs: []string{"npm ci"}}, true},
+		"go":              {Job{Runs: []string{"go test ./..."}}, false},
+		"github-script":   {Job{Uses: []string{"actions/github-script@v7"}}, false},
+		"turbo in a pipe": {Job{Runs: []string{"echo x | turbo run build"}}, true},
+	} {
+		if got := tc.j.MayInstallNPM(); got != tc.want {
+			t.Errorf("%s: want %v", name, tc.want)
+		}
+	}
+}
