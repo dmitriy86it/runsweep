@@ -2,6 +2,7 @@ package npm
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -128,5 +129,35 @@ func TestMatchTruncatedAlwaysNoted(t *testing.T) {
 	last := r.Evidence[len(r.Evidence)-1]
 	if r.Status != model.Possible || last.Kind != "note" || !strings.Contains(last.Detail, "truncated") {
 		t.Fatalf("%+v", r)
+	}
+}
+
+func TestMatchWorkspaceRootLockfile(t *testing.T) {
+	ws := []byte(`{"dependencies":{"axios":"^1"}}`)
+	lock := func(pkgs string) []byte { return []byte(`{"lockfileVersion":3,"packages":{` + pkgs + `}}`) }
+	cases := map[string]struct {
+		files  map[string][]byte
+		want   model.Status
+		detail string
+	}{
+		"root covers":          {map[string][]byte{"package-lock.json": lock(`"node_modules/axios":{"version":"1.13.0"}`), "packages/web/package.json": ws}, model.Clean, ""},
+		"root lacks":           {map[string][]byte{"package-lock.json": lock(``), "packages/web/package.json": ws}, model.Possible, "not in lockfile package-lock.json"},
+		"nested wins":          {map[string][]byte{"package-lock.json": lock(`"node_modules/axios":{"version":"1.13.0"}`), "packages/web/package-lock.json": lock(``), "packages/web/package.json": ws}, model.Possible, "not in lockfile packages/web/package-lock.json"},
+		"nearest unparsed":     {map[string][]byte{"package-lock.json": lock(`"node_modules/axios":{"version":"1.13.0"}`), "packages/web/package-lock.json": []byte(`{broken`), "packages/web/package.json": ws}, model.Possible, "without a lockfile"},
+		"sibling dir no cover": {map[string][]byte{"apps/package-lock.json": lock(`"node_modules/axios":{"version":"1.13.0"}`), "packages/web/package.json": ws}, model.Possible, "without a lockfile"},
+	}
+	for name, c := range cases {
+		f := sourcetest.New()
+		for p, b := range c.files {
+			f.AddFile("o/r", "s1", p, b)
+		}
+		r, err := Match(context.Background(), f, "o/r", "s1", bad)
+		ok := err == nil && r.Status == c.want
+		if ok && c.detail != "" {
+			ok = slices.ContainsFunc(r.Evidence, func(e model.Evidence) bool { return e.Kind == "npm" && strings.Contains(e.Detail, c.detail) })
+		}
+		if !ok {
+			t.Errorf("%s: %+v %v", name, r, err)
+		}
 	}
 }

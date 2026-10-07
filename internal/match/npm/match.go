@@ -42,6 +42,7 @@ func Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMP
 	}
 	lockNames := map[string]map[string]bool{} // dir -> package names in its successfully parsed lockfiles
 	lockPaths := map[string]string{}          // dir -> a lockfile path, for evidence
+	failedDirs := map[string]bool{}           // dirs with a lockfile that failed to parse
 	for _, e := range entries {
 		if !IsLockfile(e.Path) {
 			continue
@@ -54,6 +55,7 @@ func Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMP
 		if err != nil {
 			r.Status = model.Worse(r.Status, model.Unchecked)
 			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("cannot parse %s: %v", e.Path, err)})
+			failedDirs[path.Dir(e.Path)] = true
 			continue
 		}
 		dir := path.Dir(e.Path)
@@ -83,7 +85,12 @@ func Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMP
 				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("cannot parse %s: %v", e.Path, err)})
 				continue
 			}
+			// Covering lockfile: nearest ancestor dir with one (workspaces lock at the root).
+			// If the nearest one failed to parse, treat the package.json as unlocked.
 			dir := path.Dir(e.Path)
+			for lockNames[dir] == nil && !failedDirs[dir] && dir != "." && dir != "/" {
+				dir = path.Dir(dir)
+			}
 			for _, name := range names {
 				if _, ok := badVer[name]; !ok {
 					continue
