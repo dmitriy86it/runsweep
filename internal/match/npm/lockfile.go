@@ -116,8 +116,16 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 	return out, nil
 }
 
-// ParseYarnLock handles yarn v1 and berry.
+var berryMarker = regexp.MustCompile(`(?m)^["']?__metadata["']?[ \t]*:`)
+
+// ParseYarnLock handles yarn v1 (line scanner) and berry (YAML, detected by a top-level __metadata key).
 func ParseYarnLock(b []byte) ([]Pkg, error) {
+	b = bytes.TrimPrefix(b, []byte("\uFEFF"))
+	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
+	b = bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
+	if berryMarker.Match(b) {
+		return parseYarnBerry(b)
+	}
 	var out []Pkg
 	var names map[string]bool // tracks distinct real package names for current entry
 	var version string
@@ -182,6 +190,39 @@ func ParseYarnLock(b []byte) ([]Pkg, error) {
 		}
 	}
 	return out, sc.Err()
+}
+
+func parseYarnBerry(b []byte) ([]Pkg, error) {
+	var lf map[string]struct {
+		Version    string `yaml:"version"`
+		Resolution string `yaml:"resolution"`
+	}
+	if err := yaml.Unmarshal(b, &lf); err != nil {
+		return nil, fmt.Errorf("yarn berry lock: %w", err)
+	}
+	var out []Pkg
+	for key, e := range lf {
+		if key == "__metadata" || e.Version == "" || e.Version == "0.0.0-use.local" || strings.Contains(e.Resolution, "@workspace:") {
+			continue
+		}
+		names := map[string]bool{}
+		if e.Resolution != "" {
+			// "name@npm:1.2.3", "@scope/name@npm:1.2.3", "name@patch:name@npm%3A1.2.3#..."
+			if at := strings.Index(e.Resolution[1:], "@"); at >= 0 {
+				names[e.Resolution[:at+1]] = true
+			}
+		} else {
+			for _, spec := range strings.Split(key, ",") {
+				if name := extractYarnPackageName(strings.Trim(strings.TrimSpace(spec), `"`)); name != "" {
+					names[name] = true
+				}
+			}
+		}
+		for name := range names {
+			out = append(out, Pkg{name, e.Version})
+		}
+	}
+	return out, nil
 }
 
 // extractYarnPackageName extracts the real package name from a yarn spec.

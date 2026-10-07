@@ -3,6 +3,7 @@ package npm
 import (
 	"maps"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -84,6 +85,7 @@ func TestMalformedInputsPanic(t *testing.T) {
   version`,
 		`x@npm:@
   version: 1`,
+		"__metadata:\n  version: 8\nfoo: [\n",
 	}
 	for _, input := range malformed {
 		// Test yarn parser
@@ -122,5 +124,61 @@ func TestPerSpecQuoteTrimNecessary(t *testing.T) {
 	// Verify both packages are present (not just one)
 	if len(got) != 2 {
 		t.Errorf("expected exactly 2 packages, got %d: %v", len(got), got)
+	}
+}
+
+func TestYarnV1CRLF(t *testing.T) {
+	b, err := os.ReadFile("testdata/yarn-v1.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := ParseYarnLock(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, nl := range []string{"\r\n", "\r"} {
+		got, err := ParseYarnLock([]byte(strings.ReplaceAll(string(b), "\n", nl)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !maps.Equal(pkgSet(got), pkgSet(want)) || len(want) == 0 {
+			t.Errorf("%q: got %v, want %v", nl, got, want)
+		}
+	}
+}
+
+func TestYarnBerryYAML(t *testing.T) {
+	cases := map[string]struct {
+		in   string
+		want []Pkg
+	}{
+		"4-space indent":   {"__metadata:\n    version: 8\n\n\"x@npm:^1.0.0\":\n    version: \"1.2.3\"  # comment\n    resolution: \"x@npm:1.2.3\"\n", []Pkg{{"x", "1.2.3"}}},
+		"flow mapping":     {"__metadata:\n  version: 8\n\"x@npm:^1.0.0\": {version: 1.2.3, resolution: \"x@npm:1.2.3\"}\n", []Pkg{{"x", "1.2.3"}}},
+		"alias resolution": {"__metadata:\n  version: 8\n\"alias@npm:^1.0.0\":\n  version: 1.0.0\n  resolution: \"real-pkg@npm:1.0.0\"\n", []Pkg{{"real-pkg", "1.0.0"}}},
+		"scoped + patch":   {"__metadata:\n  version: 8\n\"@s/p@npm:^1\":\n  version: 1.0.0\n  resolution: \"@s/p@npm:1.0.0\"\n\"q@patch:q@npm%3A^2#~builtin<compat/q>\":\n  version: 2.0.0\n  resolution: \"q@patch:q@npm%3A2.0.0#~builtin<compat/q>::version=2.0.0\"\n", []Pkg{{"@s/p", "1.0.0"}, {"q", "2.0.0"}}},
+		"workspace":        {"__metadata:\n  version: 8\n\"w@workspace:.\":\n  version: 0.0.0-use.local\n  resolution: \"w@workspace:.\"\n", nil},
+		"crlf":             {"__metadata:\r\n  version: 8\r\n\"x@npm:^1\":\r\n  version: 1.2.3\r\n  resolution: \"x@npm:1.2.3\"\r\n", []Pkg{{"x", "1.2.3"}}},
+	}
+	for name, c := range cases {
+		got, err := ParseYarnLock([]byte(c.in))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !maps.Equal(pkgSet(got), pkgSet(c.want)) {
+			t.Errorf("%s: got %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+func TestYarnBerryDuplicateKey(t *testing.T) {
+	in := "__metadata:\n  version: 8\n\"x@npm:^1\":\n  version: 1.0.0\n\"x@npm:^1\":\n  version: 6.6.6\n"
+	if _, err := ParseYarnLock([]byte(in)); err == nil {
+		t.Fatal("expected duplicate-key error")
+	}
+}
+
+func TestYarnBerryBadYAML(t *testing.T) {
+	if _, err := ParseYarnLock([]byte("__metadata:\n  version: 8\nfoo: [\n")); err == nil {
+		t.Fatal("expected yaml error")
 	}
 }
