@@ -1,0 +1,24 @@
+version: 2
+project_name: runsweep
+builds:
+  - main: ./cmd/runsweep
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.CommitDate}}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+archives:
+  - formats: [tar.gz]
+    format_overrides: [{goos: windows, formats: [zip]}]
+checksum:
+  name_template: checksums.txt
+sboms:
+  - artifacts: archive
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--bundle=${signature}", "${artifact}", "--yes"]
+changelog:
+  use: github-native
