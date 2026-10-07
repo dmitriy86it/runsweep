@@ -15,6 +15,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// Pkg is a resolved npm package name and version.
 type Pkg struct{ Name, Version string }
 
 // IsLockfile reports whether p is a lockfile runsweep understands (outside node_modules).
@@ -52,6 +53,7 @@ type depV1 struct {
 	Dependencies map[string]depV1 `json:"dependencies"`
 }
 
+// ParsePackageLock extracts packages from a package-lock.json.
 func ParsePackageLock(b []byte) ([]Pkg, error) {
 	var lf struct {
 		Packages map[string]struct {
@@ -83,9 +85,9 @@ func ParsePackageLock(b []byte) ([]Pkg, error) {
 	walk = func(deps map[string]depV1) {
 		for name, d := range deps {
 			v := d.Version
-			if real, ok := strings.CutPrefix(v, "npm:"); ok { // alias "npm:real@1.2.3"
-				if at := strings.LastIndex(real, "@"); at > 0 {
-					name, v = real[:at], real[at+1:]
+			if target, ok := strings.CutPrefix(v, "npm:"); ok { // alias "npm:real@1.2.3"
+				if at := strings.LastIndex(target, "@"); at > 0 {
+					name, v = target[:at], target[at+1:]
 				}
 			}
 			out = append(out, Pkg{name, v})
@@ -101,6 +103,7 @@ var (
 	pnpmV6 = regexp.MustCompile(`^(@[^/@]+/[^@]+|[^@][^@]*)@(\d[^_(]*)`)          // name@1.0.0(peer)
 )
 
+// ParsePnpmLock extracts packages from a pnpm-lock.yaml.
 func ParsePnpmLock(b []byte) ([]Pkg, error) {
 	var lf struct {
 		Packages map[string]yaml.Node `yaml:"packages"`

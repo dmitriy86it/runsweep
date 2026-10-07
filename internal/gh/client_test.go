@@ -36,11 +36,11 @@ func TestListRunsSplitsWindow(t *testing.T) {
 		s, _ := time.Parse(time.RFC3339, start)
 		e, _ := time.Parse(time.RFC3339, end)
 		if e.Sub(s) <= 12*time.Hour { // small window: return real runs
-			fmt.Fprintf(w, `{"total_count":2,"workflow_runs":[{"id":%d,"head_sha":"a","path":".github/workflows/ci.yml","created_at":"%s"},{"id":%d,"head_sha":"b","path":".github/workflows/ci.yml","created_at":"%s"}]}`,
+			_, _ = fmt.Fprintf(w, `{"total_count":2,"workflow_runs":[{"id":%d,"head_sha":"a","path":".github/workflows/ci.yml","created_at":"%s"},{"id":%d,"head_sha":"b","path":".github/workflows/ci.yml","created_at":"%s"}]}`, //nolint:gosec // G705: test server, values are numeric/time-formatted
 				s.Unix(), s.Format(time.RFC3339), s.Unix()+1, s.Format(time.RFC3339))
 			return
 		}
-		fmt.Fprint(w, `{"total_count":1500,"workflow_runs":[]}`)
+		_, _ = fmt.Fprint(w, `{"total_count":1500,"workflow_runs":[]}`)
 	}))
 	start := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
 	runs, err := c.ListRuns(context.Background(), "o/r", start, start.Add(24*time.Hour))
@@ -53,9 +53,9 @@ func TestListRunsSplitsWindow(t *testing.T) {
 }
 
 func TestJobLogGone(t *testing.T) {
-	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusGone)
-		fmt.Fprint(w, `{"message":"gone"}`)
+		_, _ = fmt.Fprint(w, `{"message":"gone"}`)
 	}))
 	_, err := c.JobLog(context.Background(), "o/r", 7)
 	if !errors.Is(err, source.ErrGone) {
@@ -64,9 +64,9 @@ func TestJobLogGone(t *testing.T) {
 }
 
 func TestNoAccess(t *testing.T) {
-	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		fmt.Fprint(w, `{"message":"Not Found"}`)
+		_, _ = fmt.Fprint(w, `{"message":"Not Found"}`)
 	}))
 	_, err := c.ListJobs(context.Background(), "o/r", 1)
 	if !errors.Is(err, source.ErrNoAccess) {
@@ -76,17 +76,17 @@ func TestNoAccess(t *testing.T) {
 
 func TestRetriesOnRateLimit(t *testing.T) {
 	var n atomic.Int32
-	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if n.Add(1) == 1 {
 			w.Header().Set("X-RateLimit-Limit", "5000")
 			w.Header().Set("X-RateLimit-Remaining", "0")
 			// reset already passed: go-github would otherwise refuse the retry client-side until reset
 			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(-time.Second).Unix(), 10))
 			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
+			_, _ = fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
 			return
 		}
-		fmt.Fprint(w, `{"total_count":1,"jobs":[{"id":5,"name":"build","html_url":"u"}]}`)
+		_, _ = fmt.Fprint(w, `{"total_count":1,"jobs":[{"id":5,"name":"build","html_url":"u"}]}`)
 	}))
 	var slept bool
 	c.Sleep = func(context.Context, time.Duration) error { slept = true; return nil }
@@ -102,9 +102,9 @@ func TestTreeAndBlobCached(t *testing.T) {
 		n.Add(1)
 		switch {
 		case strings.Contains(r.URL.Path, "/git/trees/"):
-			fmt.Fprint(w, `{"sha":"s","truncated":false,"tree":[{"path":"package-lock.json","type":"blob","sha":"b1"},{"path":"src","type":"tree","sha":"t1"}]}`)
+			_, _ = fmt.Fprint(w, `{"sha":"s","truncated":false,"tree":[{"path":"package-lock.json","type":"blob","sha":"b1"},{"path":"src","type":"tree","sha":"t1"}]}`)
 		case strings.Contains(r.URL.Path, "/git/blobs/"):
-			fmt.Fprint(w, `{"lockfileVersion":3}`)
+			_, _ = fmt.Fprint(w, `{"lockfileVersion":3}`)
 		}
 	}))
 	ctx := context.Background()
@@ -126,7 +126,7 @@ func TestTreeAndBlobCached(t *testing.T) {
 func logTarget(t *testing.T, body string, authSeen *atomic.Value) string {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authSeen.Store(r.Header.Get("Authorization"))
-		fmt.Fprint(w, body)
+		_, _ = fmt.Fprint(w, body)
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL + "/signed"
@@ -142,7 +142,7 @@ func TestJobLogRetriesRateLimitAndNoAuthOnRedirect(t *testing.T) {
 			w.Header().Set("X-RateLimit-Remaining", "0")
 			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(-time.Second).Unix(), 10))
 			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
+			_, _ = fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
 			return
 		}
 		http.Redirect(w, r, target, http.StatusFound)
@@ -173,8 +173,8 @@ func TestJobLogTruncated(t *testing.T) {
 }
 
 func TestRunsCapInUnsplittableWindow(t *testing.T) {
-	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"total_count":1500,"workflow_runs":[]}`)
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"total_count":1500,"workflow_runs":[]}`)
 	}))
 	var logged bool
 	c.Logf = func(f string, a ...any) {
@@ -193,14 +193,14 @@ func TestRunsCapInUnsplittableWindow(t *testing.T) {
 
 func TestRetryAfterSecondaryLimit(t *testing.T) {
 	var n atomic.Int32
-	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if n.Add(1) == 1 {
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `{"message":"slow down"}`)
+			_, _ = fmt.Fprint(w, `{"message":"slow down"}`)
 			return
 		}
-		fmt.Fprint(w, `{"total_count":1,"jobs":[{"id":5}]}`)
+		_, _ = fmt.Fprint(w, `{"total_count":1,"jobs":[{"id":5}]}`)
 	}))
 	var slept time.Duration
 	c.Sleep = func(_ context.Context, d time.Duration) error { slept = d; return nil }
@@ -211,10 +211,10 @@ func TestRetryAfterSecondaryLimit(t *testing.T) {
 }
 
 func TestSleepCancelled(t *testing.T) {
-	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "1")
 		w.WriteHeader(http.StatusTooManyRequests)
-		fmt.Fprint(w, `{"message":"slow"}`)
+		_, _ = fmt.Fprint(w, `{"message":"slow"}`)
 	}))
 	ctx, cancel := context.WithCancel(context.Background())
 	c.Sleep = func(ctx context.Context, _ time.Duration) error { cancel(); return ctx.Err() }
@@ -234,10 +234,10 @@ func TestSplitRangesContiguous(t *testing.T) {
 			mu.Lock()
 			ranges = append(ranges, [2]time.Time{st, en})
 			mu.Unlock()
-			fmt.Fprint(w, `{"total_count":0,"workflow_runs":[]}`)
+			_, _ = fmt.Fprint(w, `{"total_count":0,"workflow_runs":[]}`)
 			return
 		}
-		fmt.Fprint(w, `{"total_count":1500,"workflow_runs":[]}`)
+		_, _ = fmt.Fprint(w, `{"total_count":1500,"workflow_runs":[]}`)
 	}))
 	start := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -252,11 +252,11 @@ func TestSplitRangesContiguous(t *testing.T) {
 func TestPagination(t *testing.T) {
 	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("page") == "2" {
-			fmt.Fprint(w, `{"total_count":2,"jobs":[{"id":2}]}`)
+			_, _ = fmt.Fprint(w, `{"total_count":2,"jobs":[{"id":2}]}`)
 			return
 		}
 		w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?page=2>; rel="next"`, r.Host, r.URL.Path))
-		fmt.Fprint(w, `{"total_count":2,"jobs":[{"id":1}]}`)
+		_, _ = fmt.Fprint(w, `{"total_count":2,"jobs":[{"id":1}]}`)
 	}))
 	jobs, err := c.ListJobs(context.Background(), "o/r", 1)
 	if err != nil || len(jobs) != 2 || jobs[0].ID != 1 || jobs[1].ID != 2 {

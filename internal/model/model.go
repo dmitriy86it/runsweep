@@ -9,6 +9,7 @@ import (
 // Status of a job with respect to an incident, ordered by severity.
 type Status int
 
+// Status values, from least to most severe.
 const (
 	Clean Status = iota
 	Unchecked
@@ -18,7 +19,9 @@ const (
 
 var statusNames = [...]string{"CLEAN", "UNCHECKED", "POSSIBLE", "AFFECTED"}
 
-func (s Status) String() string               { return statusNames[s] }
+func (s Status) String() string { return statusNames[s] }
+
+// MarshalJSON encodes the status as its name.
 func (s Status) MarshalJSON() ([]byte, error) { return json.Marshal(s.String()) }
 
 // Worse returns the more severe of two statuses.
@@ -48,6 +51,7 @@ type RunRef struct {
 	JobURL    string    `json:"job_url,omitempty"`
 }
 
+// CloudRole is a cloud role a job can assume.
 type CloudRole struct {
 	Provider string `json:"provider"`
 	Role     string `json:"role"`
@@ -63,6 +67,7 @@ type Exposure struct {
 	JobMatched   bool              `json:"job_matched"`
 }
 
+// Finding is the verdict for one job.
 type Finding struct {
 	Run      RunRef     `json:"run"`
 	Status   Status     `json:"status"`
@@ -78,11 +83,13 @@ type RotationItem struct {
 	Runs   []RunRef `json:"runs"`
 }
 
+// Skip records a job or repository that could not be checked, and why.
 type Skip struct {
 	Repo   string `json:"repo"`
 	Reason string `json:"reason"`
 }
 
+// Result is the outcome of a scan.
 type Result struct {
 	IncidentID    string         `json:"incident_id"`
 	Start         time.Time      `json:"window_start"`

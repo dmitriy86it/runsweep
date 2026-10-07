@@ -22,6 +22,7 @@ const limits = `## Limits
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread.
 `
 
+// Markdown renders the scan result as a Markdown report.
 func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# runsweep: %s (%s)\n\n", code(inc.Title), code(inc.ID))
@@ -79,6 +80,7 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	return err
 }
 
+// JSON renders the scan result as JSON.
 func JSON(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	c := *inc
 	c.Window.Start, c.Window.End = c.Window.Start.UTC(), c.Window.End.UTC()

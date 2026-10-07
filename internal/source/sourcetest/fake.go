@@ -8,6 +8,7 @@ import (
 	"github.com/dmitriy86it/runsweep/internal/source"
 )
 
+// Fake is an in-memory source.Source for tests.
 type Fake struct {
 	Orgs      map[string][]string           // org -> repos
 	Runs      map[string][]source.Run       // repo -> runs
@@ -20,6 +21,7 @@ type Fake struct {
 	NoAccess  map[string]bool               // repo -> 403
 }
 
+// New returns an empty Fake.
 func New() *Fake {
 	return &Fake{Orgs: map[string][]string{}, Runs: map[string][]source.Run{}, Jobs: map[int64][]source.Job{},
 		Logs: map[int64]string{}, GoneLogs: map[int64]bool{}, Trees: map[string][]source.TreeEntry{},
@@ -33,8 +35,10 @@ func (f *Fake) AddFile(repo, sha, path string, content []byte) {
 	f.Blobs[blob] = content
 }
 
+// ListRepos implements source.Source.
 func (f *Fake) ListRepos(_ context.Context, org string) ([]string, error) { return f.Orgs[org], nil }
 
+// ListRuns implements source.Source.
 func (f *Fake) ListRuns(_ context.Context, repo string, start, end time.Time) ([]source.Run, error) {
 	if f.NoAccess[repo] {
 		return nil, source.ErrNoAccess
@@ -48,10 +52,12 @@ func (f *Fake) ListRuns(_ context.Context, repo string, start, end time.Time) ([
 	return out, nil
 }
 
+// ListJobs implements source.Source.
 func (f *Fake) ListJobs(_ context.Context, _ string, runID int64) ([]source.Job, error) {
 	return f.Jobs[runID], nil
 }
 
+// JobLog implements source.Source.
 func (f *Fake) JobLog(_ context.Context, _ string, jobID int64) (string, error) {
 	if f.GoneLogs[jobID] {
 		return "", source.ErrGone
@@ -59,10 +65,12 @@ func (f *Fake) JobLog(_ context.Context, _ string, jobID int64) (string, error) 
 	return f.Logs[jobID], nil
 }
 
+// Tree implements source.Source.
 func (f *Fake) Tree(_ context.Context, repo, sha string) ([]source.TreeEntry, bool, error) {
 	return f.Trees[repo+"@"+sha], f.Truncated[repo+"@"+sha], nil
 }
 
+// Blob implements source.Source.
 func (f *Fake) Blob(_ context.Context, _ string, blobSHA string) ([]byte, error) {
 	b, ok := f.Blobs[blobSHA]
 	if !ok {

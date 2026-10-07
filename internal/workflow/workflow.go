@@ -13,6 +13,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// Job is a parsed workflow job.
 type Job struct {
 	ID             string
 	Name           string
@@ -24,6 +25,7 @@ type Job struct {
 	CloudRoles     []model.CloudRole
 }
 
+// Workflow is a parsed workflow file.
 type Workflow struct {
 	Jobs          map[string]*Job
 	globalSecrets []string
@@ -41,6 +43,7 @@ var (
 	matrixRe  = regexp.MustCompile(` \([^)]*\)$`)
 )
 
+// Parse parses a workflow YAML file.
 func Parse(b []byte) (*Workflow, error) {
 	// Decode into a plain value first: yaml.v3 expands aliases and merge keys with its own
 	// cycle/size limits; re-encoding gives an alias-free node tree that is safe to walk.
@@ -171,6 +174,7 @@ func (w *Workflow) findStaged(name string) (*Job, bool) {
 	return best, true
 }
 
+// InstallsNPM reports whether the job installs npm dependencies.
 func (j *Job) InstallsNPM() bool {
 	for _, u := range j.Uses {
 		name, _, _ := strings.Cut(strings.ToLower(u), "@")
@@ -187,7 +191,7 @@ func (j *Job) InstallsNPM() bool {
 	return false
 }
 
-// Exposure: everything job j could read. Workflow-level env secrets are included.
+// Exposure returns everything job j could read. Workflow-level env secrets are included.
 func (w *Workflow) Exposure(j *Job) model.Exposure {
 	return model.Exposure{
 		Secrets:      uniq(append(append([]string{}, w.globalSecrets...), j.Secrets...)),

@@ -20,6 +20,7 @@ type Fetcher interface {
 	Blob(ctx context.Context, repo, blobSHA string) ([]byte, error)
 }
 
+// Result is the outcome of matching lockfile packages against an incident.
 type Result struct {
 	Status   model.Status
 	Evidence []model.Evidence
@@ -133,11 +134,11 @@ func declared(pkgJSON []byte) ([]string, error) {
 			if json.Unmarshal(raw, &spec) != nil {
 				continue
 			}
-			if real, ok := strings.CutPrefix(spec, "npm:"); ok && real != "" {
-				if at := strings.Index(real[1:], "@"); at >= 0 { // "@scope/pkg@^1" -> "@scope/pkg"
-					real = real[:at+1]
+			if target, ok := strings.CutPrefix(spec, "npm:"); ok && target != "" {
+				if at := strings.Index(target[1:], "@"); at >= 0 { // "@scope/pkg@^1" -> "@scope/pkg"
+					target = target[:at+1]
 				}
-				out = append(out, real)
+				out = append(out, target)
 			}
 		}
 	}

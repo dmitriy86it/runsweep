@@ -18,6 +18,7 @@ import (
 	"github.com/dmitriy86it/runsweep/internal/workflow"
 )
 
+// Options configures a scan.
 type Options struct {
 	Repos       []string
 	Org         string
@@ -36,6 +37,7 @@ func soft(err error) bool {
 	return errors.Is(err, source.ErrGone) || errors.Is(err, source.ErrNoAccess) || errors.Is(err, source.ErrIncomplete)
 }
 
+// Run scans the source for jobs affected by the incident.
 func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Options) (*model.Result, error) {
 	logf := opt.Logf
 	if logf == nil {
@@ -193,7 +195,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		}
 
 		var log string
-		var logErr error = source.ErrGone
+		var logErr = source.ErrGone
 		if len(s.inc.Actions) > 0 || f.Status >= model.Possible {
 			log, logErr = s.src.JobLog(ctx, repo, job.ID)
 			if logErr != nil && !soft(logErr) {

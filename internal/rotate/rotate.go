@@ -16,6 +16,7 @@ var (
 	publishRe = regexp.MustCompile(`(?i)(NPM|NODE_AUTH|PYPI|TWINE|DOCKER|REGISTRY|GHCR|PAT|GH_TOKEN|DEPLOY|SSH|KUBE|HELM|SIGN|GPG|COSIGN|RELEASE|PUBLISH|CARGO|RUBYGEMS|NUGET|PERSONAL_ACCESS|ACCESS_TOKEN|VAULT|TF_|TERRAFORM|PULUMI|PRIVATE_KEY|VERCEL|NETLIFY|FLY_|HEROKU|ARGOCD|PASSWORD)`)
 )
 
+// Tier returns the rotation priority of a secret name.
 func Tier(secret string) int {
 	switch {
 	case cloudRe.MatchString(secret):
@@ -32,6 +33,7 @@ var reasons = map[int]string{
 	3: "third-party service credentials — rotate",
 }
 
+// Plan builds an ordered secret rotation plan from findings.
 func Plan(findings []model.Finding) []model.RotationItem {
 	items := map[string]*model.RotationItem{}
 	add := func(name string, tier int, reason string, run model.RunRef) {

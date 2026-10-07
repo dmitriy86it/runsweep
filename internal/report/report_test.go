@@ -41,11 +41,11 @@ func sample() (*incident.Incident, *model.Result) {
 func golden(t *testing.T, name string, got []byte) {
 	path := "testdata/" + name
 	if *update {
-		if err := os.WriteFile(path, got, 0o644); err != nil {
+		if err := os.WriteFile(path, got, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want, err := os.ReadFile(path)
+	want, err := os.ReadFile(path) //nolint:gosec // G304: fixed testdata path
 	if err != nil {
 		t.Fatal(err)
 	}

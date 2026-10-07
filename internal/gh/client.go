@@ -25,6 +25,7 @@ const (
 
 var maxLogBytes int64 = 64 << 20 // var so tests can shrink it
 
+// Client is a GitHub REST API client implementing source.Source.
 type Client struct {
 	gh    *github.Client
 	http  *http.Client
@@ -40,6 +41,7 @@ type treeVal struct {
 	truncated bool
 }
 
+// New returns a Client for baseURL authenticated with token.
 func New(httpClient *http.Client, token, baseURL string) (*Client, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
@@ -130,6 +132,7 @@ func mapErr(resp *github.Response, err error) error {
 	return err
 }
 
+// ListRepos lists the repositories of an organisation.
 func (c *Client) ListRepos(ctx context.Context, org string) ([]string, error) {
 	opt := &github.RepositoryListByOrgOptions{Type: "all", ListOptions: github.ListOptions{PerPage: 100}}
 	var out []string
@@ -154,6 +157,7 @@ func (c *Client) ListRepos(ctx context.Context, org string) ([]string, error) {
 	}
 }
 
+// ListRuns lists workflow runs created within the given window.
 func (c *Client) ListRuns(ctx context.Context, repo string, start, end time.Time) ([]source.Run, error) {
 	owner, name := split(repo)
 	opt := &github.ListWorkflowRunsOptions{
@@ -200,6 +204,7 @@ func (c *Client) ListRuns(ctx context.Context, repo string, start, end time.Time
 	}
 }
 
+// ListJobs lists the jobs of a workflow run.
 func (c *Client) ListJobs(ctx context.Context, repo string, runID int64) ([]source.Job, error) {
 	owner, name := split(repo)
 	opt := &github.ListWorkflowJobsOptions{Filter: "all", ListOptions: github.ListOptions{PerPage: 100}}
@@ -246,7 +251,7 @@ func (c *Client) JobLog(ctx context.Context, repo string, jobID int64) (string, 
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusGone, http.StatusNotFound:
@@ -264,6 +269,7 @@ func (c *Client) JobLog(ctx context.Context, repo string, jobID int64) (string, 
 	return string(b), nil
 }
 
+// Tree returns the git tree of a commit.
 func (c *Client) Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry, bool, error) {
 	key := "tree:" + repo + "@" + sha
 	if v, ok := c.cache.Load(key); ok {
@@ -292,6 +298,7 @@ func (c *Client) Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry
 	return t.entries, t.truncated, nil
 }
 
+// Blob returns the content of a git blob.
 func (c *Client) Blob(ctx context.Context, repo, blobSHA string) ([]byte, error) {
 	key := "blob:" + repo + "@" + blobSHA
 	if v, ok := c.cache.Load(key); ok {

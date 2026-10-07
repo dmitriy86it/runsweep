@@ -36,7 +36,7 @@ func TestIncidentsCommand(t *testing.T) {
 func TestScanExitCodes(t *testing.T) {
 	dir := t.TempDir()
 	inc := filepath.Join(dir, "i.yaml")
-	if err := os.WriteFile(inc, []byte("id: x\ntitle: x\nwindow: {start: 2026-03-31T00:00:00Z, end: 2026-03-31T02:00:00Z}\nnpm: [{name: axios, versions: [\"1.14.1\"]}]\nrefs: [x]\n"), 0o644); err != nil {
+	if err := os.WriteFile(inc, []byte("id: x\ntitle: x\nwindow: {start: 2026-03-31T00:00:00Z, end: 2026-03-31T02:00:00Z}\nnpm: [{name: axios, versions: [\"1.14.1\"]}]\nrefs: [x]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -82,7 +82,7 @@ const incYAML = "id: x\ntitle: x\nwindow: {start: 2026-03-31T00:00:00Z, end: 202
 func writeInc(t *testing.T, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "i.yaml")
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return p

@@ -16,6 +16,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// Window is the time span in which a compromised artifact was served.
 type Window struct {
 	Start time.Time `yaml:"start" json:"start"`
 	End   time.Time `yaml:"end" json:"end"`
@@ -46,16 +47,19 @@ func (w *Window) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
+// NPMPackage is a compromised npm package version.
 type NPMPackage struct {
 	Name     string   `yaml:"name" json:"name"`
 	Versions []string `yaml:"versions" json:"versions"`
 }
 
+// Action is a compromised GitHub Action reference.
 type Action struct {
 	Uses string   `yaml:"uses" json:"uses"` // owner/repo
 	SHAs []string `yaml:"shas" json:"shas"`
 }
 
+// Incident describes a supply-chain incident to scan for.
 type Incident struct {
 	ID      string              `yaml:"id" json:"id"`
 	Title   string              `yaml:"title" json:"title"`
@@ -82,6 +86,7 @@ func Parse(b []byte) (*Incident, error) {
 	return &inc, inc.Validate()
 }
 
+// Validate reports whether the incident definition is usable.
 func (i *Incident) Validate() error {
 	var errs []error
 	if i.ID == "" {
@@ -114,7 +119,7 @@ func (i *Incident) Validate() error {
 // Load reads a file path (if it exists or ends in .yaml/.yml) or a built-in preset id.
 func Load(ref string) (*Incident, error) {
 	if _, err := os.Stat(ref); err == nil || strings.HasSuffix(ref, ".yaml") || strings.HasSuffix(ref, ".yml") {
-		b, err := os.ReadFile(ref)
+		b, err := os.ReadFile(ref) //nolint:gosec // G304: path is the user-supplied --incident argument
 		if err != nil {
 			return nil, err
 		}

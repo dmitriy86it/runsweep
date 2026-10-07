@@ -80,7 +80,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	root.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Run: func(c *cobra.Command, _ []string) {
-		fmt.Fprintf(c.OutOrStdout(), "runsweep %s (%s, %s)\n", version, commit, date)
+		_, _ = fmt.Fprintf(c.OutOrStdout(), "runsweep %s (%s, %s)\n", version, commit, date)
 	}})
 	root.AddCommand(&cobra.Command{Use: "incidents", Short: "List built-in incident presets", RunE: func(c *cobra.Command, _ []string) error {
 		ps, err := incident.Presets()
@@ -88,7 +88,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 			return err
 		}
 		for _, p := range ps {
-			fmt.Fprintf(c.OutOrStdout(), "%-24s %s\n", p.ID, p.Title)
+			_, _ = fmt.Fprintf(c.OutOrStdout(), "%-24s %s\n", p.ID, p.Title)
 		}
 		return nil
 	}})
@@ -103,10 +103,10 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	case errors.Is(err, errFindings):
 		return 1
 	case errors.Is(err, context.Canceled):
-		fmt.Fprintln(stderr, "error: interrupted")
+		_, _ = fmt.Fprintln(stderr, "error: interrupted")
 		return 2
 	default:
-		fmt.Fprintln(stderr, "error:", err)
+		_, _ = fmt.Fprintln(stderr, "error:", err)
 		return 2
 	}
 }
@@ -157,7 +157,7 @@ func scanCmd(d deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			logf := func(f string, a ...any) { fmt.Fprintf(c.ErrOrStderr(), f+"\n", a...) }
+			logf := func(f string, a ...any) { _, _ = fmt.Fprintf(c.ErrOrStderr(), f+"\n", a...) }
 			res, err := scan.Run(c.Context(), src, inc, scan.Options{Repos: repos, Org: org, Logf: logf})
 			if err != nil {
 				return err
@@ -178,7 +178,7 @@ func scanCmd(d deps) *cobra.Command {
 				if n == 1 {
 					noun = "repository"
 				}
-				fmt.Fprintf(c.ErrOrStderr(), "warning: %d %s skipped (see report)\n", n, noun)
+				_, _ = fmt.Fprintf(c.ErrOrStderr(), "warning: %d %s skipped (see report)\n", n, noun)
 				if n == res.ReposTargeted {
 					return errors.New("no repository could be scanned (missing access?)")
 				}

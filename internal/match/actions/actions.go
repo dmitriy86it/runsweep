@@ -10,6 +10,7 @@ import (
 	"github.com/dmitriy86it/runsweep/internal/model"
 )
 
+// Download is a compromised action download found in a job log.
 type Download struct{ Uses, Ref, SHA string }
 
 var downloadRe = regexp.MustCompile(`Download action repository '([^'@]+)@([^']+)' \(SHA:([0-9a-f]{40})\)`)
@@ -47,7 +48,7 @@ func badSHAs(bad []incident.Action) map[string]map[string]bool {
 	return m
 }
 
-// MatchLog: AFFECTED when the job log shows a compromised SHA was downloaded.
+// MatchLog returns AFFECTED when the job log shows a compromised SHA was downloaded.
 func MatchLog(log string, bad []incident.Action) (model.Status, []model.Evidence) {
 	b := badSHAs(bad)
 	st, ev := model.Clean, []model.Evidence(nil)
