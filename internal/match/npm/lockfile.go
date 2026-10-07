@@ -116,14 +116,14 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 	return out, nil
 }
 
-var berryMarker = regexp.MustCompile(`(?m)^["']?__metadata["']?[ \t]*:`)
+var yarnV1Header = regexp.MustCompile(`(?m)^# yarn lockfile v1$`)
 
-// ParseYarnLock handles yarn v1 (line scanner) and berry (YAML, detected by a top-level __metadata key).
+// ParseYarnLock handles yarn v1 (line scanner, detected by its "# yarn lockfile v1" header) and berry (YAML).
 func ParseYarnLock(b []byte) ([]Pkg, error) {
 	b = bytes.TrimPrefix(b, []byte("\uFEFF"))
 	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
 	b = bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
-	if berryMarker.Match(b) {
+	if !yarnV1Header.Match(b) {
 		return parseYarnBerry(b)
 	}
 	var out []Pkg
@@ -200,26 +200,43 @@ func parseYarnBerry(b []byte) ([]Pkg, error) {
 	if err := yaml.Unmarshal(b, &lf); err != nil {
 		return nil, fmt.Errorf("yarn berry lock: %w", err)
 	}
+	if _, ok := lf["__metadata"]; !ok {
+		return nil, fmt.Errorf("yarn.lock: neither a v1 header nor a berry __metadata key")
+	}
 	var out []Pkg
 	for key, e := range lf {
-		if key == "__metadata" || e.Version == "" || e.Version == "0.0.0-use.local" || strings.Contains(e.Resolution, "@workspace:") {
+		if key == "__metadata" {
 			continue
 		}
+		version := e.Version
 		names := map[string]bool{}
 		if e.Resolution != "" {
 			// "name@npm:1.2.3", "@scope/name@npm:1.2.3", "name@patch:name@npm%3A1.2.3#..."
 			if at := strings.Index(e.Resolution[1:], "@"); at >= 0 {
+				proto := e.Resolution[at+2:]
+				if strings.HasPrefix(proto, "workspace:") {
+					continue
+				}
+				if v, ok := strings.CutPrefix(proto, "npm:"); ok {
+					version = v
+				}
 				names[e.Resolution[:at+1]] = true
 			}
 		} else {
+			if version == "0.0.0-use.local" {
+				continue
+			}
 			for _, spec := range strings.Split(key, ",") {
 				if name := extractYarnPackageName(strings.Trim(strings.TrimSpace(spec), `"`)); name != "" {
 					names[name] = true
 				}
 			}
 		}
+		if version == "" {
+			continue
+		}
 		for name := range names {
-			out = append(out, Pkg{name, e.Version})
+			out = append(out, Pkg{name, version})
 		}
 	}
 	return out, nil
