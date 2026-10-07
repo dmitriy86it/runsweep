@@ -57,7 +57,7 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 	repos = slices.Compact(repos)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	res := &model.Result{IncidentID: inc.ID, Start: inc.Window.Start, End: inc.Window.End}
+	res := &model.Result{ReposTargeted: len(repos), IncidentID: inc.ID, Start: inc.Window.Start, End: inc.Window.End}
 	s := &scanner{src: src, inc: inc}
 	for _, repo := range repos {
 		runs, err := src.ListRuns(ctx, repo, inc.Window.Start, inc.Window.End)

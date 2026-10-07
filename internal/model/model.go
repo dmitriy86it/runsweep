@@ -84,14 +84,15 @@ type Skip struct {
 }
 
 type Result struct {
-	IncidentID  string         `json:"incident_id"`
-	Start       time.Time      `json:"window_start"`
-	End         time.Time      `json:"window_end"`
-	RunsScanned int            `json:"runs_scanned"`
-	JobsScanned int            `json:"jobs_scanned"`
-	Findings    []Finding      `json:"findings"`
-	Rotation    []RotationItem `json:"rotation"`
-	Skipped     []Skip         `json:"skipped"`
+	IncidentID    string         `json:"incident_id"`
+	Start         time.Time      `json:"window_start"`
+	End           time.Time      `json:"window_end"`
+	ReposTargeted int            `json:"repos_targeted"`
+	RunsScanned   int            `json:"runs_scanned"`
+	JobsScanned   int            `json:"jobs_scanned"`
+	Findings      []Finding      `json:"findings"`
+	Rotation      []RotationItem `json:"rotation"`
+	Skipped       []Skip         `json:"skipped"`
 }
 
 // Count returns how many findings have the given status.

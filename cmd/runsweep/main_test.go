@@ -159,7 +159,7 @@ func TestSkippedWarningAndAllSkipped(t *testing.T) {
 	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a", "--repo", "o/b"}, &out, &errb, fakeDeps(f)); code != 0 {
 		t.Fatalf("partial skip: got %d: %s", code, errb.String())
 	}
-	if !strings.Contains(errb.String(), "warning: 1 repositories skipped (see report)") {
+	if !strings.Contains(errb.String(), "warning: 1 repository skipped (see report)") {
 		t.Fatal(errb.String())
 	}
 
@@ -191,5 +191,15 @@ func TestInterrupted(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "interrupted") {
 		t.Fatal(errb.String())
+	}
+}
+
+func TestAllSkippedWithOrgOverlap(t *testing.T) {
+	f := sourcetest.New()
+	f.Orgs["o"] = []string{"o/a"}
+	f.NoAccess["o/a"] = true
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a", "--org", "o"}, &out, &errb, fakeDeps(f)); code != 2 {
+		t.Fatalf("got %d: %s", code, errb.String())
 	}
 }

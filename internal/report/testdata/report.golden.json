@@ -13,6 +13,7 @@
   "incident_id": "axios-2026-03",
   "window_start": "2026-03-31T00:21:00Z",
   "window_end": "2026-03-31T03:21:00Z",
+  "repos_targeted": 0,
   "runs_scanned": 3,
   "jobs_scanned": 5,
   "findings": [

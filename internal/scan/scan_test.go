@@ -247,3 +247,15 @@ func TestScanHardTreeErrorPropagates(t *testing.T) {
 		t.Fatal("want error")
 	}
 }
+
+func TestScanReposTargetedDeduped(t *testing.T) {
+	f := sourcetest.New()
+	f.Orgs["o"] = []string{"o/a", "o/b"}
+	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}, Org: "o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ReposTargeted != 2 {
+		t.Fatalf("ReposTargeted = %d, want 2", res.ReposTargeted)
+	}
+}

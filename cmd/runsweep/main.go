@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"regexp"
-	"slices"
 	"strings"
 	"time"
 
@@ -61,18 +60,6 @@ func validateTargets(repos []string, org string) error {
 		return fmt.Errorf("invalid --org %q", org)
 	}
 	return nil
-}
-
-// counting records how many repositories the scan will cover.
-type counting struct {
-	source.Source
-	orgRepos int
-}
-
-func (c *counting) ListRepos(ctx context.Context, org string) ([]string, error) {
-	r, err := c.Source.ListRepos(ctx, org)
-	c.orgRepos = len(r)
-	return r, err
 }
 
 func githubToken() (string, error) {
@@ -166,11 +153,10 @@ func scanCmd(d deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			base, err := d.newSource(token)
+			src, err := d.newSource(token)
 			if err != nil {
 				return err
 			}
-			src := &counting{Source: base}
 			logf := func(f string, a ...any) { fmt.Fprintf(c.ErrOrStderr(), f+"\n", a...) }
 			res, err := scan.Run(c.Context(), src, inc, scan.Options{Repos: repos, Org: org, Logf: logf})
 			if err != nil {
@@ -185,9 +171,12 @@ func scanCmd(d deps) *cobra.Command {
 				return err
 			}
 			if n := len(res.Skipped); n > 0 {
-				fmt.Fprintf(c.ErrOrStderr(), "warning: %d repositories skipped (see report)\n", n)
-				total := len(slices.Compact(slices.Sorted(slices.Values(repos)))) + src.orgRepos
-				if res.RunsScanned == 0 && n >= total {
+				noun := "repositories"
+				if n == 1 {
+					noun = "repository"
+				}
+				fmt.Fprintf(c.ErrOrStderr(), "warning: %d %s skipped (see report)\n", n, noun)
+				if n == res.ReposTargeted {
 					return errors.New("no repository could be scanned (missing access?)")
 				}
 			}
