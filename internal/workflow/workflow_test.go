@@ -4,6 +4,7 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"time"
 )
 
 const wf = `
@@ -198,7 +199,10 @@ func TestAliasedWorkflowEnvAndSteps(t *testing.T) {
 func TestInstallsNPMConservative(t *testing.T) {
 	for run, want := range map[string]bool{
 		"npx cypress run": true, "cd x && pnpm test": true, "yarn": true, "bunx foo": true,
-		"echo npm": false, "go test ./...": false,
+		"NODE_ENV=production npm ci": true, "if x; then npm ci; fi": true,
+		"for d in a b; do npm ci; done": true, "time npm ci": true, "env npm ci": true,
+		"ls | xargs npm ci": true, "x=`npm ci`": true, "docker run x npm ci": true,
+		"npmrc-tool": false, "./scripts/yarnish": false, "go test ./...": false,
 	} {
 		j := &Job{Runs: []string{run}}
 		if j.InstallsNPM() != want {
@@ -213,5 +217,82 @@ func TestInstallsNPMConservative(t *testing.T) {
 func TestParseTokenPermsNoGroup(t *testing.T) {
 	if len(ParseTokenPerms("hello\nContents: write\n")) != 0 {
 		t.Fatal("no group, no perms")
+	}
+}
+
+func parseWithin(t *testing.T, src string) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { _, err := Parse([]byte(src)); done <- err }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("Parse hangs")
+		return nil
+	}
+}
+
+func TestYAMLBombs(t *testing.T) {
+	if parseWithin(t, "x: &a [*a]\njobs: {}\n") == nil {
+		t.Error("alias cycle must error")
+	}
+	if parseWithin(t, "on: push\nenv: &e {A: *e}\njobs: {}\n") == nil {
+		t.Error("map alias cycle must error")
+	}
+	bomb := "a: &a [x,x,x,x,x,x,x,x,x]\n"
+	prev := "a"
+	for _, n := range []string{"b", "c", "d", "e", "f", "g", "h", "i", "j"} {
+		bomb += n + ": &" + n + " [*" + prev + ",*" + prev + ",*" + prev + ",*" + prev + ",*" + prev + ",*" + prev + ",*" + prev + ",*" + prev + ",*" + prev + "]\n"
+		prev = n
+	}
+	_ = parseWithin(t, bomb+"jobs: {}\n") // error or fast success, never a hang
+}
+
+func TestExpressionOnlyName(t *testing.T) {
+	w, err := Parse([]byte("on: push\njobs:\n  lint: {runs-on: x, steps: [{run: echo}]}\n  mx: {name: '${{ matrix.n }}', runs-on: x, steps: [{run: echo}]}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j, ok := w.FindJob("lint / other"); !ok || j.ID != "lint" {
+		t.Errorf("lint / other -> %v %v", j, ok)
+	}
+	if _, ok := w.FindJob("random thing"); ok {
+		t.Error("expression-only name must not match")
+	}
+}
+
+func TestWholeSecretsContext(t *testing.T) {
+	for _, e := range []string{
+		"${{ secrets }}", "${{ fromJSON(toJSON(secrets)) }}", "${{ toJson( secrets ) }}", "${{ join(secrets, ',') }}",
+		"${{ SECRETS[format('{0}', x)] }}",
+	} {
+		w, err := Parse([]byte("on: push\njobs:\n  a: {runs-on: x, steps: [{run: \"echo " + e + "\"}]}\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !w.Exposure(w.Jobs["a"]).InheritAll {
+			t.Errorf("%s must expose all secrets", e)
+		}
+	}
+	w, _ := Parse([]byte("on: push\njobs:\n  a: {runs-on: x, steps: [{run: \"echo ${{ secrets.A }} ${{ secrets['B'] }}\"}]}\n"))
+	if e := w.Exposure(w.Jobs["a"]); e.InheritAll || !slices.Equal(e.Secrets, []string{"A", "B"}) {
+		t.Errorf("named access: %+v", e)
+	}
+}
+
+func TestCloudRolesDedupeAndCopy(t *testing.T) {
+	step := "steps: [{uses: 'aws-actions/configure-aws-credentials@v4', with: {role-to-assume: r1}}]"
+	w, err := Parse([]byte("on: push\njobs:\n  a: {runs-on: x, " + step + "}\n  b: {runs-on: x, " + step + "}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(w.ExposureAll().CloudRoles); n != 1 {
+		t.Errorf("dedupe: %d", n)
+	}
+	e := w.Exposure(w.Jobs["a"])
+	e.CloudRoles[0].Role = "mutated"
+	if w.Jobs["a"].CloudRoles[0].Role != "r1" {
+		t.Error("Exposure aliases job slice")
 	}
 }

@@ -32,31 +32,39 @@ type Workflow struct {
 
 var (
 	secretRe  = regexp.MustCompile(`(?i)secrets\.([A-Za-z_][A-Za-z0-9_]*)|secrets\[\s*['"]([^'"]+)['"]\s*\]`)
-	dynamicRe = regexp.MustCompile(`(?i)toJSON\(\s*secrets\s*\)|secrets\[\s*[^'"\s]`)
-	// package-manager binary used as a command word (start of line or after a shell separator)
-	installRe = regexp.MustCompile(`(^|[;&|(\n]|\bsudo\s|\bexec\s|\bcorepack\s)\s*(npm|npx|yarn|pnpm|pnpx|bun|bunx)(\s|$|;|&|\|)`)
+	exprRe    = regexp.MustCompile(`(?s)\$\{\{(.*?)\}\}`)
+	secretsID = regexp.MustCompile(`(?i)\bsecrets\b`)
+	namedRe   = regexp.MustCompile(`^(\.[A-Za-z_]|\[\s*['"])`)
+	// package-manager binary as a word anywhere in a script; over-reports (e.g. `echo npm`) by design
+	installRe = regexp.MustCompile(`(?:^|[^\w./-])(npm|npx|yarn|pnpm|pnpx|bun|bunx)(?:$|[^\w.-])`)
 	tplRe     = regexp.MustCompile(`\$\{\{.*?\}\}`)
 	matrixRe  = regexp.MustCompile(` \([^)]*\)$`)
 )
 
 func Parse(b []byte) (*Workflow, error) {
-	var root yaml.Node
-	if err := yaml.Unmarshal(b, &root); err != nil {
+	// Decode into a plain value first: yaml.v3 expands aliases and merge keys with its own
+	// cycle/size limits; re-encoding gives an alias-free node tree that is safe to walk.
+	var v any
+	if err := yaml.Unmarshal(b, &v); err != nil {
 		return nil, fmt.Errorf("workflow yaml: %w", err)
 	}
-	if len(root.Content) == 0 {
-		return nil, fmt.Errorf("workflow yaml: empty document")
+	var root yaml.Node
+	if err := root.Encode(v); err != nil {
+		return nil, fmt.Errorf("workflow yaml: %w", err)
 	}
-	doc := root.Content[0]
+	doc := &root
+	if doc.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("workflow yaml: not a mapping")
+	}
 	w := &Workflow{Jobs: map[string]*Job{}}
 	w.globalSecrets, w.globalDynamic = secretsIn(get(doc, "env"))
 	wfIDToken := idToken(get(doc, "permissions"))
-	jobs := resolve(get(doc, "jobs"))
+	jobs := get(doc, "jobs")
 	if jobs == nil || jobs.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("workflow yaml: no jobs")
 	}
 	for i := 0; i+1 < len(jobs.Content); i += 2 {
-		id, jn := jobs.Content[i].Value, resolve(jobs.Content[i+1])
+		id, jn := jobs.Content[i].Value, jobs.Content[i+1]
 		j := &Job{ID: id, Name: scalar(get(jn, "name"))}
 		var dyn bool
 		j.Secrets, dyn = secretsIn(jn)
@@ -69,9 +77,8 @@ func Parse(b []byte) (*Workflow, error) {
 			j.Uses = append(j.Uses, u)
 		}
 		j.InheritSecrets = dyn || scalar(get(jn, "secrets")) == "inherit"
-		if steps := resolve(get(jn, "steps")); steps != nil {
+		if steps := get(jn, "steps"); steps != nil {
 			for _, st := range steps.Content {
-				st = resolve(st)
 				if u := scalar(get(st, "uses")); u != "" {
 					j.Uses = append(j.Uses, u)
 					j.CloudRoles = append(j.CloudRoles, cloudRoles(u, get(st, "with"))...)
@@ -133,6 +140,9 @@ func (w *Workflow) findStaged(name string) (*Job, bool) {
 			continue
 		}
 		lit := tplRe.ReplaceAllString(j.Name, "")
+		if strings.TrimSpace(lit) == "" {
+			continue // expression-only name matches anything; only ID/exact stage may match it
+		}
 		pat := "^"
 		for i, part := range tplRe.Split(j.Name, -1) {
 			if i > 0 {
@@ -251,7 +261,6 @@ func cloudRoles(uses string, with *yaml.Node) []model.CloudRole {
 }
 
 func idToken(perms *yaml.Node) bool {
-	perms = resolve(perms)
 	if perms == nil {
 		return false
 	}
@@ -266,12 +275,11 @@ func idToken(perms *yaml.Node) bool {
 func secretsIn(n *yaml.Node) (out []string, dynamic bool) {
 	var walk func(*yaml.Node)
 	walk = func(n *yaml.Node) {
-		n = resolve(n)
 		if n == nil {
 			return
 		}
 		if n.Kind == yaml.ScalarNode {
-			dynamic = dynamic || dynamicRe.MatchString(n.Value)
+			dynamic = dynamic || usesWholeSecrets(n.Value)
 			for _, m := range secretRe.FindAllStringSubmatch(n.Value, -1) {
 				if name := strings.ToUpper(m[1] + m[2]); name != "GITHUB_TOKEN" {
 					out = append(out, name)
@@ -286,48 +294,31 @@ func secretsIn(n *yaml.Node) (out []string, dynamic bool) {
 	return uniq(out), dynamic
 }
 
-// resolve follows aliases.
-func resolve(n *yaml.Node) *yaml.Node {
-	for n != nil && n.Kind == yaml.AliasNode {
-		n = n.Alias
-	}
-	return n
-}
-
-// get looks up key in a mapping, following aliases and `<<` merge keys.
 func get(n *yaml.Node, key string) *yaml.Node {
-	n = resolve(n)
 	if n == nil || n.Kind != yaml.MappingNode {
 		return nil
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		if n.Content[i].Value == key && n.Content[i].Tag != "!!merge" {
+		if n.Content[i].Value == key {
 			return n.Content[i+1]
-		}
-	}
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		if n.Content[i].Tag != "!!merge" {
-			continue
-		}
-		m := resolve(n.Content[i+1])
-		if m == nil {
-			continue
-		}
-		srcs := []*yaml.Node{m}
-		if m.Kind == yaml.SequenceNode {
-			srcs = m.Content
-		}
-		for _, src := range srcs {
-			if v := get(src, key); v != nil {
-				return v
-			}
 		}
 	}
 	return nil
 }
 
+// usesWholeSecrets: inside ${{ }}, `secrets` not followed by .name or ['name'] reads the whole context.
+func usesWholeSecrets(s string) bool {
+	for _, e := range exprRe.FindAllStringSubmatch(s, -1) {
+		for _, loc := range secretsID.FindAllStringIndex(e[1], -1) {
+			if !namedRe.MatchString(e[1][loc[1]:]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func scalar(n *yaml.Node) string {
-	n = resolve(n)
 	if n == nil || n.Kind != yaml.ScalarNode {
 		return ""
 	}
