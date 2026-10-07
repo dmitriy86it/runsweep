@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,9 +20,10 @@ import (
 const (
 	maxRetries  = 5
 	maxParallel = 10
-	maxLogBytes = 64 << 20
 	runsCap     = 1000 // GitHub returns at most 1000 runs for a `created` filter
 )
+
+var maxLogBytes int64 = 64 << 20 // var so tests can shrink it
 
 type Client struct {
 	gh    *github.Client
@@ -30,7 +32,7 @@ type Client struct {
 	cache sync.Map // "tree:repo@sha" / "blob:repo@sha" -> value
 
 	Logf  func(format string, args ...any)
-	Sleep func(time.Duration)
+	Sleep func(ctx context.Context, d time.Duration) error
 }
 
 type treeVal struct {
@@ -42,7 +44,7 @@ func New(httpClient *http.Client, token, baseURL string) (*Client, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	opts := []github.ClientOptionsFunc{github.WithHTTPClient(httpClient)}
+	opts := []github.ClientOptionsFunc{github.WithHTTPClient(httpClient), github.WithRateLimitRedirectionalEndpoints()}
 	if token != "" {
 		opts = append(opts, github.WithAuthToken(token))
 	}
@@ -54,7 +56,16 @@ func New(httpClient *http.Client, token, baseURL string) (*Client, error) {
 		return nil, err
 	}
 	return &Client{gh: g, http: httpClient, sem: make(chan struct{}, maxParallel),
-		Logf: func(string, ...any) {}, Sleep: time.Sleep}, nil
+		Logf: func(string, ...any) {}, Sleep: sleepCtx}, nil
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func split(repo string) (string, string) {
@@ -87,13 +98,23 @@ func (c *Client) do(ctx context.Context, f func() (*github.Response, error)) err
 				wait = time.Minute
 			}
 		default:
-			return mapErr(resp, err)
+			secs, perr := 0, errors.New("no retry-after")
+			if resp != nil && (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) {
+				secs, perr = strconv.Atoi(resp.Header.Get("Retry-After"))
+			}
+			if perr != nil || secs < 0 {
+				return mapErr(resp, err)
+			}
+			wait = time.Duration(secs) * time.Second
 		}
 		if attempt >= maxRetries {
 			return err
 		}
+		wait = max(wait, time.Second)
 		c.Logf("rate limited, waiting %s", wait.Round(time.Second))
-		c.Sleep(max(wait, time.Second))
+		if err := c.Sleep(ctx, wait); err != nil {
+			return err
+		}
 	}
 }
 
@@ -150,6 +171,10 @@ func (c *Client) ListRuns(ctx context.Context, repo string, start, end time.Time
 		})
 		if err != nil {
 			return nil, err
+		}
+		if opt.Page == 0 && page.GetTotalCount() >= runsCap && end.Sub(start) <= time.Minute {
+			c.Logf("%s: %d runs between %s and %s; GitHub returns at most %d — some runs not scanned",
+				repo, page.GetTotalCount(), start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339), runsCap)
 		}
 		if opt.Page == 0 && page.GetTotalCount() >= runsCap && end.Sub(start) > time.Minute {
 			mid := start.Add(end.Sub(start) / 2)
@@ -229,8 +254,14 @@ func (c *Client) JobLog(ctx context.Context, repo string, jobID int64) (string, 
 	default:
 		return "", fmt.Errorf("download job log: HTTP %d", resp.StatusCode)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxLogBytes))
-	return string(b), err
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxLogBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(b)) > maxLogBytes {
+		return "", fmt.Errorf("%w: job log exceeds %d MB", source.ErrIncomplete, maxLogBytes>>20)
+	}
+	return string(b), nil
 }
 
 func (c *Client) Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry, bool, error) {

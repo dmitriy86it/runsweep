@@ -10,6 +10,8 @@ import (
 var (
 	// ErrGone: GitHub deleted the object (retention, HTTP 410).
 	ErrGone = errors.New("deleted by GitHub retention (HTTP 410)")
+	// ErrIncomplete: data truncated by a size limit or an API cap.
+	ErrIncomplete = errors.New("data incomplete (size or API cap)")
 	// ErrNoAccess: 403/404 — missing permission or not found.
 	ErrNoAccess = errors.New("no access (HTTP 403/404)")
 )
