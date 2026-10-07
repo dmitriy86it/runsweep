@@ -107,6 +107,9 @@ func (i *Incident) Validate() error {
 		if strings.Count(a.Uses, "/") < 1 {
 			errs = append(errs, fmt.Errorf("actions %q: uses must be owner/repo", a.Uses))
 		}
+		if len(a.SHAs) == 0 {
+			errs = append(errs, fmt.Errorf("actions %q: at least one sha is required", a.Uses))
+		}
 		for _, s := range a.SHAs {
 			if !shaRe.MatchString(s) {
 				errs = append(errs, fmt.Errorf("actions %q: sha %q must be 40 lowercase hex chars", a.Uses, s))

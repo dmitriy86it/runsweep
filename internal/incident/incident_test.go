@@ -30,6 +30,7 @@ func TestParseErrors(t *testing.T) {
 	cases := map[string]string{
 		"window order":  strings.Replace(valid, "end: 2026-03-31T03:30:00Z", "end: 2026-03-30T00:00:00Z", 1),
 		"short sha":     strings.Replace(valid, "0123456789abcdef0123456789abcdef01234567", "0123abc", 1),
+		"no shas":       strings.Replace(valid, `shas: ["0123456789abcdef0123456789abcdef01234567"]`, "shas: []", 1),
 		"unknown field": valid + "\nfoo: bar\n",
 		"no targets":    "id: x\nwindow: {start: 2026-01-01T00:00:00Z, end: 2026-01-02T00:00:00Z}\n",
 		"no id":         strings.Replace(valid, "id: test-1", "", 1),
