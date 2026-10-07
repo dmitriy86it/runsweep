@@ -98,3 +98,79 @@ func TestMarkdownEscapesCells(t *testing.T) {
 		t.Fatalf("row injected:\n%s", out)
 	}
 }
+
+func TestMarkdownNoInjection(t *testing.T) {
+	inc, res := sample()
+	evil := "[x](http://e) <img src=x onerror=1> @user o/r#1"
+	inc.Title = "t\n`x`"
+	inc.Refs = []string{"a](http://e)"}
+	res.Findings[0].Run.Job = evil
+	res.Findings[0].Run.RunURL = "https://evil.example/x"
+	res.Findings[0].Evidence[0].Detail = evil
+	res.Skipped[0].Reason = evil
+	res.Rotation[1].Runs[0].Job = evil
+	var b bytes.Buffer
+	if err := Markdown(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "](") && !strings.Contains(line, "](https://github.com/") && !strings.Contains(line, "`") {
+			t.Fatalf("bare link: %q", line)
+		}
+		for _, bad := range []string{"<img", "](http://e)", "@user"} {
+			// every occurrence must be inside a code span: odd number of backticks before it
+			for i := strings.Index(line, bad); i >= 0; {
+				if strings.Count(line[:i], "`")%2 == 0 {
+					t.Fatalf("%q outside code span: %q", bad, line)
+				}
+				j := strings.Index(line[i+1:], bad)
+				if j < 0 {
+					break
+				}
+				i += 1 + j
+			}
+		}
+	}
+	if strings.Contains(out, "(https://evil") {
+		t.Fatal("non-github run URL linked")
+	}
+	// table row count unchanged: header + separator + 2 findings
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "| AFFECTED") || strings.HasPrefix(line, "| UNCHECKED") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("finding rows = %d", n)
+	}
+}
+
+func TestJSONEmptyAndUTC(t *testing.T) {
+	var b bytes.Buffer
+	if err := JSON(&b, &incident.Incident{ID: "x"}, &model.Result{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"findings": []`, `"rotation": []`, `"skipped": []`} {
+		if !strings.Contains(b.String(), want) {
+			t.Fatalf("missing %s in\n%s", want, b.String())
+		}
+	}
+	inc, res := sample()
+	z := time.FixedZone("x", 2*3600)
+	inc.Window.Start = inc.Window.Start.In(z)
+	res.Start = res.Start.In(z)
+	res.Findings[0].Run.CreatedAt = res.Findings[0].Run.CreatedAt.In(z)
+	res.Findings[1].Evidence = nil
+	b.Reset()
+	if err := JSON(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "+02:00") || strings.Contains(b.String(), `"evidence": null`) {
+		t.Fatalf("not normalized:\n%s", b.String())
+	}
+	if res.Findings[1].Evidence != nil {
+		t.Fatal("caller's Result mutated")
+	}
+}
