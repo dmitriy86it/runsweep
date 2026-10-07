@@ -1,0 +1,8 @@
+{"name":"app","lockfileVersion":3,"packages":{
+ "":{"name":"app"},
+ "node_modules/axios":{"version":"1.14.1"},
+ "node_modules/@scope/pkg":{"version":"2.0.0"},
+ "node_modules/a/node_modules/axios":{"version":"0.30.4"},
+ "node_modules/alias":{"name":"is-number","version":"7.0.0"},
+ "packages/web":{"version":"0.0.1"},
+ "node_modules/web":{"link":true,"resolved":"packages/web"}}}

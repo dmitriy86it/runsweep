@@ -1,0 +1,8 @@
+lockfileVersion: '9.0'
+packages:
+  axios@1.14.1:
+    resolution: {integrity: sha512-x}
+  '@scope/pkg@2.0.0':
+    resolution: {integrity: sha512-y}
+  react-dom@18.2.0(react@18.2.0):
+    resolution: {integrity: sha512-z}

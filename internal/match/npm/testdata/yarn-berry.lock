@@ -1,0 +1,8 @@
+__metadata:
+  version: 8
+
+"@scope/pkg@npm:^2.0.0":
+  version: 2.0.0
+
+"axios@npm:^1.0.0, axios@npm:^1.14.0":
+  version: 1.14.1
