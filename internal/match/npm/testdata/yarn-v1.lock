@@ -24,3 +24,11 @@ alias@npm:is-number@^7:
   version "1.5.0"
   dependencies:
     version "^1.0.0"
+
+"is-odd@^3.0.0", "is-even@^1.0.0":
+  version "1.0.0"
+
+"indent-test@^1.0.0":
+  dependencies:
+    version "^9.9.9"
+  version "2.0.0"

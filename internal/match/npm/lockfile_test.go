@@ -24,8 +24,8 @@ func TestParsers(t *testing.T) {
 		{"pnpm-lock-v9.yaml", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}, {"react-dom", "18.2.0"}}},
 		{"pnpm-lock-v6.yaml", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}}},
 		{"pnpm-lock-v5.yaml", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}}},
-		{"yarn-v1.lock", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}, {"is-number", "7.0.0"}, {"foo", "1.2.3"}, {"left-pad", "1.3.0"}, {"version", "1.5.0"}}},
-		{"yarn-berry.lock", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}, {"is-number", "7.0.0"}, {"foo", "1.0.0"}, {"left-pad", "1.3.0"}, {"version", "1.5.0"}}},
+		{"yarn-v1.lock", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}, {"is-number", "7.0.0"}, {"foo", "1.2.3"}, {"left-pad", "1.3.0"}, {"version", "1.5.0"}, {"is-odd", "1.0.0"}, {"is-even", "1.0.0"}, {"indent-test", "2.0.0"}}},
+		{"yarn-berry.lock", []Pkg{{"axios", "1.14.1"}, {"@scope/pkg", "2.0.0"}, {"is-number", "7.0.0"}, {"foo", "1.0.0"}, {"left-pad", "1.3.0"}, {"version", "1.5.0"}, {"is-odd", "1.0.0"}, {"is-even", "1.0.0"}, {"indent-test", "2.0.0"}}},
 	}
 	names := map[string]string{"package-lock-v3.json": "package-lock.json", "package-lock-v1.json": "package-lock.json",
 		"pnpm-lock-v9.yaml": "pnpm-lock.yaml", "pnpm-lock-v6.yaml": "pnpm-lock.yaml", "pnpm-lock-v5.yaml": "pnpm-lock.yaml",
@@ -97,5 +97,30 @@ func TestMalformedInputsPanic(t *testing.T) {
 		if err != nil && err.Error() == "EOF" {
 			t.Logf("pnpm %q: acceptable EOF", input)
 		}
+	}
+}
+
+// TestPerSpecQuoteTrimNecessary verifies that the per-spec quote trim is critical.
+// This test documents that removing the Trim(spec, `"`) at lockfile.go:156 would fail:
+// "is-odd@^3.0.0", "is-even@^1.0.0": would split to ["is-odd@^3.0.0", " "is-even@^1.0.0"]
+// Without per-spec trim, second spec remains "is-even@^1.0.0 and extracts as "is-even (missing package).
+func TestPerSpecQuoteTrimNecessary(t *testing.T) {
+	input := []byte(`# yarn lockfile v1
+
+"is-odd@^3.0.0", "is-even@^1.0.0":
+  version "1.0.0"
+`)
+	got, err := ParseYarnLock(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	gotSet := pkgSet(got)
+	wantSet := pkgSet([]Pkg{{"is-odd", "1.0.0"}, {"is-even", "1.0.0"}})
+	if !maps.Equal(gotSet, wantSet) {
+		t.Errorf("per-spec trim regression: got %v, want %v", got, []Pkg{{"is-odd", "1.0.0"}, {"is-even", "1.0.0"}})
+	}
+	// Verify both packages are present (not just one)
+	if len(got) != 2 {
+		t.Errorf("expected exactly 2 packages, got %d: %v", len(got), got)
 	}
 }

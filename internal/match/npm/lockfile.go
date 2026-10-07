@@ -161,15 +161,17 @@ func ParseYarnLock(b []byte) ([]Pkg, error) {
 			version = ""
 			continue
 		}
-		// Version line: indented, starts with "version", only accept first match (first match wins)
-		t := strings.TrimSpace(line)
-		if names != nil && len(names) > 0 && version == "" && (strings.HasPrefix(t, "version ") || strings.HasPrefix(t, "version:")) {
-			v := strings.Trim(strings.TrimSpace(strings.TrimLeft(strings.TrimPrefix(t, "version"), ": ")), `"`)
-			// Skip workspace entries
-			if v != "0.0.0-use.local" {
-				version = v
-			} else {
-				names = nil
+		// Version line: exactly 2-space indent (line[0:2]=="  " && line[2]!=' '), starts with "version", first match wins
+		if names != nil && len(names) > 0 && version == "" && len(line) >= 3 && line[0:2] == "  " && line[2] != ' ' {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, "version ") || strings.HasPrefix(t, "version:") {
+				v := strings.Trim(strings.TrimSpace(strings.TrimLeft(strings.TrimPrefix(t, "version"), ": ")), `"`)
+				// Skip workspace entries
+				if v != "0.0.0-use.local" {
+					version = v
+				} else {
+					names = nil
+				}
 			}
 		}
 	}
