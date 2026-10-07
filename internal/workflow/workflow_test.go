@@ -105,3 +105,113 @@ func TestParseTokenPerms(t *testing.T) {
 		t.Fatal("real log fixture must yield token permissions")
 	}
 }
+
+const wf2 = `
+on: push
+x-perms: &p {id-token: write}
+x-defaults: &defaults {runs-on: x, permissions: {id-token: write}}
+jobs:
+  a:
+    runs-on: x
+    env: &common {T: "${{ secrets.aliased }}"}
+    steps: [{run: "echo ${{ toJSON(secrets) }}"}]
+  br:
+    runs-on: x
+    steps: [{run: "echo ${{ secrets[format('{0}_KEY', matrix.env)] }}"}]
+  b:
+    runs-on: x
+    permissions: *p
+    env: *common
+    steps: [{run: "echo ${{ secrets.npm_token }} ${{ secrets.github_token }}"}]
+  m:
+    <<: *defaults
+    steps: [{run: echo}]
+  t1:
+    name: Test ${{ matrix.os }}
+    runs-on: x
+    steps: [{run: echo}]
+  t2:
+    name: Test e2e ${{ matrix.browser }}
+    runs-on: x
+    steps: [{run: echo}]
+  lint:
+    runs-on: x
+    steps: [{run: echo}]
+  lf:
+    name: lint / format
+    runs-on: x
+    steps: [{run: echo}]
+  g:
+    runs-on: x
+    steps:
+      - uses: google-github-actions/auth@v2
+        with: {workload_identity_provider: projects/1/wip, service_account: sa@p.iam}
+`
+
+func TestHardening(t *testing.T) {
+	w, err := Parse([]byte(wf2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.Exposure(w.Jobs["a"]).InheritAll || !w.Exposure(w.Jobs["br"]).InheritAll {
+		t.Error("dynamic secret access must mean all secrets")
+	}
+	b := w.Exposure(w.Jobs["b"])
+	if !b.IDTokenWrite || !slices.Equal(b.Secrets, []string{"ALIASED", "NPM_TOKEN"}) || b.InheritAll {
+		t.Errorf("alias/upper/GITHUB_TOKEN: %+v", b)
+	}
+	if !w.Exposure(w.Jobs["m"]).IDTokenWrite {
+		t.Error("merge key permissions")
+	}
+	if len(w.Jobs["g"].CloudRoles) != 2 {
+		t.Errorf("gcp roles: %v", w.Jobs["g"].CloudRoles)
+	}
+	if len(w.ExposureAll().CloudRoles) != 2 {
+		t.Error("ExposureAll cloud roles")
+	}
+	for i := 0; i < 50; i++ {
+		w, _ := Parse([]byte(wf2))
+		for api, want := range map[string]string{
+			"Test e2e chrome": "t2", "Test linux": "t1", "lint / format": "lf",
+			"lint": "lint", "lint / other": "lint", "Test e2e chrome (a, b)": "t2",
+		} {
+			if j, ok := w.FindJob(api); !ok || j.ID != want {
+				t.Fatalf("%q -> %v %v, want %s", api, j, ok, want)
+			}
+		}
+		if j, ok := w.FindJob("Testing (x)"); ok {
+			t.Fatalf("Testing matched %s", j.ID)
+		}
+	}
+}
+
+func TestAliasedWorkflowEnvAndSteps(t *testing.T) {
+	w, err := Parse([]byte("on: push\nenv: {K: '${{ toJSON(secrets) }}'}\nx: &s [{run: npx foo}]\njobs:\n  a: {runs-on: x, steps: *s}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.Exposure(w.Jobs["a"]).InheritAll || !w.Jobs["a"].InstallsNPM() {
+		t.Fatal("workflow-level dynamic / aliased steps")
+	}
+}
+
+func TestInstallsNPMConservative(t *testing.T) {
+	for run, want := range map[string]bool{
+		"npx cypress run": true, "cd x && pnpm test": true, "yarn": true, "bunx foo": true,
+		"echo npm": false, "go test ./...": false,
+	} {
+		j := &Job{Runs: []string{run}}
+		if j.InstallsNPM() != want {
+			t.Errorf("%q: want %v", run, want)
+		}
+	}
+	if !(&Job{Uses: []string{"cypress-io/github-action@v6"}}).InstallsNPM() {
+		t.Error("cypress action")
+	}
+}
+
+func TestParseTokenPermsNoGroup(t *testing.T) {
+	if len(ParseTokenPerms("hello\nContents: write\n")) != 0 {
+		t.Fatal("no group, no perms")
+	}
+}

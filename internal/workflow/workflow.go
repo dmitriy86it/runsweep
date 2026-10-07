@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -26,11 +27,15 @@ type Job struct {
 type Workflow struct {
 	Jobs          map[string]*Job
 	globalSecrets []string
+	globalDynamic bool
 }
 
 var (
-	secretRe  = regexp.MustCompile(`secrets\.([A-Za-z_][A-Za-z0-9_]*)|secrets\[\s*['"]([^'"]+)['"]\s*\]`)
-	installRe = regexp.MustCompile(`\b(npm\s+(ci|install|i)|pnpm\s+(install|i)|yarn(\s+install)?|bun\s+install)\b`)
+	secretRe  = regexp.MustCompile(`(?i)secrets\.([A-Za-z_][A-Za-z0-9_]*)|secrets\[\s*['"]([^'"]+)['"]\s*\]`)
+	dynamicRe = regexp.MustCompile(`(?i)toJSON\(\s*secrets\s*\)|secrets\[\s*[^'"\s]`)
+	// package-manager binary used as a command word (start of line or after a shell separator)
+	installRe = regexp.MustCompile(`(^|[;&|(\n]|\bsudo\s|\bexec\s|\bcorepack\s)\s*(npm|npx|yarn|pnpm|pnpx|bun|bunx)(\s|$|;|&|\|)`)
+	tplRe     = regexp.MustCompile(`\$\{\{.*?\}\}`)
 	matrixRe  = regexp.MustCompile(` \([^)]*\)$`)
 )
 
@@ -43,15 +48,18 @@ func Parse(b []byte) (*Workflow, error) {
 		return nil, fmt.Errorf("workflow yaml: empty document")
 	}
 	doc := root.Content[0]
-	w := &Workflow{Jobs: map[string]*Job{}, globalSecrets: secretsIn(get(doc, "env"))}
+	w := &Workflow{Jobs: map[string]*Job{}}
+	w.globalSecrets, w.globalDynamic = secretsIn(get(doc, "env"))
 	wfIDToken := idToken(get(doc, "permissions"))
-	jobs := get(doc, "jobs")
+	jobs := resolve(get(doc, "jobs"))
 	if jobs == nil || jobs.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("workflow yaml: no jobs")
 	}
 	for i := 0; i+1 < len(jobs.Content); i += 2 {
-		id, jn := jobs.Content[i].Value, jobs.Content[i+1]
-		j := &Job{ID: id, Name: scalar(get(jn, "name")), Secrets: secretsIn(jn)}
+		id, jn := jobs.Content[i].Value, resolve(jobs.Content[i+1])
+		j := &Job{ID: id, Name: scalar(get(jn, "name"))}
+		var dyn bool
+		j.Secrets, dyn = secretsIn(jn)
 		if perms := get(jn, "permissions"); perms != nil {
 			j.IDTokenWrite = idToken(perms)
 		} else {
@@ -60,14 +68,13 @@ func Parse(b []byte) (*Workflow, error) {
 		if u := scalar(get(jn, "uses")); u != "" {
 			j.Uses = append(j.Uses, u)
 		}
-		j.InheritSecrets = scalar(get(jn, "secrets")) == "inherit"
-		if steps := get(jn, "steps"); steps != nil {
+		j.InheritSecrets = dyn || scalar(get(jn, "secrets")) == "inherit"
+		if steps := resolve(get(jn, "steps")); steps != nil {
 			for _, st := range steps.Content {
+				st = resolve(st)
 				if u := scalar(get(st, "uses")); u != "" {
 					j.Uses = append(j.Uses, u)
-					if role, ok := cloudRole(u, get(st, "with")); ok {
-						j.CloudRoles = append(j.CloudRoles, role)
-					}
+					j.CloudRoles = append(j.CloudRoles, cloudRoles(u, get(st, "with"))...)
 				}
 				if r := scalar(get(st, "run")); r != "" {
 					j.Runs = append(j.Runs, r)
@@ -80,25 +87,88 @@ func Parse(b []byte) (*Workflow, error) {
 }
 
 // FindJob maps an API job name (matrix suffix, expressions, "caller / callee") to a workflow job.
+// Ambiguous matches return false so callers fall back to ExposureAll.
 func (w *Workflow) FindJob(apiName string) (*Job, bool) {
-	n := matrixRe.ReplaceAllString(apiName, "")
-	if caller, _, ok := strings.Cut(n, " / "); ok {
-		n = caller
+	if j, found := w.findStaged(apiName); found {
+		return j, j != nil
 	}
-	for _, j := range w.Jobs {
-		if j.ID == n || j.Name == n || j.Name == apiName {
-			return j, true
-		}
-	}
-	for _, j := range w.Jobs { // name: "Build ${{ matrix.node }}" vs API "Build 18"
-		if i := strings.Index(j.Name, "${{"); i > 0 && strings.HasPrefix(n, strings.TrimSpace(j.Name[:i])) {
-			return j, true
+	if caller, _, ok := strings.Cut(apiName, " / "); ok {
+		if j, found := w.findStaged(caller); found {
+			return j, j != nil
 		}
 	}
 	return nil, false
 }
 
+// findStaged: exact, then templated names. found=true with nil job means ambiguous.
+func (w *Workflow) findStaged(name string) (*Job, bool) {
+	names := []string{name}
+	if s := matrixRe.ReplaceAllString(name, ""); s != name {
+		names = append(names, s)
+	}
+	ids := make([]string, 0, len(w.Jobs))
+	for id := range w.Jobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, n := range names {
+		var hit []*Job
+		for _, id := range ids {
+			if j := w.Jobs[id]; j.ID == n || j.Name == n {
+				hit = append(hit, j)
+			}
+		}
+		if len(hit) == 1 {
+			return hit[0], true
+		} else if len(hit) > 1 {
+			return nil, true
+		}
+	}
+	// templated names: the most specific (longest literal text) match wins; a tie is ambiguous.
+	var best *Job
+	bestLen, tie := -1, false
+	for _, id := range ids {
+		j := w.Jobs[id]
+		if !strings.Contains(j.Name, "${{") {
+			continue
+		}
+		lit := tplRe.ReplaceAllString(j.Name, "")
+		pat := "^"
+		for i, part := range tplRe.Split(j.Name, -1) {
+			if i > 0 {
+				pat += ".+"
+			}
+			pat += regexp.QuoteMeta(part)
+		}
+		re := regexp.MustCompile(pat + "$")
+		for _, n := range names {
+			if re.MatchString(n) {
+				if len(lit) > bestLen {
+					best, bestLen, tie = j, len(lit), false
+				} else if len(lit) == bestLen && best != j {
+					tie = true
+				}
+				break
+			}
+		}
+	}
+	if best == nil {
+		return nil, false
+	}
+	if tie {
+		return nil, true
+	}
+	return best, true
+}
+
 func (j *Job) InstallsNPM() bool {
+	for _, u := range j.Uses {
+		name, _, _ := strings.Cut(strings.ToLower(u), "@")
+		switch name {
+		case "bahmutov/npm-install", "cypress-io/github-action", "pnpm/action-setup":
+			return true
+		}
+	}
 	for _, r := range j.Runs {
 		if installRe.MatchString(r) {
 			return true
@@ -111,21 +181,25 @@ func (j *Job) InstallsNPM() bool {
 func (w *Workflow) Exposure(j *Job) model.Exposure {
 	return model.Exposure{
 		Secrets:      uniq(append(append([]string{}, w.globalSecrets...), j.Secrets...)),
-		InheritAll:   j.InheritSecrets,
+		InheritAll:   j.InheritSecrets || w.globalDynamic,
 		IDTokenWrite: j.IDTokenWrite,
-		CloudRoles:   j.CloudRoles,
+		CloudRoles:   append([]model.CloudRole(nil), j.CloudRoles...),
 		JobMatched:   true,
 	}
 }
 
 // ExposureAll is the conservative union over all jobs, used when the job cannot be identified.
 func (w *Workflow) ExposureAll() model.Exposure {
-	e := model.Exposure{Secrets: append([]string{}, w.globalSecrets...)}
+	e := model.Exposure{Secrets: append([]string{}, w.globalSecrets...), InheritAll: w.globalDynamic}
 	for _, j := range w.Jobs {
 		e.Secrets = append(e.Secrets, j.Secrets...)
 		e.InheritAll = e.InheritAll || j.InheritSecrets
 		e.IDTokenWrite = e.IDTokenWrite || j.IDTokenWrite
-		e.CloudRoles = append(e.CloudRoles, j.CloudRoles...)
+		for _, r := range j.CloudRoles {
+			if !slices.Contains(e.CloudRoles, r) {
+				e.CloudRoles = append(e.CloudRoles, r)
+			}
+		}
 	}
 	e.Secrets = uniq(e.Secrets)
 	return e
@@ -156,29 +230,28 @@ func ParseTokenPerms(log string) map[string]string {
 	return out
 }
 
-func cloudRole(uses string, with *yaml.Node) (model.CloudRole, bool) {
+func cloudRoles(uses string, with *yaml.Node) []model.CloudRole {
+	var roles []model.CloudRole
+	add := func(provider, key string) {
+		if r := scalar(get(with, key)); r != "" {
+			roles = append(roles, model.CloudRole{Provider: provider, Role: r})
+		}
+	}
 	name, _, _ := strings.Cut(strings.ToLower(uses), "@")
 	switch name {
 	case "aws-actions/configure-aws-credentials":
-		if r := scalar(get(with, "role-to-assume")); r != "" {
-			return model.CloudRole{Provider: "aws", Role: r}, true
-		}
+		add("aws", "role-to-assume")
 	case "google-github-actions/auth":
-		if r := scalar(get(with, "service_account")); r != "" {
-			return model.CloudRole{Provider: "gcp", Role: r}, true
-		}
-		if r := scalar(get(with, "workload_identity_provider")); r != "" {
-			return model.CloudRole{Provider: "gcp", Role: r}, true
-		}
+		add("gcp", "service_account")
+		add("gcp", "workload_identity_provider")
 	case "azure/login":
-		if r := scalar(get(with, "client-id")); r != "" {
-			return model.CloudRole{Provider: "azure", Role: r}, true
-		}
+		add("azure", "client-id")
 	}
-	return model.CloudRole{}, false
+	return roles
 }
 
 func idToken(perms *yaml.Node) bool {
+	perms = resolve(perms)
 	if perms == nil {
 		return false
 	}
@@ -188,17 +261,19 @@ func idToken(perms *yaml.Node) bool {
 	return scalar(get(perms, "id-token")) == "write"
 }
 
-func secretsIn(n *yaml.Node) []string {
-	var out []string
+// secretsIn collects referenced secret names (upper-cased); dynamic is true when
+// the whole secret set may be read (toJSON(secrets), secrets[<expression>]).
+func secretsIn(n *yaml.Node) (out []string, dynamic bool) {
 	var walk func(*yaml.Node)
 	walk = func(n *yaml.Node) {
+		n = resolve(n)
 		if n == nil {
 			return
 		}
 		if n.Kind == yaml.ScalarNode {
+			dynamic = dynamic || dynamicRe.MatchString(n.Value)
 			for _, m := range secretRe.FindAllStringSubmatch(n.Value, -1) {
-				name := m[1] + m[2]
-				if name != "GITHUB_TOKEN" {
+				if name := strings.ToUpper(m[1] + m[2]); name != "GITHUB_TOKEN" {
 					out = append(out, name)
 				}
 			}
@@ -208,22 +283,51 @@ func secretsIn(n *yaml.Node) []string {
 		}
 	}
 	walk(n)
-	return uniq(out)
+	return uniq(out), dynamic
 }
 
+// resolve follows aliases.
+func resolve(n *yaml.Node) *yaml.Node {
+	for n != nil && n.Kind == yaml.AliasNode {
+		n = n.Alias
+	}
+	return n
+}
+
+// get looks up key in a mapping, following aliases and `<<` merge keys.
 func get(n *yaml.Node, key string) *yaml.Node {
+	n = resolve(n)
 	if n == nil || n.Kind != yaml.MappingNode {
 		return nil
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
-		if n.Content[i].Value == key {
+		if n.Content[i].Value == key && n.Content[i].Tag != "!!merge" {
 			return n.Content[i+1]
+		}
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		if n.Content[i].Tag != "!!merge" {
+			continue
+		}
+		m := resolve(n.Content[i+1])
+		if m == nil {
+			continue
+		}
+		srcs := []*yaml.Node{m}
+		if m.Kind == yaml.SequenceNode {
+			srcs = m.Content
+		}
+		for _, src := range srcs {
+			if v := get(src, key); v != nil {
+				return v
+			}
 		}
 	}
 	return nil
 }
 
 func scalar(n *yaml.Node) string {
+	n = resolve(n)
 	if n == nil || n.Kind != yaml.ScalarNode {
 		return ""
 	}
