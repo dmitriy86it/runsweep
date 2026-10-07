@@ -255,3 +255,38 @@ func TestYarnNoSilentDrop(t *testing.T) {
 		}
 	}
 }
+
+func TestYarnV1FailClosed(t *testing.T) {
+	cases := map[string]struct {
+		in   string
+		want []Pkg
+		err  bool
+	}{
+		"trailing space header":   {"# yarn lockfile v1\n\naxios@^1: \n  version \"1.14.1\"  \n", []Pkg{{"axios", "1.14.1"}}, false},
+		"whitespace-only line":    {"# yarn lockfile v1\n   \naxios@^1:\n  version \"1.14.1\"\n", []Pkg{{"axios", "1.14.1"}}, false},
+		"unrecognised top line":   {"# yarn lockfile v1\n\naxios@^1 {\n  version \"1.14.1\"\n", nil, true},
+		"tab-indented field":      {"# yarn lockfile v1\n\naxios@^1:\n\tversion \"1.14.1\"\n", nil, true},
+		"indented before header":  {"# yarn lockfile v1\n  version \"1.14.1\"\naxios@^1:\n  version \"1.14.1\"\n", nil, true},
+		"odd indent":              {"# yarn lockfile v1\n\naxios@^1:\n v\n  version \"1.14.1\"\n", nil, true},
+		"duplicate version":       {"# yarn lockfile v1\n\naxios@^1:\n  version \"1.13.0\"\n  version \"1.14.1\"\n", nil, true},
+		"nested version not dupe": {"# yarn lockfile v1\n\nx@^1:\n  version \"1.0.0\"\n  dependencies:\n    version \"^2\"\n", []Pkg{{"x", "1.0.0"}}, false},
+	}
+	for name, c := range cases {
+		got, err := ParseYarnLock([]byte(c.in))
+		if (err != nil) != c.err {
+			t.Errorf("%s: err %v, want err %v", name, err, c.err)
+			continue
+		}
+		if !maps.Equal(pkgSet(got), pkgSet(c.want)) {
+			t.Errorf("%s: got %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+func TestIsLockfileNodeModulesSegment(t *testing.T) {
+	for p, want := range map[string]bool{"x_node_modules/app/package-lock.json": true, "a/node_modules/b/yarn.lock": false, "node_modules/yarn.lock": false} {
+		if IsLockfile(p) != want {
+			t.Errorf("%s: want %v", p, want)
+		}
+	}
+}

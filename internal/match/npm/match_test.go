@@ -58,3 +58,75 @@ func TestMatchBrokenLockfileIsNote(t *testing.T) {
 		t.Fatalf("%+v %v", r, err)
 	}
 }
+
+func TestMatchDeclared(t *testing.T) {
+	cases := map[string]struct {
+		pkgJSON string
+		want    model.Status
+		detail  string
+	}{
+		"bom":              {"\uFEFF" + `{"dependencies":{"axios":"^1"}}`, model.Possible, "axios declared in app/package.json"},
+		"non-string value": {`{"dependencies":{"x":{"a":1},"axios":"^1"}}`, model.Possible, "axios declared"},
+		"alias to bad":     {`{"dependencies":{"http":"npm:axios@^1"}}`, model.Possible, "axios declared"},
+		"scoped alias":     {`{"dependencies":{"s":"npm:@s/p@^1"}}`, model.Possible, "@s/p declared"},
+		"unparseable":      {`{"dependencies":`, model.Unchecked, "cannot parse app/package.json"},
+		"clean":            {`{"dependencies":{"left-pad":"^1"}}`, model.Clean, ""},
+	}
+	badPkgs := append([]incident.NPMPackage{{Name: "@s/p", Versions: []string{"1.0.0"}}}, bad...)
+	for name, c := range cases {
+		f := sourcetest.New()
+		f.AddFile("o/r", "s1", "app/package.json", []byte(c.pkgJSON))
+		r, err := Match(context.Background(), f, "o/r", "s1", badPkgs)
+		if err != nil || r.Status != c.want || (c.detail != "" && !strings.Contains(r.Evidence[0].Detail, c.detail)) {
+			t.Errorf("%s: %+v %v", name, r, err)
+		}
+	}
+}
+
+func TestMatchStaleLockfile(t *testing.T) {
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/left-pad":{"version":"1.0.0"}}}`))
+	f.AddFile("o/r", "s1", "package.json", []byte(`{"dependencies":{"axios":"^1","left-pad":"^1"}}`))
+	r, _ := Match(context.Background(), f, "o/r", "s1", bad)
+	if r.Status != model.Possible || !strings.Contains(r.Evidence[0].Detail, "axios declared in package.json but not in lockfile package-lock.json") {
+		t.Fatalf("%+v", r)
+	}
+	// Present in the lockfile at a good version: clean.
+	f = sourcetest.New()
+	f.AddFile("o/r", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.13.0"}}}`))
+	f.AddFile("o/r", "s1", "package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
+	if r, _ = Match(context.Background(), f, "o/r", "s1", bad); r.Status != model.Clean {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestMatchFailedLockfileStillChecksPackageJSON(t *testing.T) {
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "yarn.lock", []byte(`garbage`))
+	f.AddFile("o/r", "s1", "package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
+	r, _ := Match(context.Background(), f, "o/r", "s1", bad)
+	if r.Status != model.Possible {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestMatchNodeModulesSegment(t *testing.T) {
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "x_node_modules/app/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
+	f.AddFile("o/r", "s1", "a/node_modules/b/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
+	r, _ := Match(context.Background(), f, "o/r", "s1", bad)
+	if r.Status != model.Possible || len(r.Evidence) != 1 || !strings.Contains(r.Evidence[0].Detail, "x_node_modules/app/package.json") {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestMatchTruncatedAlwaysNoted(t *testing.T) {
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
+	f.Truncated["o/r@s1"] = true
+	r, _ := Match(context.Background(), f, "o/r", "s1", bad)
+	last := r.Evidence[len(r.Evidence)-1]
+	if r.Status != model.Possible || last.Kind != "note" || !strings.Contains(last.Detail, "truncated") {
+		t.Fatalf("%+v", r)
+	}
+}

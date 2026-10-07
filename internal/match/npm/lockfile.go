@@ -19,7 +19,7 @@ type Pkg struct{ Name, Version string }
 
 // IsLockfile reports whether p is a lockfile runsweep understands (outside node_modules).
 func IsLockfile(p string) bool {
-	if strings.Contains(p, "node_modules/") {
+	if InNodeModules(p) {
 		return false
 	}
 	switch path.Base(p) {
@@ -27,6 +27,11 @@ func IsLockfile(p string) bool {
 		return true
 	}
 	return false
+}
+
+// InNodeModules reports whether p has a node_modules path segment.
+func InNodeModules(p string) bool {
+	return p == "node_modules" || strings.HasPrefix(p, "node_modules/") || strings.Contains(p, "/node_modules/")
 }
 
 // ParseLockfile dispatches on the file's base name.
@@ -176,13 +181,14 @@ func ParseYarnLock(raw []byte) ([]Pkg, error) {
 	return out, nil
 }
 
-// scanYarnV1 collects each top-level entry's first 2-space-indented version, resolution and resolved.
+// scanYarnV1 collects each top-level entry's 2-space-indented version, resolution and resolved.
+// Any line it cannot classify, or a repeated version, is an error: fail closed.
 func scanYarnV1(b []byte) ([]yarnEntry, error) {
 	var out []yarnEntry
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	sc.Buffer(make([]byte, 1024*1024), 16*1024*1024)
 	for sc.Scan() {
-		line := sc.Text()
+		line := strings.TrimRight(sc.Text(), " ")
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -191,8 +197,13 @@ func scanYarnV1(b []byte) ([]yarnEntry, error) {
 			out = append(out, yarnEntry{key: strings.Trim(strings.TrimSuffix(line, ":"), `" `)})
 			continue
 		}
-		// Field line: exactly 2-space indent (line[0:2]=="  " && line[2]!=' '), first match wins
-		if len(out) == 0 || len(line) < 3 || line[0:2] != "  " || line[2] == ' ' {
+		if !strings.HasPrefix(line, " ") || len(out) == 0 {
+			return nil, fmt.Errorf("yarn.lock v1: unexpected line %q", line)
+		}
+		// Indent is in 2-space steps (yarn rejects odd indents); only 2-space lines are entry fields
+		if indent := len(line) - len(strings.TrimLeft(line, " ")); indent%2 != 0 {
+			return nil, fmt.Errorf("yarn.lock v1: odd indentation in %q", line)
+		} else if indent != 2 {
 			continue
 		}
 		e := &out[len(out)-1]
@@ -201,7 +212,13 @@ func scanYarnV1(b []byte) ([]yarnEntry, error) {
 			name string
 			dst  *string
 		}{{"version", &e.Version}, {"resolution", &e.Resolution}, {"resolved", &e.Resolved}} {
-			if *f.dst == "" && (strings.HasPrefix(t, f.name+" ") || strings.HasPrefix(t, f.name+":")) {
+			if strings.HasPrefix(t, f.name+" ") || strings.HasPrefix(t, f.name+":") {
+				if *f.dst != "" {
+					if f.name == "version" {
+						return nil, fmt.Errorf("yarn.lock v1: entry %q has two versions", e.key)
+					}
+					continue
+				}
 				*f.dst = strings.Trim(strings.TrimSpace(strings.TrimLeft(strings.TrimPrefix(t, f.name), ": ")), `"`)
 			}
 		}
