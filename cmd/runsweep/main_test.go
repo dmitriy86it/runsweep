@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -230,5 +231,40 @@ func TestNoTerminalEscapesInOutput(t *testing.T) {
 	}
 	if strings.ContainsAny(out.String()+errb.String(), "\x1b\x07") {
 		t.Fatalf("escape leaked:\nstdout %q\nstderr %q", out.String(), errb.String())
+	}
+}
+
+func TestScanWarnings(t *testing.T) {
+	const retention = "warning: incident window ends more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence"
+	// old window, one UNCHECKED job (git tree truncated, no lockfile seen)
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
+	f.Jobs[1] = []source.Job{{ID: 2, Name: "build"}}
+	f.Truncated["o/a@s"] = true
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 0 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	for _, want := range []string{retention, "warning: 1 jobs could not be checked (UNCHECKED)"} {
+		if !strings.Contains(errb.String(), want) {
+			t.Errorf("stderr lacks %q:\n%s", want, errb.String())
+		}
+	}
+	if !strings.Contains(out.String(), "absence of runs is not evidence") || strings.Contains(errb.String(), "no workflow runs") {
+		t.Errorf("stdout:\n%s\nstderr:\n%s", out.String(), errb.String())
+	}
+
+	// recent window, no runs
+	now := time.Now().UTC()
+	recent := fmt.Sprintf("id: x\nwindow: {start: %s, end: %s}\nnpm: [{name: axios, versions: [\"1.14.1\"]}]\n",
+		now.Add(-48*time.Hour).Format(time.RFC3339), now.Add(-24*time.Hour).Format(time.RFC3339))
+	out.Reset()
+	errb.Reset()
+	if code := run([]string{"scan", "--incident", writeInc(t, recent), "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 0 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "warning: no workflow runs in the window") ||
+		strings.Contains(errb.String()+out.String(), "absence of runs") || strings.Contains(errb.String(), "UNCHECKED") {
+		t.Errorf("stdout:\n%s\nstderr:\n%s", out.String(), errb.String())
 	}
 }

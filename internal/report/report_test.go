@@ -190,3 +190,15 @@ func TestMarkdownStripsTerminalEscapes(t *testing.T) {
 		t.Fatalf("control characters leaked: %q", b.String())
 	}
 }
+
+func TestMarkdownRetentionWarning(t *testing.T) {
+	inc, res := sample()
+	res.RetentionWarning = true
+	var b bytes.Buffer
+	if err := Markdown(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "jobs scanned: 5\n\nWarning: incident window ends more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence.\n") {
+		t.Fatal(b.String())
+	}
+}

@@ -20,7 +20,12 @@ const limits = `## Limits
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
 - A job whose log was unavailable is reported UNCHECKED: actions used via composite actions or reusable workflows can only be seen in the log.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread.
+- Runs are selected by creation time: re-runs of older runs and runs queued before the window are not scanned.
+- Reusable workflows are judged from the caller job: OIDC roles and permissions inside the called workflow are not shown.
 `
+
+// RetentionNote explains why an old window can look clean.
+const RetentionNote = "incident window ends more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence"
 
 // Markdown renders the scan result as a Markdown report.
 func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
@@ -28,6 +33,9 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	fmt.Fprintf(&b, "# runsweep: %s (%s)\n\n", code(inc.Title), code(inc.ID))
 	fmt.Fprintf(&b, "Window: %s → %s UTC · runs scanned: %d · jobs scanned: %d\n\n",
 		r.Start.UTC().Format("2006-01-02 15:04:05"), r.End.UTC().Format("2006-01-02 15:04:05"), r.RunsScanned, r.JobsScanned)
+	if r.RetentionWarning {
+		b.WriteString("Warning: " + RetentionNote + ".\n\n")
+	}
 	fmt.Fprintf(&b, "**AFFECTED: %d · POSSIBLE: %d · UNCHECKED: %d**\n\n",
 		r.Count(model.Affected), r.Count(model.Possible), r.Count(model.Unchecked))
 

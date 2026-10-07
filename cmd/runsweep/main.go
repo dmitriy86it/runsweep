@@ -162,6 +162,7 @@ func scanCmd(d deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			res.RetentionWarning = inc.Window.End.Before(time.Now().Add(-90 * 24 * time.Hour))
 			if format == "json" {
 				err = report.JSON(c.OutOrStdout(), inc, res)
 			} else {
@@ -169,6 +170,16 @@ func scanCmd(d deps) *cobra.Command {
 			}
 			if err != nil {
 				return err
+			}
+			warn := func(f string, a ...any) { _, _ = fmt.Fprintf(c.ErrOrStderr(), "warning: "+f+"\n", a...) }
+			if n := res.Count(model.Unchecked); n > 0 {
+				warn("%d jobs could not be checked (UNCHECKED)", n)
+			}
+			if res.RunsScanned == 0 {
+				warn("no workflow runs in the window")
+			}
+			if res.RetentionWarning {
+				warn("%s", report.RetentionNote)
 			}
 			if res.ReposTargeted == 0 {
 				return errors.New("no repositories to scan (does the token have access to the organization?)")
@@ -178,7 +189,7 @@ func scanCmd(d deps) *cobra.Command {
 				if n == 1 {
 					noun = "repository"
 				}
-				_, _ = fmt.Fprintf(c.ErrOrStderr(), "warning: %d %s skipped (see report)\n", n, noun)
+				warn("%d %s skipped (see report)", n, noun)
 				if n == res.ReposTargeted {
 					return errors.New("no repository could be scanned (missing access?)")
 				}

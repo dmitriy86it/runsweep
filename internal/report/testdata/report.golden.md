@@ -35,3 +35,5 @@ The token needs read access to Actions, Contents and Metadata for these reposito
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
 - A job whose log was unavailable is reported UNCHECKED: actions used via composite actions or reusable workflows can only be seen in the log.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread.
+- Runs are selected by creation time: re-runs of older runs and runs queued before the window are not scanned.
+- Reusable workflows are judged from the caller job: OIDC roles and permissions inside the called workflow are not shown.
