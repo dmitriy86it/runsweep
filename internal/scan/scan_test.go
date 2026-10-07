@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -70,7 +71,8 @@ func TestScanLogGoneFallsBackToWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Findings) != 1 || res.Findings[0].Status != model.Possible || res.Findings[0].Run.Job != "build" {
+	if len(res.Findings) != 2 || res.Findings[0].Status != model.Possible || res.Findings[0].Run.Job != "build" ||
+		res.Findings[1].Status != model.Unchecked || res.Findings[1].Run.Job != "lint" || !hasNote(res.Findings[1], "job log unavailable") {
 		t.Fatalf("%+v", res.Findings)
 	}
 }
@@ -91,7 +93,10 @@ func TestScanSkipsNoAccessRepo(t *testing.T) {
 func TestScanWorkflowMissingUsesAllJobs(t *testing.T) {
 	f := fixture()
 	f.Runs["o/a"][0].Path = "dynamic/dependabot"
-	res, _ := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}})
+	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, fd := range res.Findings {
 		if fd.Status == model.Affected && fd.Exposure != nil && fd.Exposure.JobMatched {
 			t.Fatalf("without a workflow file the job cannot be matched: %+v", fd)
@@ -107,6 +112,14 @@ type errSrc struct {
 	*sourcetest.Fake
 	logErr  map[int64]error
 	treeErr error
+	blobErr map[string]error // blob SHA -> error
+}
+
+func (s errSrc) Blob(ctx context.Context, repo, sha string) ([]byte, error) {
+	if err := s.blobErr[sha]; err != nil {
+		return nil, err
+	}
+	return s.Fake.Blob(ctx, repo, sha)
 }
 
 func (s errSrc) JobLog(ctx context.Context, repo string, id int64) (string, error) {
@@ -192,5 +205,45 @@ func TestScanUnknownJobLogGoneUsesAllJobs(t *testing.T) {
 	if len(res.Findings) != 1 || res.Findings[0].Status != model.Possible ||
 		res.Findings[0].Exposure == nil || res.Findings[0].Exposure.JobMatched {
 		t.Fatalf("%+v", res.Findings)
+	}
+}
+
+func TestScanDedupesRepos(t *testing.T) {
+	f := fixture()
+	f.Orgs["o"] = []string{"o/a"}
+	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a", "o/a"}, Org: "o"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RunsScanned != 1 || res.JobsScanned != 2 || len(res.Findings) != 1 || res.Count(model.Affected) != 1 {
+		t.Fatalf("%+v", res)
+	}
+}
+
+func TestScanNPMKeepsEvidenceBeforeSoftError(t *testing.T) {
+	f := fixture()
+	f.AddFile("o/a", "s1", "web/package-lock.json", []byte(`{"lockfileVersion":3,"packages":{}}`))
+	src := errSrc{Fake: f, blobErr: map[string]error{"o/a@s1:web/package-lock.json": source.ErrNoAccess}}
+	npmOnly := &incident.Incident{ID: "t", Window: inc.Window, NPM: inc.NPM}
+	res, err := Run(context.Background(), src, npmOnly, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Status != model.Affected || !hasNote(res.Findings[0], "no access") {
+		t.Fatalf("%+v", res.Findings)
+	}
+	var npmEv bool
+	for _, e := range res.Findings[0].Evidence {
+		npmEv = npmEv || e.Kind == "npm"
+	}
+	if !npmEv {
+		t.Fatalf("AFFECTED evidence lost: %+v", res.Findings[0].Evidence)
+	}
+}
+
+func TestScanHardTreeErrorPropagates(t *testing.T) {
+	src := errSrc{Fake: fixture(), treeErr: errors.New("boom")}
+	if _, err := Run(context.Background(), src, inc, Options{Repos: []string{"o/a"}}); err == nil {
+		t.Fatal("want error")
 	}
 }
