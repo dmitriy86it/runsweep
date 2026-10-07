@@ -16,3 +16,11 @@ alias@npm:is-number@^7:
 
 "workspace@workspace:packages/workspace":
   version "0.0.0-use.local"
+
+"left-pad@^1.0.0", "leftpad@npm:left-pad@^1.0.0":
+  version "1.3.0"
+
+"version@^1.0.0":
+  version "1.5.0"
+  dependencies:
+    version "^1.0.0"

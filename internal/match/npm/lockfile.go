@@ -152,6 +152,8 @@ func ParseYarnLock(b []byte) ([]Pkg, error) {
 			names = make(map[string]bool)
 			for _, spec := range specs {
 				spec = strings.TrimSpace(spec)
+				// Trim quotes from each spec individually (yarn v1 quotes each spec separately)
+				spec = strings.Trim(spec, `"`)
 				if name := extractYarnPackageName(spec); name != "" {
 					names[name] = true
 				}
@@ -159,9 +161,9 @@ func ParseYarnLock(b []byte) ([]Pkg, error) {
 			version = ""
 			continue
 		}
-		// Version line: indented, starts with "version"
+		// Version line: indented, starts with "version", only accept first match (first match wins)
 		t := strings.TrimSpace(line)
-		if names != nil && len(names) > 0 && (strings.HasPrefix(t, "version ") || strings.HasPrefix(t, "version:")) {
+		if names != nil && len(names) > 0 && version == "" && (strings.HasPrefix(t, "version ") || strings.HasPrefix(t, "version:")) {
 			v := strings.Trim(strings.TrimSpace(strings.TrimLeft(strings.TrimPrefix(t, "version"), ": ")), `"`)
 			// Skip workspace entries
 			if v != "0.0.0-use.local" {
@@ -201,6 +203,11 @@ func extractYarnPackageName(spec string) string {
 	if strings.HasPrefix(remainder, "npm:") {
 		// Extract what comes after "npm:"
 		afterNpm := remainder[4:] // skip "npm:"
+
+		// Guard: if afterNpm is empty or too short, return original name
+		if len(afterNpm) <= 1 {
+			return name
+		}
 
 		// If there's an "@" at index > 0, it means there's a real package name
 		// e.g., "npm:is-number@^7" -> extract "is-number"
