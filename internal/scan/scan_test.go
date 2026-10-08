@@ -1097,3 +1097,43 @@ func TestScanCalledWorkflowOtherOwnerCompromisedRef(t *testing.T) {
 		t.Fatalf("%+v", fd)
 	}
 }
+
+// A github-script step that runs npm is an install: lockfile evidence is kept without a log.
+func TestScanGithubScriptInstallKeepsLockfile(t *testing.T) {
+	f := fixture()
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "gs"}}
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  gs:\n    runs-on: x\n    steps:\n"+
+		"      - uses: actions/github-script@v7\n        with:\n          script: await exec.exec('npm', ['ci'])\n"))
+	delete(f.Logs, 10)
+	if fd := scanOne(t, f, npmOnly); fd.Status != model.Affected {
+		t.Fatalf("%+v", fd)
+	}
+}
+
+// Without the workflow file run-time installs cannot be read: a clean lockfile is not CLEAN.
+func TestScanWorkflowUnavailableRuntimeInstallsUnchecked(t *testing.T) {
+	f := fixture()
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "build"}}
+	f.Runs["o/a"][0].Path = ".github/workflows/gone.yml"
+	f.AddFile("o/a", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{}}`))
+	f.Logs[10] = "2026-03-31T01:00:00Z ##[group]Run npx -y axios@latest\n"
+	fd := scanOne(t, f, npmOnly)
+	if fd.Status != model.Unchecked || !hasNote(fd, "workflow file unavailable (not found in the commit tree): run-time installs not checked") {
+		t.Fatalf("%+v", fd)
+	}
+	// a dynamic workflow (dependabot, CodeQL) has no file to read: no note
+	f.Runs["o/a"][0].Path = "dynamic/dependabot"
+	if res, err := Run(context.Background(), f, npmOnly, Options{Repos: []string{"o/a"}}); err != nil || len(res.Findings) != 0 {
+		t.Fatalf("%v %+v", err, res.Findings)
+	}
+}
+
+// An unpinned call may install anything: with npm packages in the incident the job is UNCHECKED.
+func TestScanUnpinnedCallWithNPMIsUnchecked(t *testing.T) {
+	f := callFixture("o/shared/.github/workflows/deploy.yml@main", "deploy / release")
+	f.AddFile("o/a", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{}}`))
+	fd := scanOne(t, f, npmOnly)
+	if fd.Status != model.Unchecked || !hasNote(fd, "is not pinned to a SHA — not read") {
+		t.Fatalf("%+v", fd)
+	}
+}

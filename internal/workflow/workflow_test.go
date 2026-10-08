@@ -246,6 +246,9 @@ func TestInstallsNPMConservative(t *testing.T) {
 			t.Errorf("%q: want %v", run, want)
 		}
 	}
+	if !(&Job{Scripts: []string{"await exec.exec('npm', ['ci'])"}}).InstallsNPM() {
+		t.Error("github-script running npm installs")
+	}
 	if !(&Job{Uses: []string{"cypress-io/github-action@v6"}}).InstallsNPM() {
 		t.Error("cypress action")
 	}
@@ -364,6 +367,11 @@ func TestMayInstallNPM(t *testing.T) {
 		"dotnet":          {Job{Runs: []string{"dotnet build"}}, true},
 		"composer":        {Job{Runs: []string{"composer install"}}, true},
 		"github-script":   {Job{Uses: []string{"actions/github-script@v7"}}, false},
+		"script exec":     {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"await exec.exec('make', ['x'])"}}, true},
+		"script spawn":    {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"require('child_process').spawnSync(tool)"}}, true},
+		"script template": {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"await $`make`"}}, true},
+		"script npm":      {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"run('npm', ['ci'])"}}, true},
+		"script api":      {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"await github.rest.issues.create({})"}}, false},
 		"turbo in a pipe": {Job{Runs: []string{"echo x | turbo run build"}}, true},
 	} {
 		if got := tc.j.MayInstallNPM(); got != tc.want {
@@ -530,6 +538,7 @@ func TestRunInstalls(t *testing.T) {
 		"npm i \\\n  axios":                        {"npm i axios", "axios"},
 		"npm i `\r\n  axios":                       {"npm i axios", "axios"},
 		"npm i $PKG":                               {"npm i $PKG", "DYN"},
+		"npm i %PKG%":                              {"npm i %PKG%", "DYN"},
 		"npx ${{inputs.tool}}":                     {"npx ${{inputs.tool}}", "DYN"},
 		"npm i `cat pkgs`":                         {"npm i cat pkgs", "pkgs", "DYN"},
 		"npm i axios@$VER":                         {"npm i axios@$VER", "axios"},

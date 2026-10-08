@@ -316,7 +316,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 	if len(jobs) == 0 {
 		return nil, 0, nil
 	}
-	wf, _, err := s.workflow(ctx, repo, run.HeadSHA, run.Path, false)
+	wf, wfReason, err := s.workflow(ctx, repo, run.HeadSHA, run.Path, false)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -361,6 +361,9 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		var installs []workflow.RunInstall
 		if rj != nil {
 			installs = rj.RunInstalls()
+		} else if len(s.inc.NPM) > 0 && !strings.HasPrefix(run.Path, "dynamic/") { // dynamic workflows have no file
+			f.Status = model.Worse(f.Status, model.Unchecked)
+			f.Evidence = append(f.Evidence, note("workflow file unavailable (%s): run-time installs not checked", wfReason))
 		}
 		var log string
 		var logErr = source.ErrGone
@@ -402,7 +405,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 				noDownloads := len(actions.ParseDownloads(workflow.SetupSection(log))) == 0
 				if noDownloads && wf == nil {
 					st = model.Worse(st, model.Unchecked)
-					ev = append(ev, note("job log has no action download records and the workflow file is unavailable"))
+					ev = append(ev, note("job log has no action download records and the workflow file is unavailable (%s)", wfReason))
 				} else if noDownloads && slices.ContainsFunc(uses, func(u string) bool {
 					// a local action may be composite and download remote ones
 					return !strings.HasPrefix(u, "docker://") && !slices.Contains(call.read, u)
@@ -416,7 +419,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			case wf != nil: // job not identified: judge by every job's uses
 				st, ev = actions.MatchUses(allUses(wf), s.inc.Actions)
 			default:
-				ev = []model.Evidence{note("workflow file unavailable")}
+				ev = []model.Evidence{note("workflow file unavailable (%s)", wfReason)}
 			}
 			if logErr != nil {
 				// Without the log `uses:` can raise the status but never prove the job clean.
@@ -441,7 +444,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			case wf != nil:
 				e = wf.ExposureAll()
 			default:
-				f.Evidence = append(f.Evidence, note("workflow file unavailable: secrets unknown"))
+				f.Evidence = append(f.Evidence, note("workflow file unavailable (%s): secrets unknown", wfReason))
 			}
 			if logErr == nil {
 				e.TokenPerms = workflow.ParseTokenPerms(log)
@@ -509,6 +512,9 @@ func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workfl
 		}
 		call, ok := workflow.ParseCall(uses)
 		if !ok {
+			if len(s.inc.NPM) > 0 && !strings.HasPrefix(uses, "./") { // may install anything; its log does not name it
+				c.status = model.Unchecked
+			}
 			c.notes = append(c.notes, note("called workflow %s is not pinned to a SHA — not read", uses))
 			return c, nil
 		}

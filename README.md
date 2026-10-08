@@ -53,7 +53,7 @@ Exit codes:
 | `0` | every job checked, nothing AFFECTED or POSSIBLE |
 | `1` | at least one job AFFECTED or POSSIBLE |
 | `2` | error: bad flags or incident file, no token, token rejected (HTTP 401), organization could not be listed, nothing could be scanned |
-| `3` | nothing AFFECTED or POSSIBLE, but not everything was checked: UNCHECKED jobs, skipped repositories, or the scan was interrupted (Ctrl-C, API error) |
+| `3` | nothing AFFECTED or POSSIBLE, but not everything was checked: UNCHECKED jobs, skipped repositories, the scan was interrupted (Ctrl-C, API error), or no runs were found in a window that starts more than 90 days ago (GitHub may have deleted them) |
 
 `1` wins over `2` and `3`: findings are reported even if the scan then stops on an error, such as a rejected token. An interrupted scan still prints the report of what it checked; what it did not reach is listed as `interrupted: not scanned`. A second Ctrl-C exits at once.
 
@@ -122,7 +122,7 @@ For AFFECTED and POSSIBLE jobs the report lists what the job could read — secr
 - GitHub deletes workflow runs, logs and checks after the repository's retention period (90 days by default). Older runs cannot be checked and show as UNCHECKED or are absent.
 - Which secrets a job could read is derived from the workflow file at the run's commit; GitHub's API does not expose it directly.
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
-- A job whose log was unavailable is reported UNCHECKED: actions used via composite actions (and reusable workflows that are neither local nor pinned to a SHA) can only be seen in the log.
+- A job whose log was unavailable is reported UNCHECKED: actions used via composite actions (and reusable workflows that are neither local nor pinned to a SHA) can only be seen in the log. Job logs over 64 MB count as unavailable.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread. `bun.lock`, `bun.lockb`, `deno.lock` and Yarn PnP (`.pnp.cjs`) are not read: their directory is at least UNCHECKED, also when an npm, pnpm or yarn lockfile next to them is read (it may be stale).
 - Packages named on the command line (`npm i axios`) are found only in the workflow's own `run:` steps, not in scripts it calls or in local composite actions.
 - Only repositories the token can see are scanned; with `--org`, repositories it cannot see are not listed at all.
