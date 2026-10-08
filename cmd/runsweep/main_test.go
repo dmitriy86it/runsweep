@@ -474,7 +474,7 @@ func TestImportOutputFileIsAtomic(t *testing.T) {
 	}
 	d := deps{newImporter: fixtureImporter(t)}
 	var out, errb bytes.Buffer
-	if code := run([]string{"incidents", "import", "MAL-2026-2300", "-o", path}, &out, &errb, d); code != 2 ||
+	if code := run([]string{"incidents", "import", "GHSA-35jh-r3h4-6jhm", "-o", path}, &out, &errb, d); code != 2 ||
 		!strings.Contains(errb.String(), "nothing to import") {
 		t.Fatalf("range-only record: code %d: %s", code, errb.String())
 	}

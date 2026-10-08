@@ -30,7 +30,7 @@ func importWith(t *testing.T, c *Client, o Options) ([]byte, []string, error) {
 func TestImportGolden(t *testing.T) {
 	c, _ := fixtures(t, nil)
 	out, _, err := importWith(t, c, Options{
-		IDs:      []string{"MAL-2026-17631", "MAL-2026-17653", "MAL-2025-125", "CVE-2025-30066", "MAL-2026-2300"},
+		IDs:      []string{"MAL-2026-17631", "MAL-2026-17653", "MAL-2025-125", "CVE-2025-30066"},
 		Packages: []string{"axios"},
 		Actions:  []string{"tj-actions/changed-files@0e58ed8671d6b60d0890c21b07f8835ace038e67"},
 	})
@@ -85,7 +85,7 @@ func TestImportDefaultIDAndTitle(t *testing.T) {
 
 func TestImportNothing(t *testing.T) {
 	c, _ := fixtures(t, nil)
-	_, warns, err := importWith(t, c, Options{IDs: []string{"MAL-2026-2300"}})
+	_, warns, err := importWith(t, c, Options{IDs: []string{"GHSA-35jh-r3h4-6jhm"}})
 	if !errors.Is(err, ErrNothing) {
 		t.Fatalf("range-only record: want ErrNothing, got %v", err)
 	}
@@ -202,5 +202,116 @@ func TestImportOpenRangeRegistryMissing(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(warns, "|"), "later versions may also be malicious, check manually") {
 		t.Fatalf("warns %q", warns)
+	}
+}
+
+func TestImportActionHintNeedsWindow(t *testing.T) {
+	c, _ := fixtures(t, nil)
+	sha := "tj-actions/changed-files@0e58ed8671d6b60d0890c21b07f8835ace038e67"
+	for _, o := range []Options{
+		{IDs: []string{"GHSA-mrrh-fwg8-r2c3"}, Actions: []string{sha}},
+		{IDs: []string{"GHSA-mrrh-fwg8-r2c3"}, Actions: []string{sha}, Since: importNow.Add(-time.Hour)},
+	} {
+		if _, _, err := importWith(t, c, o); err == nil || !strings.Contains(err.Error(), "pass --since and --until for action-only incidents") {
+			t.Errorf("%+v: want window error, got %v", o, err)
+		}
+	}
+	out, _, err := importWith(t, c, Options{IDs: []string{"GHSA-mrrh-fwg8-r2c3"}, Actions: []string{sha}, Since: importNow.Add(-time.Hour), Until: importNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := incident.Parse(out); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestImportExpandsRangeOnlyOpenEntry(t *testing.T) {
+	c, _ := fixtures(t, nil)
+	out, _, err := importWith(t, c, Options{IDs: []string{"MAL-2026-2300"}, KeepAll: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`{name: "eslint-validator", versions: ["0.0.1-security", "1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4"]}`,
+		"# eslint-validator: open range from 0 — all registry versions included",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+	if strings.Contains(string(out), "add manually") {
+		t.Errorf("open range-only entry needs no manual note:\n%s", out)
+	}
+}
+
+func TestImportOpenRangeOnlyRegistryMissing(t *testing.T) {
+	c, _ := fixtures(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasPrefix(r.URL.Path, "/npm/") {
+			w.WriteHeader(http.StatusNotFound)
+			return true
+		}
+		return false
+	})
+	_, warns, err := importWith(t, c, Options{IDs: []string{"MAL-2026-2300"}})
+	if !errors.Is(err, ErrNothing) {
+		t.Fatalf("want ErrNothing, got %v", err)
+	}
+	if !strings.Contains(strings.Join(warns, "|"), "eslint-validator") {
+		t.Fatalf("warns %q", warns)
+	}
+}
+
+func TestImportAliasAlreadyImported(t *testing.T) {
+	c, _ := fixtures(t, nil)
+	out, warns, err := importWith(t, c, Options{IDs: []string{"GHSA-mrrh-fwg8-r2c3", "CVE-2025-30066", "MAL-2026-2307"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "# CVE-2025-30066: no npm or GitHub Actions entries; alias GHSA-mrrh-fwg8-r2c3 already imported") {
+		t.Errorf("missing note:\n%s", out)
+	}
+	for _, w := range warns {
+		if strings.HasPrefix(w, "CVE-2025-30066") {
+			t.Errorf("unexpected warning %q", w)
+		}
+	}
+}
+
+func TestImportRegistry404WithExplicitWindow(t *testing.T) {
+	c, _ := fixtures(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasPrefix(r.URL.Path, "/npm/") {
+			w.WriteHeader(http.StatusNotFound)
+			return true
+		}
+		return false
+	})
+	since, until := importNow.Add(-48*time.Hour), importNow.Add(-time.Hour)
+	out, _, err := importWith(t, c, Options{IDs: []string{"MAL-2026-2307"}, Since: since, Until: until})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inc, err := incident.Parse(out)
+	if err != nil || !inc.Window.Start.Equal(since) || !inc.Window.End.Equal(until) {
+		t.Fatalf("%v %+v", err, inc)
+	}
+}
+
+func TestSameIncident(t *testing.T) {
+	a := &incident.Incident{ID: "x", Title: "t", Refs: []string{"r"}, NPM: []incident.NPMPackage{{Name: "n", Versions: []string{"1.0.0"}}}}
+	b := *a
+	if err := sameIncident(a, &b); err != nil {
+		t.Fatal(err)
+	}
+	b.NPM = []incident.NPMPackage{{Name: "n", Versions: []string{"1.0.1"}}}
+	if sameIncident(a, &b) == nil {
+		t.Fatal("version change not detected")
+	}
+}
+
+func TestRenderNotesStripLineBreaks(t *testing.T) {
+	inc := &incident.Incident{ID: "x", Title: "t", Refs: []string{"https://osv.dev/vulnerability/X-1"}}
+	out := string(render(inc, []string{"a\rb\u2028c\u2029d\ne"}, importNow))
+	if !strings.Contains(out, "# a b c d e\n") {
+		t.Fatalf("%s", out)
 	}
 }

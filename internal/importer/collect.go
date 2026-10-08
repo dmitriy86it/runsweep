@@ -50,14 +50,21 @@ func (f *found) addVuln(v *Vuln) bool {
 				f.both("%s: skipped invalid npm package name %q", v.ID, name)
 				continue
 			}
-			if len(a.Versions) == 0 {
-				f.both("%s: %s affected by range only (%s) — versions not listed, add manually", v.ID, name, rangeText(a))
-				continue
-			}
-			if from, ok := openFrom(a); ok {
+			from, isOpen := openFrom(a)
+			if isOpen {
 				if cur, had := f.open[name]; !had || from == "0" || (cur != "0" && versionLess(from, cur)) {
 					f.open[name] = from
 				}
+			}
+			if len(a.Versions) == 0 {
+				if isOpen { // the registry fills the versions in
+					if f.npm[name] == nil {
+						f.npm[name] = map[string]bool{}
+					}
+					continue
+				}
+				f.both("%s: %s affected by range only (%s) — versions not listed, add manually", v.ID, name, rangeText(a))
+				continue
 			}
 			for _, ver := range a.Versions {
 				if !validVersion(ver) {

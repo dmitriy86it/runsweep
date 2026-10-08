@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -192,8 +193,11 @@ func TestAddVuln(t *testing.T) {
 	if !f.addVuln(vulnFixture(t, "MAL-2026-2307")) || fmt.Sprint(sortedVersions(f.npm["axios"])) != "[0.30.4 1.14.1]" {
 		t.Fatalf("axios: %v", f.npm)
 	}
-	if !f.addVuln(vulnFixture(t, "MAL-2026-2300")) || f.npm["eslint-validator"] != nil {
-		t.Fatal("range-only entry must not invent versions")
+	if !f.addVuln(vulnFixture(t, "MAL-2026-2300")) || len(f.npm["eslint-validator"]) != 0 || f.open["eslint-validator"] != "0" {
+		t.Fatal("open range-only entry must be left to the registry, without invented versions")
+	}
+	if !f.addVuln(vulnFixture(t, "GHSA-35jh-r3h4-6jhm")) || f.npm["lodash"] != nil {
+		t.Fatal("closed range-only entry must not invent versions")
 	}
 	if !f.addVuln(vulnFixture(t, "GHSA-mrrh-fwg8-r2c3")) || len(f.actions) != 0 {
 		t.Fatal("GitHub Actions advisory must not become an action SHA")
@@ -201,14 +205,18 @@ func TestAddVuln(t *testing.T) {
 	if f.addVuln(vulnFixture(t, "CVE-2025-30066")) {
 		t.Fatal("CVE record without package entries must not count (its versions are git tags)")
 	}
-	want := []string{
-		"MAL-2026-2300: eslint-validator affected by range only (introduced 0) — versions not listed, add manually",
+	for _, want := range []string{
+		"GHSA-35jh-r3h4-6jhm: lodash affected by range only (introduced 0, fixed 4.17.21) — versions not listed, add manually",
 		"GHSA-mrrh-fwg8-r2c3: affects tj-actions/changed-files introduced 0, fixed 46.0.1 — pass the compromised commit with --action tj-actions/changed-files@SHA",
+	} {
+		if !slices.Contains(f.notes, want) || !slices.Contains(f.warns, want) {
+			t.Fatalf("missing %q\nnotes %q\nwarns %q", want, f.notes, f.warns)
+		}
 	}
-	if fmt.Sprint(f.notes) != fmt.Sprint(want) || fmt.Sprint(f.warns) != fmt.Sprint(want) {
-		t.Fatalf("notes %q\nwarns %q", f.notes, f.warns)
+	if slices.ContainsFunc(f.notes, func(n string) bool { return strings.Contains(n, "eslint-validator") }) {
+		t.Fatalf("open range-only entry needs no manual note: %q", f.notes)
 	}
-	if len(f.refs) != 4 || f.refs[0] != "https://osv.dev/vulnerability/MAL-2026-2307" {
+	if len(f.refs) != 5 || f.refs[0] != "https://osv.dev/vulnerability/MAL-2026-2307" {
 		t.Fatalf("refs %v", f.refs)
 	}
 }

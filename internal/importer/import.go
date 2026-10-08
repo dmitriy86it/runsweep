@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ import (
 
 // ErrNothing means no npm version and no action was found.
 var ErrNothing = errors.New("nothing to import: no npm versions and no --action")
+
+var noteText = strings.NewReplacer("\n", " ", "\r", " ", "\u2028", " ", "\u2029", " ")
 
 var incidentIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
@@ -61,8 +64,9 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 			return nil, fmt.Errorf("--package npm:%s: invalid npm package name", p)
 		}
 	}
+	errActionWindow := errors.New("window unknown: pass --since and --until for action-only incidents")
 	if len(f.actions) > 0 && len(o.IDs) == 0 && len(o.Packages) == 0 && (o.Since.IsZero() || o.Until.IsZero()) {
-		return nil, errors.New("window unknown: pass --since and --until for action-only incidents")
+		return nil, errActionWindow
 	}
 
 	var ids []string // in the order given, for the default title
@@ -87,14 +91,20 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 		// A CVE record usually has no package entries; its GHSA/MAL aliases do.
 		useful := false
 		for _, al := range v.Aliases {
-			if (strings.HasPrefix(al, "GHSA-") || strings.HasPrefix(al, "MAL-")) && ValidID(al) && !f.seen[al] {
-				av, err := c.Vuln(ctx, al)
-				if err != nil {
-					return nil, err
-				}
-				useful = addID(av) || useful
-				f.notes = append(f.notes, fmt.Sprintf("%s: no npm or GitHub Actions entries; followed alias %s", id, al))
+			if !strings.HasPrefix(al, "GHSA-") && !strings.HasPrefix(al, "MAL-") || !ValidID(al) {
+				continue
 			}
+			if f.seen[al] {
+				f.notes = append(f.notes, fmt.Sprintf("%s: no npm or GitHub Actions entries; alias %s already imported", id, al))
+				useful = true
+				continue
+			}
+			av, err := c.Vuln(ctx, al)
+			if err != nil {
+				return nil, err
+			}
+			useful = addID(av) || useful
+			f.notes = append(f.notes, fmt.Sprintf("%s: no npm or GitHub Actions entries; followed alias %s", id, al))
 		}
 		if !useful {
 			f.both("%s: no npm or GitHub Actions entries", id)
@@ -118,10 +128,13 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 	if len(f.npm) == 0 && len(f.actions) == 0 {
 		return nil, ErrNothing
 	}
+	if len(f.npm) == 0 && (o.Since.IsZero() || o.Until.IsZero()) {
+		return nil, errActionWindow
+	}
 
 	var win incident.Window
+	pts := map[string]PkgTimes{}
 	if len(f.npm) > 0 {
-		times := map[string]PkgTimes{}
 		names := sortedKeys(f.npm)
 		for i, name := range names {
 			o.Logf("npm registry %d/%d: %s", i+1, len(names), name)
@@ -129,7 +142,7 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			times[name] = pt
+			pts[name] = pt
 			if from, ok := f.open[name]; ok {
 				if pt.Found {
 					f.expandOpen(name, pt)
@@ -140,6 +153,23 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 					o.Warnf("%s", msg)
 				}
 			}
+		}
+		for _, name := range names { // open ranges the registry could not fill
+			if len(f.npm[name]) == 0 {
+				delete(f.npm, name)
+			}
+		}
+		if len(f.npm) == 0 && len(f.actions) == 0 {
+			return nil, ErrNothing
+		}
+		if len(f.npm) == 0 && (o.Since.IsZero() || o.Until.IsZero()) {
+			return nil, errActionWindow
+		}
+	}
+	if len(f.npm) > 0 {
+		times := map[string]PkgTimes{}
+		for _, name := range sortedKeys(f.npm) {
+			times[name] = pts[name]
 		}
 		start, end, notes, err := computeWindow(f.npm, times, o.KeepAll, o.Now)
 		if err != nil && (o.Since.IsZero() || o.Until.IsZero()) {
@@ -177,10 +207,37 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 		inc.Actions = append(inc.Actions, incident.Action{Uses: repo, SHAs: sortedKeys(f.actions[repo])})
 	}
 	out := render(inc, f.notes, o.Now)
-	if _, err := incident.Parse(out); err != nil {
+	got, err := incident.Parse(out)
+	if err != nil {
 		return nil, fmt.Errorf("generated incident is invalid: %w", err)
 	}
+	if err := sameIncident(inc, got); err != nil {
+		return nil, fmt.Errorf("generated incident does not round-trip: %w", err)
+	}
 	return out, nil
+}
+
+// sameIncident reports the first difference between the intended and the parsed incident.
+func sameIncident(want, got *incident.Incident) error {
+	switch {
+	case want.ID != got.ID:
+		return fmt.Errorf("id %q != %q", want.ID, got.ID)
+	case want.Title != got.Title:
+		return fmt.Errorf("title %q != %q", want.Title, got.Title)
+	case !want.Window.Start.Equal(got.Window.Start) || !want.Window.End.Equal(got.Window.End):
+		return errors.New("window differs")
+	case !slices.Equal(want.Refs, got.Refs):
+		return errors.New("refs differ")
+	case !slices.EqualFunc(want.NPM, got.NPM, func(a, b incident.NPMPackage) bool {
+		return a.Name == b.Name && slices.Equal(a.Versions, b.Versions)
+	}):
+		return errors.New("npm differs")
+	case !slices.EqualFunc(want.Actions, got.Actions, func(a, b incident.Action) bool {
+		return a.Uses == b.Uses && slices.Equal(a.SHAs, b.SHAs)
+	}):
+		return errors.New("actions differ")
+	}
+	return nil
 }
 
 // render writes inc in the preset style. Every string comes from a validated
@@ -192,7 +249,7 @@ func render(inc *incident.Incident, notes []string, now time.Time) []byte {
 	fmt.Fprintf(&b, "# Generated by `runsweep incidents import` from api.osv.dev and registry.npmjs.org at %s.\n", now.UTC().Format(time.RFC3339))
 	b.WriteString("# Before contributing as a preset: add an independent source to refs and check the window.\n")
 	for _, n := range notes {
-		fmt.Fprintf(&b, "# %s\n", strings.ReplaceAll(n, "\n", " "))
+		fmt.Fprintf(&b, "# %s\n", noteText.Replace(n))
 	}
 	fmt.Fprintf(&b, "window: {start: %s, end: %s}\n", inc.Window.Start.UTC().Format(time.RFC3339), inc.Window.End.UTC().Format(time.RFC3339))
 	if len(inc.NPM) > 0 {
@@ -204,12 +261,12 @@ func render(inc *incident.Incident, notes []string, now time.Time) []byte {
 	if len(inc.Actions) > 0 {
 		b.WriteString("actions:\n")
 		for _, a := range inc.Actions {
-			fmt.Fprintf(&b, "  - {uses: %s, shas: [%s]}\n", a.Uses, quoteAll(a.SHAs))
+			fmt.Fprintf(&b, "  - {uses: %s, shas: [%s]}\n", strconv.Quote(a.Uses), quoteAll(a.SHAs))
 		}
 	}
 	b.WriteString("refs:\n")
 	for _, r := range inc.Refs {
-		fmt.Fprintf(&b, "  - %s\n", r)
+		fmt.Fprintf(&b, "  - %s\n", strconv.Quote(r))
 	}
 	return b.Bytes()
 }
