@@ -31,12 +31,18 @@ func ceilMinute(t time.Time) time.Time {
 	return t
 }
 
-// computeWindow drops versions published before W − 7d (unless keepAll) from npm
-// and derives the window from registry times. W is the median (lower middle) of
-// each package's earliest bad publish; for one or two packages that is the minimum.
+// computeWindow drops stray old packages (unless keepAll) from npm and derives
+// the window from registry times. Packages are clustered by their earliest bad
+// publish time, split at gaps over 7 days; the largest cluster (the latest on a
+// tie) is the wave, and clusters before it are dropped whole. A package is
+// never partly dropped.
 func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, keepAll bool, now time.Time) (time.Time, time.Time, []string, error) {
 	var notes []string
-	var earliest []time.Time
+	type pkg struct {
+		name  string
+		first time.Time
+	}
+	var pkgs []pkg
 	for _, name := range sortedKeys(npm) {
 		pt := times[name]
 		if !pt.Found {
@@ -47,7 +53,7 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 		for _, v := range sortedVersions(npm[name]) {
 			t, ok := pt.Times[v]
 			if !ok {
-				notes = append(notes, fmt.Sprintf("%s@%s: unpublished, publish time unknown; kept", name, v))
+				notes = append(notes, fmt.Sprintf("%s@%s: no valid publish time in registry; kept", name, v))
 				continue
 			}
 			if first.IsZero() || t.Before(first) {
@@ -55,15 +61,22 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 			}
 		}
 		if !first.IsZero() {
-			earliest = append(earliest, first)
+			pkgs = append(pkgs, pkg{name, first})
 		}
 	}
-	if len(earliest) == 0 {
+	if len(pkgs) == 0 {
 		return time.Time{}, time.Time{}, notes, errNoTimes
 	}
-	sort.Slice(earliest, func(i, j int) bool { return earliest[i].Before(earliest[j]) })
-	wave := earliest[(len(earliest)-1)/2]
-	cut := wave.Add(-waveSlack)
+	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].first.Before(pkgs[j].first) })
+	mainStart, mainLen, cur := 0, 0, 0
+	for i := 1; i <= len(pkgs); i++ {
+		if i == len(pkgs) || pkgs[i].first.Sub(pkgs[i-1].first) > waveSlack {
+			if i-cur >= mainLen {
+				mainStart, mainLen = cur, i-cur
+			}
+			cur = i
+		}
+	}
 
 	type drop struct {
 		at  time.Time
@@ -71,24 +84,30 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 	}
 	var dropped []drop
 	if keepAll {
-		notes = append(notes, "--keep-all: no version dropped by publish time")
+		notes = append(notes, "--keep-all: nothing dropped by publish time")
 	} else {
-		for _, name := range sortedKeys(npm) {
-			for v := range npm[name] {
-				if t, ok := times[name].Times[v]; ok && t.Before(cut) {
-					dropped = append(dropped, drop{t, name + "@" + v})
-					delete(npm[name], v)
+		for _, p := range pkgs[:mainStart] {
+			// A package with any version at or after the wave start, or with an unknown time, is kept whole.
+			var found []drop
+			old := true
+			for _, v := range sortedVersions(npm[p.name]) {
+				t, ok := times[p.name].Times[v]
+				if !ok || !t.Before(pkgs[mainStart].first) {
+					old = false
+					break
 				}
+				found = append(found, drop{t, p.name + "@" + v})
 			}
-			if len(npm[name]) == 0 {
-				delete(npm, name)
+			if old {
+				dropped = append(dropped, found...)
+				delete(npm, p.name)
 			}
 		}
 	}
 	if len(dropped) > 0 {
 		sort.Slice(dropped, func(i, j int) bool { return dropped[i].at.Before(dropped[j].at) })
-		notes = append(notes, fmt.Sprintf("dropped %d version(s) published before %s (wave start %s minus 7 days; --keep-all keeps them):",
-			len(dropped), cut.UTC().Format(time.RFC3339), wave.UTC().Format(time.RFC3339)))
+		notes = append(notes, fmt.Sprintf("dropped %d version(s) of packages published in earlier clusters, more than 7 days before the wave starting %s (%d packages; --keep-all keeps them):",
+			len(dropped), pkgs[mainStart].first.UTC().Format(time.RFC3339), mainLen))
 		for _, d := range dropped[:min(len(dropped), maxExamples)] {
 			notes = append(notes, fmt.Sprintf("  %s (published %s)", d.ref, d.at.UTC().Format(time.RFC3339)))
 		}

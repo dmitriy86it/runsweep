@@ -450,7 +450,7 @@ func TestImportFromStdin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if len(inc.NPM) != 2 || len(inc.Refs) != 2 || inc.Refs[1] != "https://osv.dev/vulnerability/MAL-2025-125" {
+	if len(inc.NPM) != 1 || inc.NPM[0].Name != "axios" || len(inc.Refs) != 2 || inc.Refs[1] != "https://osv.dev/vulnerability/MAL-2025-125" {
 		t.Fatalf("%+v", inc)
 	}
 	if strings.Contains(out.String(), "npm registry 1/2") || !strings.Contains(errb.String(), "npm registry 1/2: axios") {

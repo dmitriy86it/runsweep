@@ -336,7 +336,7 @@ func importCmd(d deps) *cobra.Command {
 	c.Flags().StringArrayVar(&o.Actions, "action", nil, "compromised action commit owner/repo@<40-hex sha> (repeatable)")
 	c.Flags().StringVar(&o.ID, "id", "", "incident id (default import-<window start date>)")
 	c.Flags().StringVar(&o.Title, "title", "", "incident title (default: the first OSV ids)")
-	c.Flags().BoolVar(&o.KeepAll, "keep-all", false, "keep versions published more than 7 days before the wave start")
+	c.Flags().BoolVar(&o.KeepAll, "keep-all", false, "keep packages published more than 7 days before the wave")
 	c.Flags().StringVar(&since, "since", "", "window start (RFC3339); overrides the computed start")
 	c.Flags().StringVar(&until, "until", "", "window end (RFC3339); overrides the computed end")
 	c.Flags().StringVarP(&out, "output", "o", "", "write to FILE atomically instead of stdout")

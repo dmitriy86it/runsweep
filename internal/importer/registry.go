@@ -47,14 +47,14 @@ func (c *Client) Times(ctx context.Context, name string) (PkgTimes, error) {
 			var u struct {
 				Time time.Time `json:"time"`
 			}
-			if json.Unmarshal(raw, &u) == nil {
+			if json.Unmarshal(raw, &u) == nil && !u.Time.IsZero() {
 				pt.Unpublished = u.Time
 			}
 			continue
 		}
 		var t time.Time
-		if json.Unmarshal(raw, &t) != nil {
-			continue // not a timestamp: ignore
+		if json.Unmarshal(raw, &t) != nil || t.IsZero() {
+			continue // not a timestamp (or JSON null): ignore
 		}
 		switch k {
 		case "created":
