@@ -195,6 +195,48 @@ func (s failSrc) ListRuns(ctx context.Context, repo string, start, end time.Time
 	return s.Fake.ListRuns(ctx, repo, start, end)
 }
 
+// ListRepos fails for "org:<name>" keys in err.
+func (s failSrc) ListRepos(ctx context.Context, org string) ([]string, error) {
+	if err := s.err["org:"+org]; err != nil {
+		return nil, err
+	}
+	return s.Fake.ListRepos(ctx, org)
+}
+
+// JobLog fails for "job:<id>" keys in err.
+func (s failSrc) JobLog(ctx context.Context, repo string, id int64) (string, error) {
+	if err := s.err[fmt.Sprint("job:", id)]; err != nil {
+		return "", err
+	}
+	return s.Fake.JobLog(ctx, repo, id)
+}
+
+func TestOrgListingErrorExitsTwo(t *testing.T) {
+	var out, errb bytes.Buffer
+	d := failDeps(sourcetest.New(), map[string]error{"org:typo": fmt.Errorf("%w: 404 Not Found", source.ErrNoAccess)})
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--org", "typo"}, &out, &errb, d); code != 2 ||
+		!strings.Contains(errb.String(), "list repositories of typo") {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	d = failDeps(sourcetest.New(), map[string]error{"org:o": context.Canceled})
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--org", "o"}, &out, &errb, d); code != 3 {
+		t.Fatalf("interrupted listing: code %d", code)
+	}
+}
+
+// A hard error after an AFFECTED job keeps that job in the report and exits 1.
+func TestHardErrorMidRunKeepsFindings(t *testing.T) {
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
+	f.Jobs[1] = []source.Job{{ID: 2, Name: "build"}, {ID: 3, Name: "test"}}
+	f.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	var out, errb bytes.Buffer
+	code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, failDeps(f, map[string]error{"job:3": errors.New("HTTP 500")}))
+	if code != 1 || !strings.Contains(out.String(), "AFFECTED") || !strings.Contains(out.String(), "UNCHECKED") {
+		t.Fatalf("code %d\n%s\n%s", code, out.String(), errb.String())
+	}
+}
+
 func failDeps(f *sourcetest.Fake, err map[string]error) deps {
 	return deps{
 		newSource: func(string) (source.Source, error) { return failSrc{f, err}, nil },

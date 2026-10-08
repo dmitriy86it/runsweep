@@ -286,6 +286,20 @@ func TestScanHardErrorKeepsPartialResult(t *testing.T) {
 	}
 }
 
+// A hard error mid-run keeps the jobs already judged and adds a run-level UNCHECKED.
+func TestScanHardErrorKeepsRunFindings(t *testing.T) {
+	src := errSrc{Fake: fixture(), logErr: map[int64]error{11: errors.New("boom")}}
+	res, err := Run(context.Background(), src, inc, Options{Repos: []string{"o/a"}})
+	if err == nil || res.Count(model.Affected) != 1 || res.Count(model.Unchecked) != 1 || res.JobsScanned != 2 {
+		t.Fatalf("%v %+v", err, res)
+	}
+	for _, f := range res.Findings {
+		if f.Status == model.Unchecked && (f.Run.JobID != 0 || !hasNote(f, "boom")) {
+			t.Fatalf("%+v", f)
+		}
+	}
+}
+
 type panicSrc struct{ *sourcetest.Fake }
 
 func (panicSrc) ListJobs(context.Context, string, int64) ([]source.Job, error) {

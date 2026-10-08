@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/dmitriy86it/runsweep/internal/model"
 	"go.yaml.in/yaml/v3"
@@ -27,11 +28,52 @@ type Job struct {
 	CloudRoles     []model.CloudRole
 }
 
+// namePattern is a templated job name ("Build ${{ matrix.node }}") compiled once. re is nil
+// when the name is not templated, is expression-only, or is unusable (bad: too long, or the
+// regexp engine rejects it).
+type namePattern struct {
+	re  *regexp.Regexp
+	lit int // length of the literal text: the longer, the more specific the match
+	bad bool
+}
+
+// pattern returns j's name pattern, compiled on first use and kept in the workflow (which scan
+// caches), so FindJob does not recompile it for every run.
+func (w *Workflow) pattern(j *Job) namePattern {
+	if v, ok := w.pats.Load(j); ok {
+		return v.(namePattern)
+	}
+	var p namePattern
+	defer func() { w.pats.Store(j, p) }() // a concurrent first use may compile twice: harmless
+	if !strings.Contains(j.Name, "${{") {
+		return p
+	}
+	if len(j.Name) > maxTemplateName { // would build a huge regexp
+		p.bad = true
+		return p
+	}
+	lit := tplRe.ReplaceAllString(j.Name, "")
+	if strings.TrimSpace(lit) == "" {
+		return p // expression-only name matches anything; only ID/exact stage may match it
+	}
+	pat := "^"
+	for i, part := range tplRe.Split(j.Name, -1) {
+		if i > 0 {
+			pat += ".+"
+		}
+		pat += regexp.QuoteMeta(part)
+	}
+	re, err := regexp.Compile(pat + "$") // fails on e.g. invalid UTF-8
+	p.re, p.lit, p.bad = re, len(lit), err != nil
+	return p
+}
+
 // Workflow is a parsed workflow file.
 type Workflow struct {
 	Jobs          map[string]*Job
 	globalSecrets []string
 	globalDynamic bool
+	pats          sync.Map // *Job -> namePattern
 }
 
 var (
@@ -145,34 +187,24 @@ func (w *Workflow) findStaged(name string) (*Job, bool) {
 			return nil, true
 		}
 	}
-	// templated names: the most specific (longest literal text) match wins; a tie is ambiguous.
+	// templated names: the most specific (longest literal text) match wins; a tie is ambiguous,
+	// and so is any name that could not be compared (it might be the more specific match).
 	var best *Job
 	bestLen, tie := -1, false
 	for _, id := range ids {
 		j := w.Jobs[id]
-		if !strings.Contains(j.Name, "${{") || len(j.Name) > maxTemplateName {
-			continue // an overlong name is not matched by template: it would build a huge regexp
+		p := w.pattern(j)
+		if p.bad {
+			return nil, true
 		}
-		lit := tplRe.ReplaceAllString(j.Name, "")
-		if strings.TrimSpace(lit) == "" {
-			continue // expression-only name matches anything; only ID/exact stage may match it
-		}
-		pat := "^"
-		for i, part := range tplRe.Split(j.Name, -1) {
-			if i > 0 {
-				pat += ".+"
-			}
-			pat += regexp.QuoteMeta(part)
-		}
-		re, err := regexp.Compile(pat + "$")
-		if err != nil {
-			continue // e.g. invalid UTF-8 from the workflow file: no match
+		if p.re == nil {
+			continue
 		}
 		for _, n := range names {
-			if re.MatchString(n) {
-				if len(lit) > bestLen {
-					best, bestLen, tie = j, len(lit), false
-				} else if len(lit) == bestLen && best != j {
+			if p.re.MatchString(n) {
+				if p.lit > bestLen {
+					best, bestLen, tie = j, p.lit, false
+				} else if p.lit == bestLen && best != j {
 					tie = true
 				}
 				break

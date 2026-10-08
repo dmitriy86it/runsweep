@@ -48,10 +48,10 @@ Exit codes:
 |---|---|
 | `0` | every job checked, nothing AFFECTED or POSSIBLE |
 | `1` | at least one job AFFECTED or POSSIBLE |
-| `2` | error: bad flags or incident file, no token, token rejected (HTTP 401), nothing could be scanned |
+| `2` | error: bad flags or incident file, no token, token rejected (HTTP 401), organization could not be listed, nothing could be scanned |
 | `3` | nothing AFFECTED or POSSIBLE, but not everything was checked: UNCHECKED jobs, skipped repositories, or the scan was interrupted (Ctrl-C, API error) |
 
-`1` wins over `3`. An interrupted scan still prints the report of what it checked; what it did not reach is listed as `interrupted: not scanned`. A second Ctrl-C exits at once.
+`1` wins over `2` and `3`: findings are reported even if the scan then stops on an error, such as a rejected token. An interrupted scan still prints the report of what it checked; what it did not reach is listed as `interrupted: not scanned`. A second Ctrl-C exits at once.
 
 **Token.** runsweep uses `GITHUB_TOKEN`, or else `gh auth token`. It only reads. A fine-grained token needs read-only **Actions**, **Contents** and **Metadata** on the repositories you scan; a classic token needs `repo` for private repositories and no scope for public ones.
 

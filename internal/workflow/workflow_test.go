@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -95,6 +96,29 @@ func TestFindJobBadTemplateName(t *testing.T) {
 	}
 	if j, ok := w.FindJob(strings.Repeat("x", 1025) + " 1"); ok {
 		t.Fatalf("matched %v", j)
+	}
+}
+
+// A short template must not take the match from an overlong one that is not compared.
+func TestFindJobOverlongTemplateIsAmbiguous(t *testing.T) {
+	long := "build " + strings.Repeat("x", 1100) + " ${{ matrix.n }}"
+	w := &Workflow{Jobs: map[string]*Job{"a": {ID: "a", Name: "build ${{ matrix.n }}"}, "b": {ID: "b", Name: long}}}
+	if j, ok := w.findStaged("build " + strings.Repeat("x", 1100) + " 1"); j != nil || !ok {
+		t.Fatalf("want ambiguous, got %v %v", j, ok)
+	}
+}
+
+// Templated names are compiled once per workflow, not on every FindJob.
+func TestFindJobCompilesOnce(t *testing.T) {
+	w := &Workflow{Jobs: map[string]*Job{}}
+	for i := range 200 {
+		id := fmt.Sprintf("j%d", i)
+		w.Jobs[id] = &Job{ID: id, Name: fmt.Sprintf("Job %d ${{ matrix.n }}", i)}
+	}
+	w.FindJob("Job 7 linux")
+	// compiling costs dozens of allocations per job; matching alone stays under one per job
+	if n := testing.AllocsPerRun(5, func() { w.FindJob("Job 7 linux") }); n >= 200 {
+		t.Fatalf("%v allocations per FindJob", n)
 	}
 }
 
