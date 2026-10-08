@@ -592,16 +592,119 @@ func TestScanCalledJobAmbiguous(t *testing.T) {
 
 func TestScanSelfCallingWorkflowStops(t *testing.T) {
 	f := callFixture("./.github/workflows/ci.yml", "deploy / deploy / deploy / deploy / deploy / deploy")
-	if fd := scanOne(t, f, npmOnly); !hasNote(fd, "nested more than 4 levels deep") {
+	if fd := scanOne(t, f, npmOnly); !hasNote(fd, "nested more than 10 levels deep") {
 		t.Fatalf("%+v", fd)
 	}
 }
 
 func TestScanUnidentifiedCalledJobKeepsEnvironmentSecrets(t *testing.T) {
-	f := callFixture("./.github/workflows/deploy.yml", "deploy / nope")
+	f := fixture()
+	f.Trees["o/a@s1"] = nil
 	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  deploy:\n    uses: ./.github/workflows/deploy.yml\n"))
+	f.AddFile("o/a", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "deploy / nope"}}
 	f.AddFile("o/a", "s1", ".github/workflows/deploy.yml", []byte("on: workflow_call\njobs:\n  a:\n    environment: prod\n    runs-on: x\n    steps: [{run: npm ci, env: {T: \"${{ secrets.PROD_TOKEN }}\"}}]\n"))
 	if fd := scanOne(t, f, npmOnly); fd.Exposure.JobMatched || !slices.Contains(fd.Exposure.Secrets, "PROD_TOKEN") {
 		t.Fatalf("%+v", fd.Exposure)
+	}
+}
+
+const sharedCall = "org/shared/.github/workflows/deploy.yml@" + pinned
+
+// A called workflow is never listed in the runner log's download records: the call ref itself must be matched.
+func TestScanCalledWorkflowRefMatchesIncident(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		gone bool
+	}{{"log without downloads", false}, {"log gone", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := callFixture(sharedCall, "deploy / release")
+			f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1]
+			f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte("on: workflow_call\njobs:\n  release:\n    runs-on: x\n    steps: [{run: make release}]\n"))
+			f.Logs[10] = "2026-03-31T01:00:00Z hello\n"
+			f.GoneLogs[10] = tc.gone
+			i := &incident.Incident{ID: "t", Window: inc.Window, Actions: []incident.Action{{Uses: "org/shared", SHAs: []string{pinned}}}}
+			if fd := scanOne(t, f, i); fd.Status != model.Affected {
+				t.Fatalf("%+v", fd)
+			}
+		})
+	}
+}
+
+func TestScanUnidentifiedCalledJobResolvesNestedCalls(t *testing.T) {
+	f := callFixture("./.github/workflows/mid.yml", "deploy / Inner")
+	f.AddFile("o/a", "s1", ".github/workflows/mid.yml", []byte("on: workflow_call\njobs:\n"+
+		"  a:\n    name: Inner\n    uses: ./.github/workflows/deploy.yml\n    secrets: inherit\n"+
+		"  b:\n    name: Inner\n    uses: ./.github/workflows/deploy.yml\n    secrets: inherit\n"))
+	f.AddFile("o/a", "s1", ".github/workflows/deploy.yml", []byte(deployYAML))
+	fd := scanOne(t, f, npmOnly)
+	if fd.Exposure.JobMatched || !hasRole(fd) || !fd.Exposure.IDTokenWrite {
+		t.Fatalf("%+v %+v", fd, fd.Exposure)
+	}
+}
+
+func TestScanLocalCallInRemoteWorkflowStaysInRemoteRepo(t *testing.T) {
+	f := callFixture(sharedCall, "deploy / mid / release")
+	f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte("on: workflow_call\njobs:\n  mid:\n    uses: ./.github/workflows/x.yml\n    secrets: inherit\n"))
+	f.AddFile("org/shared", pinned, ".github/workflows/x.yml", []byte(deployYAML))
+	f.AddFile("o/a", "s1", ".github/workflows/x.yml", []byte(strings.ReplaceAll(deployYAML, "role/deploy", "role/WRONG")))
+	if fd := scanOne(t, f, npmOnly); !hasRole(fd) {
+		t.Fatalf("%+v", fd.Exposure)
+	}
+}
+
+func TestScanRemoteCalleeErrorIsSoft(t *testing.T) {
+	f := callFixture(sharedCall, "deploy / release")
+	f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+	src := errSrc{Fake: f, blobErr: map[string]error{"org/shared@" + pinned + ":.github/workflows/deploy.yml": errors.New("boom")}}
+	res, err := Run(context.Background(), src, npmOnly, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatalf("a remote callee must not abort the scan: %v", err)
+	}
+	if fd := res.Findings[0]; fd.Status != model.Affected || !hasNote(fd, "unavailable (boom)") {
+		t.Fatalf("%+v", fd)
+	}
+}
+
+func TestScanCalledWorkflowUnavailableReason(t *testing.T) {
+	blob := "org/shared@" + pinned + ":.github/workflows/deploy.yml"
+	for _, tc := range []struct {
+		name, want string
+		setup      func(*sourcetest.Fake) source.Source
+	}{
+		{"missing", "unavailable (not found", func(f *sourcetest.Fake) source.Source { return f }},
+		{"truncated", "tree truncated", func(f *sourcetest.Fake) source.Source { f.Truncated["org/shared@"+pinned] = true; return f }},
+		{"403", "no access", func(f *sourcetest.Fake) source.Source {
+			f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+			return errSrc{Fake: f, blobErr: map[string]error{blob: source.ErrNoAccess}}
+		}},
+		{"too large", "too large", func(f *sourcetest.Fake) source.Source {
+			f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+			return errSrc{Fake: f, blobErr: map[string]error{blob: source.ErrIncomplete}}
+		}},
+		{"parse", "parse error", func(f *sourcetest.Fake) source.Source {
+			f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte("jobs: [unclosed"))
+			return f
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := callFixture(sharedCall, "deploy / release")
+			res, err := Run(context.Background(), tc.setup(f), npmOnly, Options{Repos: []string{"o/a"}})
+			if err != nil || len(res.Findings) != 1 || !hasNote(res.Findings[0], tc.want) {
+				t.Fatalf("%v %+v", err, res.Findings)
+			}
+		})
+	}
+}
+
+func TestScanUnidentifiedCallerJobWithCallsIsUnchecked(t *testing.T) {
+	f := callFixture("./.github/workflows/deploy.yml", "no such job")
+	f.AddFile("o/a", "s1", ".github/workflows/deploy.yml", []byte(deployYAML))
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1]
+	f.Logs[10] = "2026-03-31T01:00:00Z hi\n"
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	fd := scanOne(t, f, actOnly)
+	if fd.Status != model.Unchecked || !hasNote(fd, "called workflows were not read") {
+		t.Fatalf("%+v", fd)
 	}
 }

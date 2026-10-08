@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -143,32 +144,61 @@ func ref(repo string, r source.Run, j source.Job) model.RunRef {
 // before reports a known time earlier than the window start; a zero time is never before.
 func before(t, start time.Time) bool { return !t.IsZero() && t.Before(start) }
 
-// workflow returns the parsed workflow file at repo@sha:path, or nil if it is unavailable (soft
-// error, missing, unparsable). Hard errors are returned and not cached.
-func (s *scanner) workflow(ctx context.Context, repo, sha, path string) (*workflow.Workflow, error) {
+// wfEntry is a cached workflow read: wf is nil when unavailable, with the reason.
+type wfEntry struct {
+	wf     *workflow.Workflow
+	reason string
+}
+
+// workflow returns the parsed workflow file at repo@sha:path, or nil and a reason if it is
+// unavailable (soft error, missing, unparsable). Hard errors are returned and not cached, except
+// with lenient (a repository other than the scanned one): there they become "unavailable" too,
+// unless the context ended, so an arbitrary `uses:` cannot abort the scan.
+func (s *scanner) workflow(ctx context.Context, repo, sha, path string, lenient bool) (*workflow.Workflow, string, error) {
 	key := repo + "@" + sha + ":" + path
 	if v, ok := s.wf.Load(key); ok {
-		return v.(*workflow.Workflow), nil
+		e := v.(wfEntry)
+		return e.wf, e.reason, nil
 	}
-	var wf *workflow.Workflow
-	entries, _, err := s.src.Tree(ctx, repo, sha)
-	if err != nil && !soft(err) {
-		return nil, err
+	fail := func(what string, err error) (*workflow.Workflow, string, error) {
+		switch {
+		case soft(err):
+			reason := err.Error()
+			if errors.Is(err, source.ErrIncomplete) {
+				reason = what + " too large or incomplete"
+			}
+			s.wf.Store(key, wfEntry{reason: reason})
+			return nil, reason, nil
+		case lenient && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded):
+			return nil, err.Error(), nil
+		}
+		return nil, "", err
 	}
-	for _, e := range entries {
-		if e.Path != path {
+	entries, truncated, err := s.src.Tree(ctx, repo, sha)
+	if err != nil {
+		return fail("tree", err)
+	}
+	e := wfEntry{reason: "not found in the commit tree"}
+	if truncated {
+		e.reason = "tree truncated, file not found"
+	}
+	for _, t := range entries {
+		if t.Path != path {
 			continue
 		}
-		b, err := s.src.Blob(ctx, repo, e.SHA)
-		if err != nil && !soft(err) {
-			return nil, err
+		b, err := s.src.Blob(ctx, repo, t.SHA)
+		if err != nil {
+			return fail("file", err)
 		}
-		if err == nil {
-			wf, _ = workflow.Parse(b)
+		if e.wf, err = workflow.Parse(b); err != nil {
+			e.wf, e.reason = nil, "parse error: "+err.Error()
 		}
 	}
-	s.wf.Store(key, wf)
-	return wf, nil
+	if e.wf != nil {
+		e.reason = ""
+	}
+	s.wf.Store(key, e)
+	return e.wf, e.reason, nil
 }
 
 func note(format string, args ...any) model.Evidence {
@@ -195,7 +225,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 	if len(jobs) == 0 {
 		return nil, 0, nil
 	}
-	wf, err := s.workflow(ctx, repo, run.HeadSHA, run.Path)
+	wf, _, err := s.workflow(ctx, repo, run.HeadSHA, run.Path, false)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -227,6 +257,10 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 				return nil, 0, err
 			}
 			wj = call.job
+		}
+		if wj == nil && wf != nil && slices.ContainsFunc(slices.Collect(maps.Values(wf.Jobs)), func(j *workflow.Job) bool { return j.Call != "" }) {
+			call.status = model.Unchecked
+			call.notes = append(call.notes, note("job could not be identified; called workflows were not read"))
 		}
 		var log string
 		var logErr = source.ErrGone
@@ -273,8 +307,10 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 				st = model.Worse(st, model.Unchecked)
 				ev = append(ev, note("job log unavailable (%v); composite actions and reusable workflows not checked", logErr))
 			}
-			f.Status = model.Worse(f.Status, st)
-			f.Evidence = append(f.Evidence, ev...)
+			// the runner log never lists reusable workflows, so match the followed call refs themselves
+			cst, cev := actions.MatchUses(call.calls, s.inc.Actions)
+			f.Status = model.Worse(model.Worse(f.Status, st), cst)
+			f.Evidence = append(append(f.Evidence, ev...), cev...)
 		}
 
 		f.Status = model.Worse(f.Status, call.status)
@@ -303,9 +339,13 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 	return out, len(jobs), nil
 }
 
-// maxCallDepth caps how many nested reusable-workflow calls are followed (GitHub allows four
-// levels of workflows); it also stops a workflow that calls itself.
-const maxCallDepth = 4
+// maxCallDepth caps how many nested reusable-workflow calls are followed (GitHub allows ten
+// levels); it also stops a workflow that calls itself.
+const maxCallDepth = 10
+
+// maxCallReads bounds the workflows read for one job, so a file whose jobs all call each other
+// cannot fan out exponentially.
+const maxCallReads = 50
 
 // callee is what a job that calls a reusable workflow resolved to.
 type callee struct {
@@ -313,7 +353,8 @@ type callee struct {
 	job     *workflow.Job
 	status  model.Status // UNCHECKED when a called workflow could not be read
 	notes   []model.Evidence
-	matched bool // false when a called job was not identified and the union of its workflow was used
+	calls   []string // every `uses:` ref followed: the runner log never lists them
+	matched bool     // false when a called job was not identified and the union of its workflow was used
 }
 
 // resolveCall follows job wj of wf through the reusable workflows it calls. Each further
@@ -321,11 +362,16 @@ type callee struct {
 // cannot read and keeps what was resolved so far (the caller job, as before reusable workflows
 // were read).
 func (s *scanner) resolveCall(ctx context.Context, repo, sha string, wf *workflow.Workflow, wj *workflow.Job, apiName string) (callee, error) {
+	reads := 0
+	return s.follow(ctx, repo, repo, sha, wf, wj, strings.Split(apiName, " / ")[1:], 0, &reads)
+}
+
+func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workflow.Workflow, wj *workflow.Job, segs []string, depth int, reads *int) (callee, error) {
 	c := callee{wf: wf, job: wj, matched: true}
-	segs := strings.Split(apiName, " / ")[1:]
-	for depth := 0; c.job.Call != ""; depth++ {
+	for ; c.job.Call != ""; depth++ {
 		uses := c.job.Call
-		if depth == maxCallDepth {
+		c.calls = append(c.calls, uses)
+		if depth >= maxCallDepth {
 			c.notes = append(c.notes, note("called workflow %s is nested more than %d levels deep — not read", uses, maxCallDepth))
 			return c, nil
 		}
@@ -337,13 +383,18 @@ func (s *scanner) resolveCall(ctx context.Context, repo, sha string, wf *workflo
 		if call.Repo == "" { // local: same repository and commit as the calling file
 			call.Repo, call.SHA = repo, sha
 		}
-		cw, err := s.workflow(ctx, call.Repo, call.SHA, call.Path)
+		if *reads++; *reads > maxCallReads {
+			c.status = model.Unchecked
+			c.notes = append(c.notes, note("called workflow %s: more than %d called workflows — not read", uses, maxCallReads))
+			return c, nil
+		}
+		cw, reason, err := s.workflow(ctx, call.Repo, call.SHA, call.Path, call.Repo != home)
 		if err != nil {
 			return c, err
 		}
 		if cw == nil {
 			c.status = model.Unchecked
-			c.notes = append(c.notes, note("called workflow %s unavailable — exposure judged from the caller job", uses))
+			c.notes = append(c.notes, note("called workflow %s unavailable (%s) — exposure judged from the caller job", uses, reason))
 			return c, nil
 		}
 		name := strings.Join(segs, " / ")
@@ -351,17 +402,49 @@ func (s *scanner) resolveCall(ctx context.Context, repo, sha string, wf *workflo
 		if name != "" {
 			cj, _ = cw.FindJob(name)
 		}
-		if cj == nil {
+		union := cj == nil
+		if union {
 			cj, c.matched = cw.Union(), false
 			c.notes = append(c.notes, note("job %q not identified in called workflow %s — exposure covers all its jobs", name, uses))
 		}
 		c.wf, c.job = c.wf.Through(c.job, cw, cj)
+		if union { // the union's members that call workflows are followed too
+			ids := slices.Sorted(maps.Keys(cw.Jobs))
+			for _, id := range ids {
+				m := cw.Jobs[id]
+				if m.Call == "" {
+					continue
+				}
+				sub, err := s.follow(ctx, home, call.Repo, call.SHA, cw, m, nil, depth+1, reads)
+				if err != nil {
+					return c, err
+				}
+				mergeInto(c.job, sub.job)
+				c.status = model.Worse(c.status, sub.status)
+				c.notes = append(c.notes, sub.notes...)
+				c.calls = append(c.calls, sub.calls...)
+			}
+		}
 		repo, sha = call.Repo, call.SHA
 		if len(segs) > 0 {
 			segs = segs[1:]
 		}
 	}
 	return c, nil
+}
+
+// mergeInto adds what job src can reach to dst.
+func mergeInto(dst, src *workflow.Job) {
+	dst.Uses = append(dst.Uses, src.Uses...)
+	dst.Runs = append(dst.Runs, src.Runs...)
+	dst.Secrets = append(dst.Secrets, src.Secrets...)
+	dst.InheritSecrets = dst.InheritSecrets || src.InheritSecrets
+	dst.IDTokenWrite = dst.IDTokenWrite || src.IDTokenWrite
+	for _, r := range src.CloudRoles {
+		if !slices.Contains(dst.CloudRoles, r) {
+			dst.CloudRoles = append(dst.CloudRoles, r)
+		}
+	}
 }
 
 // remote reports whether a `uses:` is downloaded by the runner (not a local path or docker image).
