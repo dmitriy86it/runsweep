@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -25,7 +26,7 @@ import (
 func fakeDeps(f *sourcetest.Fake) deps {
 	return deps{
 		newSource: func(string) (source.Source, error) { return f, nil },
-		token:     func() (string, error) { return "tok", nil },
+		token:     func(context.Context) (string, error) { return "tok", nil },
 	}
 }
 
@@ -97,7 +98,7 @@ func writeInc(t *testing.T, body string) string {
 func noNetDeps(t *testing.T) deps {
 	return deps{
 		newSource: func(string) (source.Source, error) { t.Fatal("newSource called"); return nil, nil },
-		token:     func() (string, error) { t.Fatal("token called"); return "", nil },
+		token:     func(context.Context) (string, error) { t.Fatal("token called"); return "", nil },
 	}
 }
 
@@ -126,7 +127,7 @@ func TestBadInputNeverTouchesNetwork(t *testing.T) {
 }
 
 func TestTokenFailure(t *testing.T) {
-	d := deps{token: func() (string, error) { return "", errors.New("no token") }}
+	d := deps{token: func(context.Context) (string, error) { return "", errors.New("no token") }}
 	var out, errb bytes.Buffer
 	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, d); code != 2 {
 		t.Fatalf("got %d", code)
@@ -240,7 +241,7 @@ func TestHardErrorMidRunKeepsFindings(t *testing.T) {
 func failDeps(f *sourcetest.Fake, err map[string]error) deps {
 	return deps{
 		newSource: func(string) (source.Source, error) { return failSrc{f, err}, nil },
-		token:     func() (string, error) { return "tok", nil },
+		token:     func(context.Context) (string, error) { return "tok", nil },
 	}
 }
 
@@ -708,11 +709,47 @@ func TestTokenFromGHToken(t *testing.T) {
 	t.Setenv("PATH", "") // no gh CLI: it would print GH_TOKEN itself
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", " gh-tok ")
-	if tok, err := githubToken(); err != nil || tok != "gh-tok" {
+	if tok, err := githubToken(context.Background()); err != nil || tok != "gh-tok" {
 		t.Fatalf("%q %v", tok, err)
 	}
 	t.Setenv("GITHUB_TOKEN", "github-tok")
-	if tok, err := githubToken(); err != nil || tok != "github-tok" {
+	if tok, err := githubToken(context.Background()); err != nil || tok != "github-tok" {
 		t.Fatalf("GITHUB_TOKEN comes first: %q %v", tok, err)
+	}
+}
+
+func TestVersionFlagAndCommand(t *testing.T) {
+	for _, args := range [][]string{{"--version"}, {"-v"}, {"version"}} {
+		var out, errb bytes.Buffer
+		if code := run(args, &out, &errb, deps{}); code != 0 || !strings.HasPrefix(out.String(), "runsweep ") {
+			t.Fatalf("%v: code %d %q %q", args, code, out.String(), errb.String())
+		}
+	}
+}
+
+func TestVersionString(t *testing.T) {
+	info := &debug.BuildInfo{Main: debug.Module{Version: "v0.2.1"}, Settings: []debug.BuildSetting{
+		{Key: "vcs.revision", Value: "abc"}, {Key: "vcs.time", Value: "2026-10-08T00:00:00Z"}}}
+	for _, c := range []struct {
+		v    string
+		info *debug.BuildInfo
+		want string
+	}{
+		{"v0.2.1", nil, "v0.2.1 (none, unknown)"}, // release: linker values win
+		{"dev", nil, "dev (none, unknown)"},
+		{"dev", info, "v0.2.1 (abc, 2026-10-08T00:00:00Z)"},
+		{"dev", &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: info.Settings}, "dev (abc, 2026-10-08T00:00:00Z)"},
+	} {
+		if got := versionString(c.v, "none", "unknown", c.info); got != c.want {
+			t.Errorf("%s %+v: got %q, want %q", c.v, c.info, got, c.want)
+		}
+	}
+}
+
+func TestIncidentFlagHelpHasNoBackquotes(t *testing.T) {
+	var out, errb bytes.Buffer
+	run([]string{"scan", "--help"}, &out, &errb, deps{})
+	if !strings.Contains(out.String(), "--incident string") {
+		t.Fatal(out.String())
 	}
 }

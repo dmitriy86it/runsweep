@@ -68,8 +68,8 @@ type depV1 struct {
 	Dependencies map[string]depV1 `json:"dependencies"`
 }
 
-// ParsePackageLock extracts packages from a package-lock.json. An entry without a package name is an
-// error; the other packages are returned with it.
+// ParsePackageLock extracts packages from a package-lock.json. An entry without a package name
+// (or a version, in lockfileVersion 2 and 3) is an error; the other packages are returned with it.
 func ParsePackageLock(b []byte) ([]Pkg, error) {
 	var lf struct {
 		Packages map[string]struct {
@@ -86,19 +86,19 @@ func ParsePackageLock(b []byte) ([]Pkg, error) {
 		return nil, fmt.Errorf("package-lock: neither packages nor dependencies")
 	}
 	var out []Pkg
-	// entries with an empty package name: malformed, so the file is not fully read
+	// malformed entries (no package name, a scope without a name, no version): the file is not fully read
 	unnamed := 0
 	if len(lf.Packages) > 0 { // lockfileVersion 2 and 3
 		for key, p := range lf.Packages {
 			i := strings.LastIndex(key, "node_modules/")
-			if i < 0 || p.Link || p.Version == "" {
+			if i < 0 || p.Link {
 				continue
 			}
 			name := key[i+len("node_modules/"):]
 			if p.Name != "" { // npm alias: key is the alias, name is the real package
 				name = p.Name
 			}
-			if name == "" {
+			if !validName(name) || p.Version == "" {
 				unnamed++
 				continue
 			}
@@ -127,11 +127,19 @@ func ParsePackageLock(b []byte) ([]Pkg, error) {
 	return out, unnamedErr(unnamed)
 }
 
+// validName reports whether name is a package name: not empty, and a scoped name has both parts.
+func validName(name string) bool {
+	if scope, rest, ok := strings.Cut(name, "/"); ok {
+		return strings.HasPrefix(scope, "@") && len(scope) > 1 && rest != "" && !strings.Contains(rest, "/")
+	}
+	return name != "" && name[0] != '@'
+}
+
 func unnamedErr(n int) error {
 	if n == 0 {
 		return nil
 	}
-	return fmt.Errorf("package-lock: %d entries without a package name", n)
+	return fmt.Errorf("package-lock: %d entries without a package name or version", n)
 }
 
 var (

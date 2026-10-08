@@ -255,6 +255,16 @@ func TestMatchUnsupportedLockfile(t *testing.T) {
 	}
 }
 
+// A package-lock entry runsweep cannot read does not hide a bad package in the same file.
+func TestMatchPackageLockBadEntryKeepsHits(t *testing.T) {
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/@scope/":{"version":"1.0.0"},"node_modules/axios":{"version":"1.14.1"}}}`))
+	r, _ := new(Cache).Match(context.Background(), f, "o/r", "s1", bad)
+	if r.Status != model.Affected || !hasDetail(r, "axios@1.14.1 in package-lock.json") || !hasDetail(r, "cannot parse package-lock.json") {
+		t.Fatalf("%+v", r)
+	}
+}
+
 func TestMatchPnpmUnknownKeyKeepsHits(t *testing.T) {
 	f := sourcetest.New()
 	f.AddFile("o/r", "s1", "pnpm-lock.yaml", []byte("lockfileVersion: '9.0'\npackages:\n  axios@1.14.1:\n    resolution: {integrity: x}\n  foo@https://codeload.github.com/a/b/tar.gz/abc:\n    resolution: {tarball: x}\n"))

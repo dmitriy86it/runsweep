@@ -451,8 +451,7 @@ type Call struct {
 }
 
 var (
-	commitRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	nameRe   = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	nameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 	// GitHub supports no subdirectories under .github/workflows
 	workflowPathRe = regexp.MustCompile(`^\.github/workflows/[^/\\]+\.ya?ml$`)
 )
@@ -466,7 +465,7 @@ func ParseCall(uses string) (c Call, ok bool) {
 	}
 	ref, sha, _ := strings.Cut(uses, "@")
 	parts := strings.SplitN(ref, "/", 3)
-	if len(parts) != 3 || !commitRe.MatchString(sha) || !workflowPath(parts[2]) {
+	if len(parts) != 3 || !model.CommitSHA.MatchString(sha) || !workflowPath(parts[2]) {
 		return Call{}, false
 	}
 	for _, n := range parts[:2] {

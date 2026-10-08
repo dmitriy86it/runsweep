@@ -171,9 +171,9 @@ func mapErr(resp *github.Response, err error) error {
 		case code == http.StatusGone:
 			return source.ErrGone
 		case code == http.StatusUnauthorized:
-			return fmt.Errorf("%w: %v", source.ErrAuth, err)
+			return fmt.Errorf("%w: %w", source.ErrAuth, err)
 		case code >= 400 && code < 500 && code != http.StatusTooManyRequests:
-			return fmt.Errorf("%w: %v", source.ErrNoAccess, err)
+			return fmt.Errorf("%w: %w", source.ErrNoAccess, err)
 		}
 	}
 	return err
@@ -301,7 +301,7 @@ func (c *Client) JobLog(ctx context.Context, repo string, jobID int64) (string, 
 			return log, err
 		}
 		if try == len(backoff) {
-			return "", fmt.Errorf("%w: %v", source.ErrIncomplete, err)
+			return "", fmt.Errorf("%w: %w", source.ErrIncomplete, err)
 		}
 		c.Logf("job log download failed, retrying in %s: %v", backoff[try], err)
 		if err := c.Sleep(ctx, backoff[try]); err != nil {
@@ -424,7 +424,7 @@ func (c *Client) raw(ctx context.Context, u string, limit int) ([]byte, error) {
 		return resp, err
 	})
 	if err != nil && bodyErr && ctx.Err() == nil {
-		return nil, fmt.Errorf("%w: %v", source.ErrIncomplete, err)
+		return nil, fmt.Errorf("%w: %w", source.ErrIncomplete, err)
 	}
 	if err != nil {
 		return nil, err
