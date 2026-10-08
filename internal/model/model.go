@@ -100,7 +100,7 @@ type Result struct {
 	Findings      []Finding      `json:"findings"`
 	Rotation      []RotationItem `json:"rotation"`
 	Skipped       []Skip         `json:"skipped"`
-	// RetentionWarning: the window ended more than 90 days ago, so missing runs prove nothing.
+	// RetentionWarning: the window started more than 90 days ago, so missing runs prove nothing.
 	RetentionWarning bool `json:"retention_warning,omitempty"`
 }
 

@@ -162,7 +162,7 @@ func scanCmd(d deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res.RetentionWarning = inc.Window.End.Before(time.Now().Add(-90 * 24 * time.Hour))
+			res.RetentionWarning = inc.Window.Start.Before(time.Now().Add(-90 * 24 * time.Hour))
 			if format == "json" {
 				err = report.JSON(c.OutOrStdout(), inc, res)
 			} else {

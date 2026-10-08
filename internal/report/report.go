@@ -2,10 +2,13 @@
 package report
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/dmitriy86it/runsweep/internal/incident"
 	"github.com/dmitriy86it/runsweep/internal/model"
@@ -25,7 +28,7 @@ const limits = `## Limits
 `
 
 // RetentionNote explains why an old window can look clean.
-const RetentionNote = "incident window ends more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence"
+const RetentionNote = "incident window starts more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence"
 
 // Markdown renders the scan result as a Markdown report.
 func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
@@ -94,13 +97,24 @@ func JSON(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	c.Window.Start, c.Window.End = c.Window.Start.UTC(), c.Window.End.UTC()
 	inc = &c
 	r = normalize(r)
-	enc := json.NewEncoder(w)
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
 	enc.SetIndent("", "  ")
-	return enc.Encode(struct {
+	if err := enc.Encode(struct {
 		Incident *incident.Incident `json:"incident"`
 		*model.Result
-	}{inc, r})
+	}{inc, r}); err != nil {
+		return err
+	}
+	_, err := w.Write(c1Re.ReplaceAllFunc(b.Bytes(), func(m []byte) []byte {
+		r, _ := utf8.DecodeRune(m)
+		return fmt.Appendf(nil, `\u%04x`, r)
+	}))
+	return err
 }
+
+// c1Re matches C1 control characters, which encoding/json leaves unescaped.
+var c1Re = regexp.MustCompile(`[\x{80}-\x{9f}]`)
 
 func seenIn(runs []model.RunRef) string {
 	var parts []string
@@ -134,11 +148,14 @@ func cell(s string) string { return strings.ReplaceAll(Clean(s), "|", `\|`) }
 
 var newlines = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
 
-// Clean makes repo-derived text safe for a terminal: CR/LF become spaces; C0/C1 controls, DEL
-// and Unicode line/paragraph separators are dropped (no escape sequences reach the terminal).
+// Clean makes repo-derived text safe for a terminal: CR/LF become spaces; C0/C1 controls, DEL,
+// Unicode line/paragraph separators and bidi controls are dropped (no escape sequences reach the
+// terminal, no text reordering).
 func Clean(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r >= 0x7f && r <= 0x9f || r == '\u2028' || r == '\u2029' {
+		switch {
+		case r < 0x20, r >= 0x7f && r <= 0x9f, r == '\u2028', r == '\u2029',
+			r == '\u200e', r == '\u200f', r >= '\u202a' && r <= '\u202e', r >= '\u2066' && r <= '\u2069':
 			return -1
 		}
 		return r

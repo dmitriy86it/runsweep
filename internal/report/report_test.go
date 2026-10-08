@@ -2,6 +2,7 @@ package report
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"os"
 	"strings"
@@ -198,7 +199,30 @@ func TestMarkdownRetentionWarning(t *testing.T) {
 	if err := Markdown(&b, inc, res); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(b.String(), "jobs scanned: 5\n\nWarning: incident window ends more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence.\n") {
+	if !strings.Contains(b.String(), "jobs scanned: 5\n\nWarning: incident window starts more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence.\n") {
 		t.Fatal(b.String())
+	}
+}
+
+func TestCleanDropsBidi(t *testing.T) {
+	in := "a\u200eb\u200fc\u202ad\u202ee\u2066f\u2069g\u2067h\u2068i"
+	if got := Clean(in); got != "abcdefghi" {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestJSONEscapesC1(t *testing.T) {
+	inc, res := sample()
+	res.Findings[0].Evidence[0].Detail = "x\u0085y\u009bz"
+	var b bytes.Buffer
+	if err := JSON(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(b.String(), "\u0085\u009b") || !strings.Contains(b.String(), `x\u0085y\u009bz`) {
+		t.Fatalf("C1 not escaped: %q", b.String())
+	}
+	var v any
+	if err := json.Unmarshal(b.Bytes(), &v); err != nil {
+		t.Fatal(err)
 	}
 }

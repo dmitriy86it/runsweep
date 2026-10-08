@@ -235,7 +235,7 @@ func TestNoTerminalEscapesInOutput(t *testing.T) {
 }
 
 func TestScanWarnings(t *testing.T) {
-	const retention = "warning: incident window ends more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence"
+	const retention = "warning: incident window starts more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence"
 	// old window, one UNCHECKED job (git tree truncated, no lockfile seen)
 	f := sourcetest.New()
 	f.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
@@ -266,5 +266,18 @@ func TestScanWarnings(t *testing.T) {
 	if !strings.Contains(errb.String(), "warning: no workflow runs in the window") ||
 		strings.Contains(errb.String()+out.String(), "absence of runs") || strings.Contains(errb.String(), "UNCHECKED") {
 		t.Errorf("stdout:\n%s\nstderr:\n%s", out.String(), errb.String())
+	}
+}
+
+func TestRetentionByWindowStart(t *testing.T) {
+	now := time.Now().UTC()
+	body := fmt.Sprintf("id: x\nwindow: {start: %s, end: %s}\nnpm: [{name: axios, versions: [\"1.14.1\"]}]\n",
+		now.Add(-100*24*time.Hour).Format(time.RFC3339), now.Add(-24*time.Hour).Format(time.RFC3339))
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--incident", writeInc(t, body), "--repo", "o/a"}, &out, &errb, fakeDeps(sourcetest.New())); code != 0 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "incident window starts more than 90 days ago") {
+		t.Fatalf("window started 100 days ago, ended yesterday: want retention warning\n%s", errb.String())
 	}
 }
