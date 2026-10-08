@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -312,5 +313,69 @@ func TestLookbackFindsReRun(t *testing.T) {
 	out.Reset()
 	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a", "--lookback", "0"}, &out, &errb, fakeDeps(f)); code != 0 {
 		t.Fatalf("--lookback 0: code %d\n%s", code, out.String())
+	}
+}
+
+// affectedFake has one AFFECTED job (axios@1.14.1 in the lockfile).
+func affectedFake() *sourcetest.Fake {
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
+	f.Jobs[1] = []source.Job{{ID: 2, Name: "build"}}
+	f.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	return f
+}
+
+func TestFormatDefault(t *testing.T) {
+	inc := writeInc(t, incYAML)
+	tty := fakeDeps(affectedFake())
+	tty.isTerminal = func(io.Writer) bool { return true }
+	for _, tc := range []struct {
+		name      string
+		d         deps
+		args      []string
+		env       map[string]string
+		prefix    string
+		wantColor bool
+	}{
+		{"pipe defaults to md", fakeDeps(affectedFake()), nil, nil, "# runsweep: ", false},
+		{"terminal defaults to text", tty, nil, map[string]string{"TERM": "xterm-256color"}, "runsweep · ", true},
+		{"NO_COLOR", tty, nil, map[string]string{"NO_COLOR": "1", "TERM": "xterm-256color"}, "runsweep · ", false},
+		{"TERM=dumb", tty, nil, map[string]string{"TERM": "dumb"}, "runsweep · ", false},
+		{"explicit md on a terminal", tty, []string{"--format", "md"}, nil, "# runsweep: ", false},
+		{"explicit text in a pipe", fakeDeps(affectedFake()), []string{"--format", "text"}, nil, "runsweep · ", false},
+		{"explicit json on a terminal", tty, []string{"--format", "json"}, nil, "{", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("NO_COLOR", "")
+			t.Setenv("TERM", "")
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			var out, errb bytes.Buffer
+			args := append([]string{"scan", "--incident", inc, "--repo", "o/a"}, tc.args...)
+			if code := run(args, &out, &errb, tc.d); code != 1 {
+				t.Fatalf("code %d: %s", code, errb.String())
+			}
+			if !strings.HasPrefix(out.String(), tc.prefix) {
+				t.Fatalf("want prefix %q:\n%s", tc.prefix, out.String())
+			}
+			if got := strings.Contains(out.String(), "\x1b[31mAFFECTED\x1b[0m"); got != tc.wantColor {
+				t.Fatalf("color = %v, want %v:\n%q", got, tc.wantColor, out.String())
+			}
+			if !tc.wantColor && strings.Contains(out.String(), "\x1b") {
+				t.Fatalf("escape sequence without color:\n%q", out.String())
+			}
+		})
+	}
+}
+
+func TestIsTerminal(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	if isTerminal(f) || isTerminal(&bytes.Buffer{}) {
+		t.Fatal("a regular file or a buffer is not a terminal")
 	}
 }

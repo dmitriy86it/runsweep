@@ -28,12 +28,23 @@ var version, commit, date = "dev", "none", "unknown"
 var errFindings = errors.New("affected or possibly affected jobs found")
 
 type deps struct {
-	newSource func(token string) (source.Source, error)
-	token     func() (string, error)
+	newSource  func(token string) (source.Source, error)
+	token      func() (string, error)
+	isTerminal func(w io.Writer) bool // nil: never a terminal
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, deps{newSource: newGitHub, token: githubToken}))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, deps{newSource: newGitHub, token: githubToken, isTerminal: isTerminal}))
+}
+
+// isTerminal reports whether w is a character device (a terminal), not a pipe or a file.
+func isTerminal(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	st, err := f.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
 }
 
 func newGitHub(token string) (source.Source, error) {
@@ -143,8 +154,15 @@ func scanCmd(d deps) *cobra.Command {
 			if len(repos) == 0 && org == "" {
 				return errors.New("pass --repo owner/name (repeatable) or --org name")
 			}
-			if format != "md" && format != "json" {
-				return fmt.Errorf("--format must be md or json, got %q", format)
+			tty := d.isTerminal != nil && d.isTerminal(c.OutOrStdout())
+			if format == "" {
+				format = "md" // pipes and files: CI pipelines read the Markdown report
+				if tty {
+					format = "text"
+				}
+			}
+			if format != "text" && format != "md" && format != "json" {
+				return fmt.Errorf("--format must be text, md or json, got %q", format)
 			}
 			if err := validateTargets(repos, org); err != nil {
 				return err
@@ -187,9 +205,13 @@ func scanCmd(d deps) *cobra.Command {
 				return err
 			}
 			res.RetentionWarning = inc.Window.Start.Before(time.Now().Add(-90 * 24 * time.Hour))
-			if format == "json" {
+			switch format {
+			case "json":
 				err = report.JSON(c.OutOrStdout(), inc, res)
-			} else {
+			case "text":
+				color := tty && os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
+				err = report.Text(c.OutOrStdout(), inc, res, color)
+			default:
 				err = report.Markdown(c.OutOrStdout(), inc, res)
 			}
 			if err != nil {
@@ -227,7 +249,7 @@ func scanCmd(d deps) *cobra.Command {
 	c.Flags().StringVar(&incRef, "incident", "", "built-in incident id (see `runsweep incidents`) or path to a YAML file")
 	c.Flags().StringSliceVar(&repos, "repo", nil, "repository owner/name (repeatable)")
 	c.Flags().StringVar(&org, "org", "", "scan every repository of an organization")
-	c.Flags().StringVar(&format, "format", "md", "output format: md or json")
+	c.Flags().StringVar(&format, "format", "", "output format: text, md or json (default text on a terminal, md otherwise)")
 	c.Flags().StringVar(&since, "since", "", "override window start (RFC3339)")
 	c.Flags().StringVar(&until, "until", "", "override window end (RFC3339)")
 	c.Flags().StringVar(&lookback, "lookback", "7d", "also check re-runs of runs created this long before the window (max 30d)")
