@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -485,5 +486,122 @@ func TestScanFullyFilteredRunNotCounted(t *testing.T) {
 	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}})
 	if err != nil || res.RunsScanned != 0 || res.JobsScanned != 0 {
 		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+const pinned = "0123456789abcdef0123456789abcdef01234567"
+
+const deployYAML = `on: workflow_call
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions: {id-token: write}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: {role-to-assume: "arn:aws:iam::1:role/deploy"}
+      - run: npm ci
+        env: {T: "${{ secrets.NPM_TOKEN }}"}
+`
+
+// callFixture: run 1 has one job, API name apiName, of a ci.yml that calls `uses` with `secrets: inherit`.
+func callFixture(uses, apiName string) *sourcetest.Fake {
+	f := fixture()
+	f.Trees["o/a@s1"] = nil
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  deploy:\n    uses: "+uses+"\n    secrets: inherit\n"))
+	f.AddFile("o/a", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	f.Jobs[1] = []source.Job{{ID: 10, Name: apiName}}
+	return f
+}
+
+var npmOnly = &incident.Incident{ID: "t", Window: inc.Window, NPM: inc.NPM}
+
+func scanOne(t *testing.T, f *sourcetest.Fake, i *incident.Incident) model.Finding {
+	t.Helper()
+	res, err := Run(context.Background(), f, i, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 1 {
+		t.Fatalf("%+v", res.Findings)
+	}
+	return res.Findings[0]
+}
+
+func hasRole(f model.Finding) bool {
+	return f.Exposure != nil && len(f.Exposure.CloudRoles) == 1 && f.Exposure.CloudRoles[0].Role == "arn:aws:iam::1:role/deploy"
+}
+
+func TestScanLocalReusableWorkflow(t *testing.T) {
+	f := callFixture("./.github/workflows/deploy.yml", "deploy / release")
+	f.AddFile("o/a", "s1", ".github/workflows/deploy.yml", []byte(deployYAML))
+	fd := scanOne(t, f, npmOnly)
+	if fd.Status != model.Affected || !hasRole(fd) || !fd.Exposure.JobMatched || !fd.Exposure.IDTokenWrite ||
+		!fd.Exposure.InheritAll || !slices.Contains(fd.Exposure.Secrets, "NPM_TOKEN") {
+		t.Fatalf("%+v %+v", fd, fd.Exposure)
+	}
+}
+
+func TestScanRemoteReusableWorkflowAtSHA(t *testing.T) {
+	f := callFixture("org/shared/.github/workflows/deploy.yml@"+pinned, "deploy / release")
+	f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+	if fd := scanOne(t, f, npmOnly); !hasRole(fd) {
+		t.Fatalf("callee must be read from org/shared@%s: %+v", pinned, fd.Exposure)
+	}
+}
+
+func TestScanReusableWorkflowByTagNotRead(t *testing.T) {
+	f := callFixture("org/shared/.github/workflows/deploy.yml@v1", "deploy / release")
+	f.AddFile("org/shared", "v1", ".github/workflows/deploy.yml", []byte(deployYAML)) // must not be read
+	fd := scanOne(t, f, npmOnly)
+	if fd.Status != model.Affected || hasRole(fd) || !fd.Exposure.InheritAll ||
+		!hasNote(fd, "called workflow org/shared/.github/workflows/deploy.yml@v1 is not pinned to a SHA — not read") {
+		t.Fatalf("%+v %+v", fd, fd.Exposure)
+	}
+}
+
+func TestScanNestedReusableWorkflows(t *testing.T) {
+	f := callFixture("./.github/workflows/mid.yml", "deploy / inner / release")
+	f.AddFile("o/a", "s1", ".github/workflows/mid.yml", []byte("on: workflow_call\njobs:\n  inner:\n    uses: org/shared/.github/workflows/deploy.yml@"+pinned+"\n    secrets: inherit\n"))
+	f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+	if fd := scanOne(t, f, npmOnly); !hasRole(fd) || !fd.Exposure.JobMatched {
+		t.Fatalf("%+v", fd.Exposure)
+	}
+}
+
+func TestScanCalledWorkflowUnavailableStaysSoft(t *testing.T) {
+	f := callFixture("./.github/workflows/gone.yml", "deploy / release")
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1] // workflow only: no npm hit
+	f.Logs[10] = "2026-03-31T01:00:00Z Download action repository 'actions/checkout@v4' (SHA:1111111111111111111111111111111111111111)\n"
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	fd := scanOne(t, f, actOnly)
+	if fd.Status != model.Unchecked || !hasNote(fd, "called workflow ./.github/workflows/gone.yml unavailable") {
+		t.Fatalf("an unreadable called workflow must be UNCHECKED, never CLEAN or an error: %+v", fd)
+	}
+}
+
+func TestScanCalledJobAmbiguous(t *testing.T) {
+	f := callFixture("./.github/workflows/deploy.yml", "deploy / Release")
+	f.AddFile("o/a", "s1", ".github/workflows/deploy.yml", []byte(deployYAML+
+		"  release-eu:\n    name: Release\n    runs-on: x\n    steps: [{run: echo}]\n"+
+		"  release-us:\n    name: Release\n    runs-on: x\n    steps: [{run: echo}]\n"))
+	fd := scanOne(t, f, npmOnly)
+	if fd.Exposure.JobMatched || !hasRole(fd) || !hasNote(fd, `job "Release" not identified in called workflow`) {
+		t.Fatalf("ambiguous callee job: union of the called workflow, not matched: %+v %+v", fd, fd.Exposure)
+	}
+}
+
+func TestScanSelfCallingWorkflowStops(t *testing.T) {
+	f := callFixture("./.github/workflows/ci.yml", "deploy / deploy / deploy / deploy / deploy / deploy")
+	if fd := scanOne(t, f, npmOnly); !hasNote(fd, "nested more than 4 levels deep") {
+		t.Fatalf("%+v", fd)
+	}
+}
+
+func TestScanUnidentifiedCalledJobKeepsEnvironmentSecrets(t *testing.T) {
+	f := callFixture("./.github/workflows/deploy.yml", "deploy / nope")
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  deploy:\n    uses: ./.github/workflows/deploy.yml\n"))
+	f.AddFile("o/a", "s1", ".github/workflows/deploy.yml", []byte("on: workflow_call\njobs:\n  a:\n    environment: prod\n    runs-on: x\n    steps: [{run: npm ci, env: {T: \"${{ secrets.PROD_TOKEN }}\"}}]\n"))
+	if fd := scanOne(t, f, npmOnly); fd.Exposure.JobMatched || !slices.Contains(fd.Exposure.Secrets, "PROD_TOKEN") {
+		t.Fatalf("%+v", fd.Exposure)
 	}
 }

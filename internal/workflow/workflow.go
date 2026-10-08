@@ -251,6 +251,7 @@ func (w *Workflow) Union() *Job {
 		u.Runs = append(u.Runs, j.Runs...)
 		u.Secrets = append(u.Secrets, j.Secrets...)
 		u.InheritSecrets = u.InheritSecrets || j.InheritSecrets
+		u.Environment = u.Environment || j.Environment
 		u.IDTokenWrite = u.IDTokenWrite || j.IDTokenWrite
 		for _, r := range j.CloudRoles {
 			if !slices.Contains(u.CloudRoles, r) {
