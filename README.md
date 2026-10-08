@@ -124,6 +124,7 @@ For AFFECTED and POSSIBLE jobs the report lists what the job could read — secr
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
 - A job whose log was unavailable is reported UNCHECKED: actions used via composite actions (and reusable workflows that are neither local nor pinned to a SHA) can only be seen in the log. Job logs over 64 MB count as unavailable.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread. `bun.lock`, `bun.lockb`, `deno.lock` and Yarn PnP (`.pnp.cjs`) are not read: their directory is at least UNCHECKED, also when an npm, pnpm or yarn lockfile next to them is read (it may be stale).
+- A missing, unread or unsupported lockfile does not mark a job whose log shows no package install (npm, pnpm, yarn or bun output) and whose workflow installs none. A dependency on a package of the same repository (a workspace) is not reported as missing from the lockfile.
 - Packages named on the command line (`npm i axios`) are found only in the workflow's own `run:` steps, not in scripts it calls or in local composite actions.
 - Only repositories the token can see are scanned; with `--org`, repositories it cannot see are not listed at all.
 - Pull request runs are checked at the head commit of the pull request, not at the merge commit GitHub actually built.
