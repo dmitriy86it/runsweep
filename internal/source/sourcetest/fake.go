@@ -81,3 +81,13 @@ func (f *Fake) Blob(_ context.Context, _ string, blobSHA string, limit int) ([]b
 	}
 	return b, nil
 }
+
+// File implements source.Source: the file added with AddFile to repo@ref; ErrNoAccess (HTTP 404) if absent.
+func (f *Fake) File(ctx context.Context, repo, ref, path string, limit int) ([]byte, error) {
+	for _, e := range f.Trees[repo+"@"+ref] {
+		if e.Path == path {
+			return f.Blob(ctx, repo, e.SHA, limit)
+		}
+	}
+	return nil, source.ErrNoAccess
+}

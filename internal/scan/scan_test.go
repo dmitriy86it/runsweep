@@ -127,6 +127,13 @@ func (s errSrc) Blob(ctx context.Context, repo, sha string, limit int) ([]byte, 
 	return s.Fake.Blob(ctx, repo, sha, limit)
 }
 
+func (s errSrc) File(ctx context.Context, repo, ref, path string, limit int) ([]byte, error) {
+	if err := s.blobErr[repo+"@"+ref+":"+path]; err != nil {
+		return nil, err
+	}
+	return s.Fake.File(ctx, repo, ref, path, limit)
+}
+
 func (s errSrc) JobLog(ctx context.Context, repo string, id int64) (string, error) {
 	if err := s.logErr[id]; err != nil {
 		return "", err
@@ -607,27 +614,27 @@ func TestScanLocalReusableWorkflow(t *testing.T) {
 }
 
 func TestScanRemoteReusableWorkflowAtSHA(t *testing.T) {
-	f := callFixture("org/shared/.github/workflows/deploy.yml@"+pinned, "deploy / release")
-	f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+	f := callFixture("o/shared/.github/workflows/deploy.yml@"+pinned, "deploy / release")
+	f.AddFile("o/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
 	if fd := scanOne(t, f, npmOnly); !hasRole(fd) {
-		t.Fatalf("callee must be read from org/shared@%s: %+v", pinned, fd.Exposure)
+		t.Fatalf("callee must be read from o/shared@%s: %+v", pinned, fd.Exposure)
 	}
 }
 
 func TestScanReusableWorkflowByTagNotRead(t *testing.T) {
-	f := callFixture("org/shared/.github/workflows/deploy.yml@v1", "deploy / release")
-	f.AddFile("org/shared", "v1", ".github/workflows/deploy.yml", []byte(deployYAML)) // must not be read
+	f := callFixture("o/shared/.github/workflows/deploy.yml@v1", "deploy / release")
+	f.AddFile("o/shared", "v1", ".github/workflows/deploy.yml", []byte(deployYAML)) // must not be read
 	fd := scanOne(t, f, npmOnly)
 	if fd.Status != model.Affected || hasRole(fd) || !fd.Exposure.InheritAll ||
-		!hasNote(fd, "called workflow org/shared/.github/workflows/deploy.yml@v1 is not pinned to a SHA — not read") {
+		!hasNote(fd, "called workflow o/shared/.github/workflows/deploy.yml@v1 is not pinned to a SHA — not read") {
 		t.Fatalf("%+v %+v", fd, fd.Exposure)
 	}
 }
 
 func TestScanNestedReusableWorkflows(t *testing.T) {
 	f := callFixture("./.github/workflows/mid.yml", "deploy / inner / release")
-	f.AddFile("o/a", "s1", ".github/workflows/mid.yml", []byte("on: workflow_call\njobs:\n  inner:\n    uses: org/shared/.github/workflows/deploy.yml@"+pinned+"\n    secrets: inherit\n"))
-	f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+	f.AddFile("o/a", "s1", ".github/workflows/mid.yml", []byte("on: workflow_call\njobs:\n  inner:\n    uses: o/shared/.github/workflows/deploy.yml@"+pinned+"\n    secrets: inherit\n"))
+	f.AddFile("o/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
 	if fd := scanOne(t, f, npmOnly); !hasRole(fd) || !fd.Exposure.JobMatched {
 		t.Fatalf("%+v", fd.Exposure)
 	}
@@ -674,7 +681,7 @@ func TestScanUnidentifiedCalledJobKeepsEnvironmentSecrets(t *testing.T) {
 	}
 }
 
-const sharedCall = "org/shared/.github/workflows/deploy.yml@" + pinned
+const sharedCall = "o/shared/.github/workflows/deploy.yml@" + pinned
 
 // A called workflow is never listed in the runner log's download records: the call ref itself must be matched.
 func TestScanCalledWorkflowRefMatchesIncident(t *testing.T) {
@@ -685,10 +692,10 @@ func TestScanCalledWorkflowRefMatchesIncident(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := callFixture(sharedCall, "deploy / release")
 			f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1]
-			f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte("on: workflow_call\njobs:\n  release:\n    runs-on: x\n    steps: [{run: make release}]\n"))
+			f.AddFile("o/shared", pinned, ".github/workflows/deploy.yml", []byte("on: workflow_call\njobs:\n  release:\n    runs-on: x\n    steps: [{run: make release}]\n"))
 			f.Logs[10] = "2026-03-31T01:00:00Z hello\n"
 			f.GoneLogs[10] = tc.gone
-			i := &incident.Incident{ID: "t", Window: inc.Window, Actions: []incident.Action{{Uses: "org/shared", SHAs: []string{pinned}}}}
+			i := &incident.Incident{ID: "t", Window: inc.Window, Actions: []incident.Action{{Uses: "o/shared", SHAs: []string{pinned}}}}
 			fd := scanOne(t, f, i)
 			if fd.Status != model.Affected || !slices.ContainsFunc(fd.Evidence, func(e model.Evidence) bool {
 				return e.Detail == "reusable workflow "+sharedCall+" at compromised SHA"
@@ -716,8 +723,8 @@ func TestScanUnidentifiedCalledJobResolvesNestedCalls(t *testing.T) {
 
 func TestScanLocalCallInRemoteWorkflowStaysInRemoteRepo(t *testing.T) {
 	f := callFixture(sharedCall, "deploy / mid / release")
-	f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte("on: workflow_call\njobs:\n  mid:\n    uses: ./.github/workflows/x.yml\n    secrets: inherit\n"))
-	f.AddFile("org/shared", pinned, ".github/workflows/x.yml", []byte(deployYAML))
+	f.AddFile("o/shared", pinned, ".github/workflows/deploy.yml", []byte("on: workflow_call\njobs:\n  mid:\n    uses: ./.github/workflows/x.yml\n    secrets: inherit\n"))
+	f.AddFile("o/shared", pinned, ".github/workflows/x.yml", []byte(deployYAML))
 	f.AddFile("o/a", "s1", ".github/workflows/x.yml", []byte(strings.ReplaceAll(deployYAML, "role/deploy", "role/WRONG")))
 	if fd := scanOne(t, f, npmOnly); !hasRole(fd) {
 		t.Fatalf("%+v", fd.Exposure)
@@ -726,8 +733,8 @@ func TestScanLocalCallInRemoteWorkflowStaysInRemoteRepo(t *testing.T) {
 
 func TestScanRemoteCalleeErrorIsSoft(t *testing.T) {
 	f := callFixture(sharedCall, "deploy / release")
-	f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
-	src := errSrc{Fake: f, blobErr: map[string]error{"org/shared@" + pinned + ":.github/workflows/deploy.yml": errors.New("boom")}}
+	f.AddFile("o/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+	src := errSrc{Fake: f, blobErr: map[string]error{"o/shared@" + pinned + ":.github/workflows/deploy.yml": errors.New("boom")}}
 	res, err := Run(context.Background(), src, npmOnly, Options{Repos: []string{"o/a"}})
 	if err != nil {
 		t.Fatalf("a remote callee must not abort the scan: %v", err)
@@ -738,23 +745,22 @@ func TestScanRemoteCalleeErrorIsSoft(t *testing.T) {
 }
 
 func TestScanCalledWorkflowUnavailableReason(t *testing.T) {
-	blob := "org/shared@" + pinned + ":.github/workflows/deploy.yml"
+	blob := "o/shared@" + pinned + ":.github/workflows/deploy.yml"
 	for _, tc := range []struct {
 		name, want string
 		setup      func(*sourcetest.Fake) source.Source
 	}{
-		{"missing", "unavailable (not found", func(f *sourcetest.Fake) source.Source { return f }},
-		{"truncated", "tree truncated", func(f *sourcetest.Fake) source.Source { f.Truncated["org/shared@"+pinned] = true; return f }},
+		{"missing", "unavailable (no access", func(f *sourcetest.Fake) source.Source { return f }},
 		{"403", "no access", func(f *sourcetest.Fake) source.Source {
-			f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+			f.AddFile("o/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
 			return errSrc{Fake: f, blobErr: map[string]error{blob: source.ErrNoAccess}}
 		}},
 		{"too large", "too large", func(f *sourcetest.Fake) source.Source {
-			f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+			f.AddFile("o/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
 			return errSrc{Fake: f, blobErr: map[string]error{blob: source.ErrIncomplete}}
 		}},
 		{"parse", "parse error", func(f *sourcetest.Fake) source.Source {
-			f.AddFile("org/shared", pinned, ".github/workflows/deploy.yml", []byte("jobs: [unclosed"))
+			f.AddFile("o/shared", pinned, ".github/workflows/deploy.yml", []byte("jobs: [unclosed"))
 			return f
 		}},
 	} {
@@ -838,26 +844,23 @@ func TestScanLocalCompositeNoDownloadsIsUnchecked(t *testing.T) {
 	}
 }
 
-type countTree struct {
+type countFile struct {
 	*sourcetest.Fake
 	n *int
 }
 
-func (s countTree) Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry, bool, error) {
-	if repo == "org/shared" {
-		*s.n++
-		return nil, false, errors.New("boom")
-	}
-	return s.Fake.Tree(ctx, repo, sha)
+func (s countFile) File(context.Context, string, string, string, int) ([]byte, error) {
+	*s.n++
+	return nil, errors.New("boom")
 }
 
 func TestScanRemoteCalleeHardErrorCached(t *testing.T) {
 	f := callFixture(sharedCall, "deploy / release")
 	f.Jobs[1] = []source.Job{{ID: 10, Name: "deploy / release"}, {ID: 11, Name: "deploy / release"}}
 	n := 0
-	res, err := Run(context.Background(), countTree{f, &n}, npmOnly, Options{Repos: []string{"o/a"}})
+	res, err := Run(context.Background(), countFile{f, &n}, npmOnly, Options{Repos: []string{"o/a"}})
 	if err != nil || len(res.Findings) != 2 || !hasNote(res.Findings[1], "unavailable (boom)") || n != 1 {
-		t.Fatalf("Tree called %d times, %v %+v", n, err, res.Findings)
+		t.Fatalf("File called %d times, %v %+v", n, err, res.Findings)
 	}
 }
 
@@ -874,7 +877,7 @@ func TestScanDepthCapIsUnchecked(t *testing.T) {
 
 // An unpinned call ref is never read: with no download records it must not be judged CLEAN.
 func TestScanUnreadCallNoDownloadsIsUnchecked(t *testing.T) {
-	f := callFixture("org/shared/.github/workflows/deploy.yml@main", "deploy / release")
+	f := callFixture("o/shared/.github/workflows/deploy.yml@main", "deploy / release")
 	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1]
 	f.Logs[10] = "hello\n"
 	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
@@ -1018,5 +1021,27 @@ func TestScanParsedBlobsCached(t *testing.T) {
 	res, err := Run(context.Background(), countBlobs{f, &n}, inc, Options{Repos: []string{"o/a"}, Concurrency: 1})
 	if err != nil || res.Count(model.Affected) != 2 || n.Load() != 2 {
 		t.Fatalf("%d blob fetches, %v %+v", n.Load(), err, res.Findings)
+	}
+}
+
+// A called workflow in another owner's repository is not read (its content is not the scanned
+// owner's to fetch): UNCHECKED with a note. The owner compares case-insensitively.
+func TestScanCalledWorkflowOtherOwnerNotRead(t *testing.T) {
+	f := callFixture("evil/shared/.github/workflows/deploy.yml@"+pinned, "deploy / release")
+	f.AddFile("evil/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML)) // must not be read
+	fd := scanOne(t, f, npmOnly)
+	if fd.Status != model.Affected || hasRole(fd) || !hasNote(fd, "called workflow in another owner (evil/shared) not read") {
+		t.Fatalf("%+v %+v", fd, fd.Exposure)
+	}
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1] // no npm hit
+	f.Logs[10] = "2026-03-31T01:00:00Z Download action repository 'actions/checkout@v4' (SHA:1111111111111111111111111111111111111111)\n"
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	if fd := scanOne(t, f, actOnly); fd.Status != model.Unchecked {
+		t.Fatalf("an unread call is never CLEAN: %+v", fd)
+	}
+	f = callFixture("O/shared/.github/workflows/deploy.yml@"+pinned, "deploy / release")
+	f.AddFile("O/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+	if fd := scanOne(t, f, npmOnly); !hasRole(fd) {
+		t.Fatalf("same owner, other case: must be read: %+v", fd.Exposure)
 	}
 }

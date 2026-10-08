@@ -109,14 +109,16 @@ func validateTargets(repos []string, org string) error {
 }
 
 func githubToken() (string, error) {
-	if t := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); t != "" {
-		return t, nil
+	for _, v := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if t := strings.TrimSpace(os.Getenv(v)); t != "" {
+			return t, nil
+		}
 	}
 	out, err := exec.Command("gh", "auth", "token").Output()
 	if t := strings.TrimSpace(string(out)); err == nil && t != "" {
 		return t, nil
 	}
-	return "", errors.New("no GitHub token: set GITHUB_TOKEN or run `gh auth login` (read-only access to Actions, Contents and Metadata is enough)")
+	return "", errors.New("no GitHub token: set GITHUB_TOKEN or GH_TOKEN, or run `gh auth login` (read-only access to Actions, Contents and Metadata is enough)")
 }
 
 func run(args []string, stdout, stderr io.Writer, d deps) int {

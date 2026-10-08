@@ -8,6 +8,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/dmitriy86it/runsweep/internal/incident"
@@ -115,13 +117,17 @@ func JSON(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	}
 	_, err := w.Write(escapeRe.ReplaceAllFunc(b.Bytes(), func(m []byte) []byte {
 		r, _ := utf8.DecodeRune(m)
+		if r1, r2 := utf16.EncodeRune(r); r1 != utf8.RuneError { // outside the BMP: a surrogate pair
+			return fmt.Appendf(nil, `\u%04x\u%04x`, r1, r2)
+		}
 		return fmt.Appendf(nil, `\u%04x`, r)
 	}))
 	return err
 }
 
-// escapeRe matches C1 control characters and bidi controls, which encoding/json leaves unescaped.
-var escapeRe = regexp.MustCompile(`[\x{80}-\x{9f}\x{200e}\x{200f}\x{202a}-\x{202e}\x{2066}-\x{2069}]`)
+// escapeRe matches C1 control characters, format characters (Cf: bidi controls, zero-width
+// characters, ...) and the tag block, which encoding/json leaves unescaped.
+var escapeRe = regexp.MustCompile(`[\x{80}-\x{9f}\p{Cf}\x{e0000}-\x{e007f}]`)
 
 // seenIn lists up to three runs, each rendered by wrap, then "+N more".
 func seenIn(runs []model.RunRef, wrap func(string) string) string {
@@ -161,13 +167,13 @@ func cell(s string) string { return strings.ReplaceAll(Clean(s), "|", `\|`) }
 var newlines = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
 
 // Clean makes repo-derived text safe for a terminal: CR/LF become spaces; C0/C1 controls, DEL,
-// Unicode line/paragraph separators and bidi controls are dropped (no escape sequences reach the
-// terminal, no text reordering).
+// Unicode line/paragraph separators, format characters (Cf: bidi controls, zero-width characters,
+// ...) and the tag block are dropped (no escape sequences reach the terminal, no text reordering,
+// no hidden text).
 func Clean(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
-		case r < 0x20, r >= 0x7f && r <= 0x9f, r == '\u2028', r == '\u2029',
-			r == '\u200e', r == '\u200f', r >= '\u202a' && r <= '\u202e', r >= '\u2066' && r <= '\u2069':
+		case r < 0x20, r >= 0x7f && r <= 0x9f, r == 0x2028, r == 0x2029, unicode.Is(unicode.Cf, r), r >= 0xe0000 && r <= 0xe007f:
 			return -1
 		}
 		return r

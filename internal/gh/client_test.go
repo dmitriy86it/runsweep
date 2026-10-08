@@ -17,7 +17,7 @@ import (
 )
 
 func newTest(t *testing.T, h http.Handler) *Client {
-	srv := httptest.NewServer(h)
+	srv := httptest.NewTLSServer(h)
 	t.Cleanup(srv.Close)
 	c, err := New(srv.Client(), "tok", srv.URL+"/")
 	if err != nil {
@@ -147,7 +147,7 @@ func TestTreeCached(t *testing.T) {
 
 // logTarget serves the signed-URL redirect target and records the Authorization header it sees.
 func logTarget(t *testing.T, body string, authSeen *atomic.Value) string {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authSeen.Store(r.Header.Get("Authorization"))
 		_, _ = fmt.Fprint(w, body)
 	}))
@@ -196,7 +196,7 @@ func TestJobLogTruncated(t *testing.T) {
 }
 
 func TestJobLogSignedURLRefusedIsSoft(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }))
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }))
 	t.Cleanup(srv.Close)
 	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, srv.URL+"/signed", http.StatusFound)
@@ -395,7 +395,7 @@ func TestJobLogDownloadRetries(t *testing.T) {
 	var hits atomic.Int32
 	var status atomic.Int32 // status served after the first 503
 	status.Store(http.StatusOK)
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if hits.Add(1) == 1 || status.Load() != http.StatusOK {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
@@ -482,5 +482,49 @@ func TestRunAndJobMissingTimesAndAttempt(t *testing.T) {
 	jobs, err := c.ListJobs(context.Background(), "o/r", 5)
 	if err != nil || len(jobs) != 1 || jobs[0].Attempt != 0 || !jobs[0].StartedAt.IsZero() || !jobs[0].CompletedAt.IsZero() {
 		t.Fatalf("%+v %v", jobs, err)
+	}
+}
+
+// A job log is fetched only over https, on every redirect hop; a refusal is not retried.
+func TestJobLogRequiresHTTPS(t *testing.T) {
+	var hits atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		_, _ = fmt.Fprint(w, "log body")
+	}))
+	t.Cleanup(plain.Close)
+	hop := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+"/signed", http.StatusFound)
+	}))
+	t.Cleanup(hop.Close)
+	for _, target := range []string{plain.URL + "/signed", hop.URL + "/hop"} {
+		c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target, http.StatusFound)
+		}))
+		sleeps := recordSleeps(c)
+		if _, err := c.JobLog(context.Background(), "o/r", 7); !errors.Is(err, source.ErrNoAccess) || !strings.Contains(err.Error(), "https") {
+			t.Fatalf("%s: want ErrNoAccess (not https), got %v", target, err)
+		}
+		if hits.Load() != 0 || len(*sleeps) != 0 {
+			t.Fatalf("%s: plain-http log fetched %d times, retries %v", target, hits.Load(), *sleeps)
+		}
+	}
+}
+
+// File reads one file at a ref through the contents API, with the raw media type and a size cap.
+func TestFile(t *testing.T) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/repos/o/r/contents/.github/workflows/a%20b.yml" || r.URL.Query().Get("ref") != "abc" ||
+			!strings.Contains(r.Header.Get("Accept"), "raw") {
+			http.Error(w, r.URL.String(), http.StatusNotFound)
+			return
+		}
+		_, _ = fmt.Fprint(w, "on: push")
+	}))
+	if b, err := c.File(context.Background(), "o/r", "abc", ".github/workflows/a b.yml", 100); err != nil || string(b) != "on: push" {
+		t.Fatalf("%q %v", b, err)
+	}
+	if _, err := c.File(context.Background(), "o/r", "abc", ".github/workflows/a b.yml", 3); !errors.Is(err, source.ErrIncomplete) {
+		t.Fatalf("want ErrIncomplete, got %v", err)
 	}
 }
