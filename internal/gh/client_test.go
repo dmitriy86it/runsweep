@@ -74,6 +74,28 @@ func TestNoAccess(t *testing.T) {
 	}
 }
 
+// Any 4xx other than 401 and rate limits is soft (the repo or run is UNCHECKED); 401 stays fatal.
+func TestClientErrorsAreSoftExceptAuth(t *testing.T) {
+	for _, code := range []int{http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusConflict} {
+		c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(code)
+			_, _ = fmt.Fprint(w, `{"message":"nope"}`)
+		}))
+		_, err := c.ListJobs(context.Background(), "o/r", 1)
+		if !errors.Is(err, source.ErrNoAccess) || !strings.Contains(err.Error(), strconv.Itoa(code)) {
+			t.Errorf("%d: %v", code, err)
+		}
+	}
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"message":"Bad credentials"}`)
+	}))
+	_, err := c.ListJobs(context.Background(), "o/r", 1)
+	if !errors.Is(err, source.ErrAuth) || errors.Is(err, source.ErrNoAccess) {
+		t.Fatalf("401: %v", err)
+	}
+}
+
 func TestRetriesOnRateLimit(t *testing.T) {
 	var n atomic.Int32
 	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -169,6 +191,17 @@ func TestJobLogTruncated(t *testing.T) {
 	}))
 	if _, err := c.JobLog(context.Background(), "o/r", 7); !errors.Is(err, source.ErrIncomplete) {
 		t.Fatalf("want ErrIncomplete, got %v", err)
+	}
+}
+
+func TestJobLogSignedURLRefusedIsSoft(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusForbidden) }))
+	t.Cleanup(srv.Close)
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, srv.URL+"/signed", http.StatusFound)
+	}))
+	if _, err := c.JobLog(context.Background(), "o/r", 7); !errors.Is(err, source.ErrNoAccess) || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("want ErrNoAccess, got %v", err)
 	}
 }
 

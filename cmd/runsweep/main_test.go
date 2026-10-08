@@ -164,7 +164,7 @@ func TestSkippedWarningAndAllSkipped(t *testing.T) {
 	f := sourcetest.New()
 	f.NoAccess["o/a"] = true
 	var out, errb bytes.Buffer
-	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a", "--repo", "o/b"}, &out, &errb, fakeDeps(f)); code != 0 {
+	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a", "--repo", "o/b"}, &out, &errb, fakeDeps(f)); code != 3 {
 		t.Fatalf("partial skip: got %d: %s", code, errb.String())
 	}
 	if !strings.Contains(errb.String(), "warning: 1 repository skipped (see report)") {
@@ -182,23 +182,54 @@ func TestSkippedWarningAndAllSkipped(t *testing.T) {
 	}
 }
 
-type cancelSrc struct{ *sourcetest.Fake }
-
-func (cancelSrc) ListRuns(context.Context, string, time.Time, time.Time) ([]source.Run, error) {
-	return nil, context.Canceled
+// failSrc fails ListRuns of repos in err; the others come from the Fake.
+type failSrc struct {
+	*sourcetest.Fake
+	err map[string]error
 }
 
-func TestInterrupted(t *testing.T) {
-	d := deps{
-		newSource: func(string) (source.Source, error) { return cancelSrc{sourcetest.New()}, nil },
+func (s failSrc) ListRuns(ctx context.Context, repo string, start, end time.Time) ([]source.Run, error) {
+	if err := s.err[repo]; err != nil {
+		return nil, err
+	}
+	return s.Fake.ListRuns(ctx, repo, start, end)
+}
+
+func failDeps(f *sourcetest.Fake, err map[string]error) deps {
+	return deps{
+		newSource: func(string) (source.Source, error) { return failSrc{f, err}, nil },
 		token:     func() (string, error) { return "tok", nil },
 	}
-	var out, errb bytes.Buffer
-	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, d); code != 2 {
-		t.Fatalf("got %d", code)
-	}
-	if !strings.Contains(errb.String(), "interrupted") {
-		t.Fatal(errb.String())
+}
+
+// An interrupted or failed scan still prints the report of what was checked and exits 3;
+// a rejected token exits 2; findings keep exit 1.
+func TestInterruptedPrintsPartialReport(t *testing.T) {
+	affected := sourcetest.New()
+	affected.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
+	affected.Jobs[1] = []source.Job{{ID: 2, Name: "build"}}
+	affected.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	for _, tc := range []struct {
+		name    string
+		f       *sourcetest.Fake
+		err     error
+		code    int
+		errWant string
+	}{
+		{"ctrl-c", sourcetest.New(), context.Canceled, 3, "error: interrupted"},
+		{"api error", sourcetest.New(), errors.New("HTTP 500"), 3, "error: o/b: HTTP 500"},
+		{"auth", sourcetest.New(), fmt.Errorf("%w: 401 Bad credentials", source.ErrAuth), 2, "Bad credentials"},
+		{"findings win", affected, context.Canceled, 1, "error: interrupted"},
+	} {
+		var out, errb bytes.Buffer
+		code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a", "--repo", "o/b", "--repo", "o/c"}, &out, &errb,
+			failDeps(tc.f, map[string]error{"o/b": tc.err}))
+		if code != tc.code || !strings.Contains(errb.String(), tc.errWant) || strings.Contains(errb.String(), "no repository could be scanned") {
+			t.Errorf("%s: code %d, stderr:\n%s", tc.name, code, errb.String())
+		}
+		if !strings.Contains(out.String(), "`o/c` — `interrupted: not scanned`") {
+			t.Errorf("%s: report lacks the unscanned repo:\n%s", tc.name, out.String())
+		}
 	}
 }
 
@@ -249,7 +280,7 @@ func TestScanWarnings(t *testing.T) {
 	f.Jobs[1] = []source.Job{{ID: 2, Name: "build"}}
 	f.Truncated["o/a@s"] = true
 	var out, errb bytes.Buffer
-	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 0 {
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 3 {
 		t.Fatalf("code %d: %s", code, errb.String())
 	}
 	for _, want := range []string{retention, "warning: 1 job could not be checked (UNCHECKED)", "o/a: 1 run to check\n"} {
@@ -615,6 +646,18 @@ func TestReadmeListsEveryPreset(t *testing.T) {
 	for _, p := range ps {
 		if !strings.Contains(string(readme), "| `"+p.ID+"` |") {
 			t.Errorf("README.md \"Built-in incidents\" table has no row for %s", p.ID)
+		}
+	}
+}
+
+func TestScanHelpListsExitCodes(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--help"}, &out, &errb, deps{}); code != 0 {
+		t.Fatalf("code %d", code)
+	}
+	for _, want := range []string{"Exit codes:", "1  at least one job AFFECTED or POSSIBLE", "3  nothing AFFECTED or POSSIBLE, but not everything was checked"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("help lacks %q:\n%s", want, out.String())
 		}
 	}
 }

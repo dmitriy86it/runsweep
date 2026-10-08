@@ -148,12 +148,16 @@ func (c *Client) do(ctx context.Context, f func() (*github.Response, error)) err
 	}
 }
 
+// mapErr makes a 4xx soft (the repo or run becomes UNCHECKED), except 401 and 429, which are
+// fatal; rate limits that carry a reset time never get here.
 func mapErr(resp *github.Response, err error) error {
 	if resp != nil {
-		switch resp.StatusCode {
-		case http.StatusGone:
+		switch code := resp.StatusCode; {
+		case code == http.StatusGone:
 			return source.ErrGone
-		case http.StatusForbidden, http.StatusNotFound:
+		case code == http.StatusUnauthorized:
+			return fmt.Errorf("%w: %v", source.ErrAuth, err)
+		case code >= 400 && code < 500 && code != http.StatusTooManyRequests:
 			return fmt.Errorf("%w: %v", source.ErrNoAccess, err)
 		}
 	}
@@ -299,12 +303,14 @@ func (c *Client) downloadLog(ctx context.Context, u string) (string, int, error)
 		return "", 0, fmt.Errorf("download job log: %w", errors.Unwrap(err)) // drop the signed URL from *url.Error
 	}
 	defer func() { _ = resp.Body.Close() }()
-	switch resp.StatusCode {
-	case http.StatusOK:
-	case http.StatusGone, http.StatusNotFound:
-		return "", resp.StatusCode, source.ErrGone
-	default:
-		return "", resp.StatusCode, fmt.Errorf("download job log: HTTP %d", resp.StatusCode)
+	switch code := resp.StatusCode; {
+	case code == http.StatusOK:
+	case code == http.StatusGone || code == http.StatusNotFound:
+		return "", code, source.ErrGone
+	case code >= 400 && code < 500 && code != http.StatusTooManyRequests: // signed URL refused: the job is UNCHECKED
+		return "", code, fmt.Errorf("%w: download job log: HTTP %d", source.ErrNoAccess, code)
+	default: // 429 and 5xx are retried by JobLog
+		return "", code, fmt.Errorf("download job log: HTTP %d", code)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxLogBytes+1))
 	if err != nil {

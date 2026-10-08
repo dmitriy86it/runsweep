@@ -12,8 +12,11 @@ var (
 	ErrGone = errors.New("deleted by GitHub retention (HTTP 410)")
 	// ErrIncomplete means data truncated by a size limit or an API cap.
 	ErrIncomplete = errors.New("data incomplete (size or API cap)")
-	// ErrNoAccess means 403/404 — missing permission or not found.
-	ErrNoAccess = errors.New("no access (HTTP 403/404)")
+	// ErrNoAccess means a 4xx other than 401 and rate limits — missing permission, not found or
+	// a rejected request.
+	ErrNoAccess = errors.New("no access (HTTP 4xx)")
+	// ErrAuth means the token was rejected (HTTP 401): fatal, nothing more can be read.
+	ErrAuth = errors.New("authentication failed (HTTP 401)")
 )
 
 // Run is a workflow run.

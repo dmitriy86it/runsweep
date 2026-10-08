@@ -17,6 +17,7 @@ import (
 	"github.com/dmitriy86it/runsweep/internal/match/actions"
 	"github.com/dmitriy86it/runsweep/internal/match/npm"
 	"github.com/dmitriy86it/runsweep/internal/model"
+	"github.com/dmitriy86it/runsweep/internal/report"
 	"github.com/dmitriy86it/runsweep/internal/rotate"
 	"github.com/dmitriy86it/runsweep/internal/source"
 	"github.com/dmitriy86it/runsweep/internal/workflow"
@@ -46,7 +47,20 @@ func soft(err error) bool {
 	return errors.Is(err, source.ErrGone) || errors.Is(err, source.ErrNoAccess) || errors.Is(err, source.ErrIncomplete)
 }
 
-// Run scans the source for jobs affected by the incident.
+// interrupted is the note for a repository or run left unchecked because the scan stopped.
+const interrupted = "interrupted: not scanned"
+
+// stopNote explains why a repository or run was not scanned: the error that stopped the scan,
+// or interrupted when it was cancelled.
+func stopNote(err error) string {
+	if errors.Is(err, context.Canceled) {
+		return interrupted
+	}
+	return err.Error()
+}
+
+// Run scans the source for jobs affected by the incident. On a hard error or cancellation it
+// returns the partial result with the error: what was not scanned is UNCHECKED or skipped.
 func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Options) (*model.Result, error) {
 	logf := opt.Logf
 	if logf == nil {
@@ -71,14 +85,18 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 	res := &model.Result{ReposTargeted: len(repos), IncidentID: inc.ID, Start: inc.Window.Start, End: inc.Window.End,
 		Lookback: opt.Lookback}
 	s := &scanner{src: src, inc: inc}
-	for _, repo := range repos {
+	var stopErr error
+	for i, repo := range repos {
 		runs, err := src.ListRuns(ctx, repo, inc.Window.Start.Add(-opt.Lookback), inc.Window.End)
 		if soft(err) {
 			res.Skipped = append(res.Skipped, model.Skip{Repo: repo, Reason: err.Error()})
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("%s: %w", repo, err)
+			stopErr = fmt.Errorf("%s: %w", repo, err)
+			res.Skipped = append(res.Skipped, model.Skip{Repo: repo, Reason: stopNote(err)})
+			skipRest(res, repos[i+1:])
+			break
 		}
 		noun := "runs"
 		if len(runs) == 1 {
@@ -97,12 +115,16 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				fs, jobs, err := s.scanRun(ctx, repo, run)
+				fs, jobs, err := s.safeScanRun(ctx, repo, run)
 				mu.Lock()
 				defer mu.Unlock()
-				if err != nil && firstErr == nil {
-					firstErr = fmt.Errorf("%s run %d: %w", repo, run.ID, err)
-					cancel() // stop the other goroutines from issuing API calls
+				if err != nil {
+					if firstErr == nil {
+						firstErr = fmt.Errorf("%s run %d: %w", repo, run.ID, err)
+						cancel() // stop the other goroutines from issuing API calls
+					}
+					fs = []model.Finding{{Run: ref(repo, run, source.Job{}), Status: model.Unchecked,
+						Evidence: []model.Evidence{note("%s", stopNote(err))}}}
 				}
 				res.Findings = append(res.Findings, fs...)
 				res.JobsScanned += jobs
@@ -113,7 +135,9 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 		}
 		wg.Wait()
 		if firstErr != nil {
-			return nil, firstErr
+			stopErr = firstErr
+			skipRest(res, repos[i+1:])
+			break
 		}
 	}
 	sort.SliceStable(res.Findings, func(a, b int) bool {
@@ -133,7 +157,25 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 		return x.Run.JobID < y.Run.JobID
 	})
 	res.Rotation = rotate.Plan(res.Findings)
-	return res, nil
+	return res, stopErr
+}
+
+func skipRest(res *model.Result, repos []string) {
+	for _, r := range repos {
+		res.Skipped = append(res.Skipped, model.Skip{Repo: r, Reason: interrupted})
+	}
+}
+
+// safeScanRun is scanRun with a panic turned into an UNCHECKED run, so one bad input cannot
+// crash the scan.
+func (s *scanner) safeScanRun(ctx context.Context, repo string, run source.Run) (fs []model.Finding, jobs int, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			fs, jobs, err = []model.Finding{{Run: ref(repo, run, source.Job{}), Status: model.Unchecked,
+				Evidence: []model.Evidence{note("internal error: %s", report.Clean(fmt.Sprint(p)))}}}, 0, nil
+		}
+	}()
+	return s.scanRun(ctx, repo, run)
 }
 
 func ref(repo string, r source.Run, j source.Job) model.RunRef {
