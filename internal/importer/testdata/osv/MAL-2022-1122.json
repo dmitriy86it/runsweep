@@ -1,0 +1,30 @@
+{
+ "id": "MAL-2022-1122",
+ "summary": "Malicious code in arpan-package (npm)",
+ "aliases": [
+  "GHSA-v5gc-jxwf-xv69"
+ ],
+ "published": "2022-12-06T06:08:42Z",
+ "modified": "2024-06-28T02:53:15Z",
+ "affected": [
+  {
+   "package": {
+    "ecosystem": "npm",
+    "name": "arpan-package"
+   },
+   "ranges": [
+    {
+     "type": "SEMVER",
+     "events": [
+      {
+       "introduced": "0"
+      }
+     ]
+    }
+   ],
+   "versions": [
+    "2.0.5"
+   ]
+  }
+ ]
+}

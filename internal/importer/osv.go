@@ -14,12 +14,13 @@ import (
 const maxPages = 50
 
 var (
-	idRe      = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[A-Za-z0-9._-]{1,100}$`)
-	npmNameRe = regexp.MustCompile(`^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*$`)
-	versionRe = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
-	repoRe    = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
-	eventRe   = regexp.MustCompile(`^[0-9A-Za-z.+_-]{1,64}$`)
-	shaRe     = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	idRe       = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[A-Za-z0-9._-]{1,100}$`)
+	npmNameRe  = regexp.MustCompile(`^(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]*$`)
+	versionRe  = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$`)
+	repoRe     = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	eventRe    = regexp.MustCompile(`^[0-9A-Za-z.+_-]{1,64}$`)
+	safeNameRe = regexp.MustCompile(`^(@[A-Za-z0-9._~-]+/)?[A-Za-z0-9._~-]+$`)
+	shaRe      = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
 // ValidID reports whether s looks like an OSV id (MAL-…, GHSA-…, CVE-…).
@@ -27,6 +28,20 @@ func ValidID(s string) bool { return idRe.MatchString(s) }
 
 // ValidNPMName reports whether s is a valid npm package name.
 func ValidNPMName(s string) bool { return len(s) <= 214 && npmNameRe.MatchString(s) }
+
+// safeNPMName accepts names found in OSV data. Real malicious packages break
+// npm's current naming rules (AdultJS, --legacy-peer-deps, @_wnpm/wnpm-cli), so this only
+// excludes what could alter a URL path or a YAML/comment line. ValidNPMName stays for user input.
+func safeNPMName(s string) bool {
+	if len(s) > 214 || !safeNameRe.MatchString(s) {
+		return false
+	}
+	scope, name, ok := strings.Cut(s, "/")
+	if !ok {
+		scope, name = "", s
+	}
+	return scope != "@." && scope != "@.." && name != "." && name != ".."
+}
 
 func validVersion(s string) bool { return len(s) <= 128 && versionRe.MatchString(s) }
 
@@ -113,6 +128,35 @@ func (c *Client) QueryMAL(ctx context.Context, name string) ([]Vuln, error) {
 		token = r.Next
 	}
 	return nil, fmt.Errorf("OSV query %s: more than %d pages", name, maxPages)
+}
+
+// openFrom returns the lowest `introduced` of the ranges that never end (no
+// fixed, last_affected or limit event); "0" means every version.
+func openFrom(a Affected) (string, bool) {
+	best, found := "", false
+	for _, r := range a.Ranges {
+		intro, ended := "", false
+		for _, ev := range r.Events {
+			if v, ok := ev["introduced"]; ok {
+				intro = v
+			}
+			for _, k := range []string{"fixed", "last_affected", "limit"} {
+				if _, ok := ev[k]; ok {
+					ended = true
+				}
+			}
+		}
+		if ended || !eventRe.MatchString(intro) {
+			continue
+		}
+		if _, ok := triple(intro); !ok && intro != "0" {
+			continue
+		}
+		if !found || intro == "0" || (best != "0" && versionLess(intro, best)) {
+			best, found = intro, true
+		}
+	}
+	return best, found
 }
 
 // rangeText renders range events for a comment, keeping only safe tokens.

@@ -15,11 +15,12 @@ type found struct {
 	notes   []string                   // YAML comment lines (without "# ")
 	warns   []string                   // stderr warnings
 	refs    []string
-	seen    map[string]bool // OSV ids already added
+	open    map[string]string // package -> lowest introduced of its open-ended ranges
+	seen    map[string]bool   // OSV ids already added
 }
 
 func newFound() *found {
-	return &found{npm: map[string]map[string]bool{}, actions: map[string]map[string]bool{}, seen: map[string]bool{}}
+	return &found{open: map[string]string{}, npm: map[string]map[string]bool{}, actions: map[string]map[string]bool{}, seen: map[string]bool{}}
 }
 
 // both records the same text as a YAML note and a warning.
@@ -32,21 +33,31 @@ func (f *found) both(format string, a ...any) {
 // addVuln takes npm versions and GitHub Actions hints from one OSV record.
 // It reports whether the record had any npm or GitHub Actions entry.
 func (f *found) addVuln(v *Vuln) bool {
+	if !ValidID(v.ID) {
+		return false
+	}
+	if !f.seen[v.ID] {
+		f.refs = append(f.refs, "https://osv.dev/vulnerability/"+v.ID)
+	}
 	f.seen[v.ID] = true
-	f.refs = append(f.refs, "https://osv.dev/vulnerability/"+v.ID)
 	useful := false
 	for _, a := range v.Affected {
 		switch a.Package.Ecosystem {
 		case "npm":
 			useful = true
 			name := a.Package.Name
-			if !ValidNPMName(name) {
+			if !safeNPMName(name) {
 				f.both("%s: skipped invalid npm package name %q", v.ID, name)
 				continue
 			}
 			if len(a.Versions) == 0 {
 				f.both("%s: %s affected by range only (%s) — versions not listed, add manually", v.ID, name, rangeText(a))
 				continue
+			}
+			if from, ok := openFrom(a); ok {
+				if cur, had := f.open[name]; !had || from == "0" || (cur != "0" && versionLess(from, cur)) {
+					f.open[name] = from
+				}
 			}
 			for _, ver := range a.Versions {
 				if !validVersion(ver) {
@@ -127,4 +138,25 @@ func sortedVersions(m map[string]bool) []string {
 	}
 	sort.Slice(out, func(i, j int) bool { return versionLess(out[i], out[j]) })
 	return out
+}
+
+// expandOpen adds to f.npm[name] every registry version at or above the open
+// range's start. Versions without a publish time count only while still listed.
+func (f *found) expandOpen(name string, pt PkgTimes) {
+	from := f.open[name]
+	fromT, _ := triple(from)
+	add := func(v string) {
+		if !validVersion(v) {
+			return
+		}
+		if t, ok := triple(v); ok && (from == "0" || slices.Compare(t[:], fromT[:]) >= 0) {
+			f.addNPM(name, v)
+		}
+	}
+	for v := range pt.Times {
+		add(v)
+	}
+	for v := range pt.Published {
+		add(v)
+	}
 }

@@ -70,6 +70,17 @@ func TestValidators(t *testing.T) {
 			t.Errorf("ValidNPMName(%q) = false", s)
 		}
 	}
+	// Names from OSV: real malicious packages break npm's current rules.
+	for _, s := range []string{"axios", "AdultJS", "--legacy-peer-deps", "@_wnpm/wnpm-cli", "@scope/Name"} {
+		if !safeNPMName(s) {
+			t.Errorf("safeNPMName(%q) = false", s)
+		}
+	}
+	for _, s := range []string{"", "../x", "@scope/../x", "@../x", "..", ".", "@scope/", "x y", "x\n", "@a/b/c", "a/b", strings.Repeat("a", 215)} {
+		if safeNPMName(s) {
+			t.Errorf("safeNPMName(%q) = true", s)
+		}
+	}
 	for _, s := range []string{"", "../x", "@scope/../x", "A", "@scope/", "x y", "x\n", "@a/b/c", ".hidden", strings.Repeat("a", 215)} {
 		if ValidNPMName(s) {
 			t.Errorf("ValidNPMName(%q) = true", s)
@@ -249,5 +260,31 @@ func TestAddAction(t *testing.T) {
 		if err := f.addAction(s); err == nil {
 			t.Errorf("%q: want error", s)
 		}
+	}
+}
+
+func TestAddVulnRecordsOpenRange(t *testing.T) {
+	f := newFound()
+	f.addVuln(vulnFixture(t, "MAL-2022-1122"))
+	if fmt.Sprint(sortedVersions(f.npm["arpan-package"])) != "[2.0.5]" || f.open["arpan-package"] != "0" {
+		t.Fatalf("npm %v open %v", f.npm, f.open)
+	}
+	f = newFound()
+	f.addVuln(vulnFixture(t, "MAL-2026-2307")) // explicit versions, no ranges
+	if len(f.open) != 0 {
+		t.Fatalf("open %v", f.open)
+	}
+}
+
+func TestAddVulnDedupesRefsAndChecksID(t *testing.T) {
+	f := newFound()
+	v := vulnFixture(t, "MAL-2026-2307")
+	f.addVuln(v)
+	f.addVuln(v)
+	if len(f.refs) != 1 {
+		t.Fatalf("refs %v", f.refs)
+	}
+	if f.addVuln(&Vuln{ID: "bad\nid", Affected: v.Affected}) || len(f.refs) != 1 {
+		t.Fatal("record with invalid id must be ignored")
 	}
 }

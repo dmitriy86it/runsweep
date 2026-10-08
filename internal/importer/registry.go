@@ -21,7 +21,7 @@ type PkgTimes struct {
 // Times fetches the full registry document of an npm package (the abbreviated
 // install document has no "time" field).
 func (c *Client) Times(ctx context.Context, name string) (PkgTimes, error) {
-	if !ValidNPMName(name) {
+	if !safeNPMName(name) {
 		return PkgTimes{}, fmt.Errorf("invalid npm package name %q", name)
 	}
 	b, err := c.fetch(ctx, c.NPMBase+"/"+url.PathEscape(name), nil) // "@scope%2Fname"

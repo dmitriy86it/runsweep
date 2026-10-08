@@ -168,3 +168,39 @@ func TestImportHostileRecordStaysValidYAML(t *testing.T) {
 		t.Fatalf("want 2 warnings (bad name, bad version), got %q", warns)
 	}
 }
+
+func TestImportExpandsOpenRange(t *testing.T) {
+	c, _ := fixtures(t, nil)
+	out, _, err := importWith(t, c, Options{IDs: []string{"MAL-2022-1122"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`{name: "arpan-package", versions: ["0.0.1-security", "2.0.5"]}`,
+		"# arpan-package: open range from 0 — all registry versions included",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+}
+
+func TestImportOpenRangeRegistryMissing(t *testing.T) {
+	c, _ := fixtures(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasPrefix(r.URL.Path, "/npm/") {
+			w.WriteHeader(http.StatusNotFound)
+			return true
+		}
+		return false
+	})
+	out, warns, err := importWith(t, c, Options{IDs: []string{"MAL-2022-1122"}, Since: importNow.Add(-time.Hour), Until: importNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `versions: ["2.0.5"]`) || !strings.Contains(string(out), "# arpan-package: open range from 0") {
+		t.Fatalf("%s", out)
+	}
+	if !strings.Contains(strings.Join(warns, "|"), "later versions may also be malicious, check manually") {
+		t.Fatalf("warns %q", warns)
+	}
+}

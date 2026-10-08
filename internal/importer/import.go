@@ -130,6 +130,16 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 				return nil, err
 			}
 			times[name] = pt
+			if from, ok := f.open[name]; ok {
+				if pt.Found {
+					f.expandOpen(name, pt)
+					f.notes = append(f.notes, fmt.Sprintf("%s: open range from %s — all registry versions included", name, from))
+				} else {
+					msg := fmt.Sprintf("%s: open range from %s — registry unavailable; later versions may also be malicious, check manually", name, from)
+					f.notes = append(f.notes, msg)
+					o.Warnf("%s", msg)
+				}
+			}
 		}
 		start, end, notes, err := computeWindow(f.npm, times, o.KeepAll, o.Now)
 		if err != nil && (o.Since.IsZero() || o.Until.IsZero()) {
