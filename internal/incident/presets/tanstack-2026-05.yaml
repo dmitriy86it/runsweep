@@ -1,6 +1,7 @@
 id: tanstack-2026-05
-title: "Mini Shai-Hulud wave: TanStack and 160+ npm packages (2026-05-11)"
-# 170 packages / 405 versions: every version listed by an OSV MAL-* record for these packages.
+title: "Mini Shai-Hulud wave: TanStack and 128 other npm packages, 170 packages / 432 versions (2026-05-11)"
+# 170 packages / 432 versions: every version listed by an OSV MAL-* record for these packages (405), plus the
+# open-range expansion of @tallyui/components (27, see below).
 # 377 of them are also listed by StepSecurity or Aikido (two independent sources). Includes all 42 @tanstack/*
 # packages / 84 versions of GHSA-g7cv-rxg3-hmpx.
 # OSV only (not in the StepSecurity/Aikido lists), kept because OSV MAL records are curated and leaving them out
@@ -14,12 +15,13 @@ title: "Mini Shai-Hulud wave: TanStack and 160+ npm packages (2026-05-11)"
 #   @squawk/notams@0.3.10, @squawk/procedure-data@0.7.7, @squawk/procedures@0.5.6, @squawk/types@0.8.5,
 #   @squawk/units@0.4.7, @squawk/weather@0.5.10, cross-stitch@1.1.7, ts-dna@3.0.5, wot-api@0.8.5
 # Built with `runsweep incidents import --package npm:NAME` for the 170 names (2026-10-08) and reconciled with the
-# vendor lists. The import gives these 405 versions plus 27 more of @tallyui/components, which are left out:
-# MAL-2026-3514 lists versions 1.0.1-1.0.3 (as do StepSecurity and Aikido) but also carries an open range
-# {introduced: "0"}, so the import expands it to every registry version. Of those, 1.0.0 was published
-# 2026-02-25, before the wave, and 2.0.0..3.9.2 from 2026-09-28 on, after this window, still published.
+# vendor lists; the preset equals the import output (432 versions), only the window differs.
+# Open range (MAL-2026-3514, {introduced: "0"}, no fix): @tallyui/components
+#   MAL-2026-3514 lists versions 1.0.1-1.0.3 (the only ones StepSecurity and Aikido confirm) and also carries an
+#   open range from 0, so every registry version is included: 1.0.0 (published 2026-02-25, before the wave) and
+#   2.0.0..3.9.2 (from 2026-09-28 on, after this window, so they cannot match a run inside it).
 # start: earliest npm publish time = @tanstack/react-router-ssr-query@1.166.15 2026-05-11T19:20:39.110Z (rounded down).
-# latest publish among kept versions: @opensearch-project/opensearch@3.5.3 2026-05-12T00:47:39.185Z.
+# latest publish among the wave versions (the open-range expansion aside): @opensearch-project/opensearch@3.5.3 2026-05-12T00:47:39.185Z.
 # 6 packages return 404 from the registry (@dirigible-ai/sdk, @draftauth/client, @draftauth/core,
 # @draftlab/auth-router, @ml-toolkit-ts/preprocessing, @ml-toolkit-ts/xgboost): versions kept as OSV lists them.
 # end: 2026-05-13T00:00:00Z is APPROXIMATE, widened on purpose: TanStack says npm removed its last package ~4h35m after
@@ -66,7 +68,7 @@ npm:
   - {name: "@squawk/weather", versions: ["0.5.6", "0.5.7", "0.5.8", "0.5.9", "0.5.10"]}
   - {name: "@supersurkhet/cli", versions: ["0.0.2", "0.0.3", "0.0.4", "0.0.5", "0.0.6", "0.0.7"]}
   - {name: "@supersurkhet/sdk", versions: ["0.0.2", "0.0.3", "0.0.4", "0.0.5", "0.0.6", "0.0.7"]}
-  - {name: "@tallyui/components", versions: ["1.0.1", "1.0.2", "1.0.3"]}
+  - {name: "@tallyui/components", versions: ["1.0.0", "1.0.1", "1.0.2", "1.0.3", "2.0.0", "3.0.0", "3.0.0-next.0", "3.0.0-next.1", "3.0.0-next.2", "3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.1.0", "3.1.1", "3.2.0", "3.2.1", "3.3.0", "3.4.0", "3.5.0", "3.5.1", "3.5.2", "3.5.3", "3.6.0", "3.7.0", "3.7.1", "3.8.0", "3.9.0", "3.9.1", "3.9.2"]}
   - {name: "@tallyui/connector-medusa", versions: ["1.0.1", "1.0.2", "1.0.3"]}
   - {name: "@tallyui/connector-shopify", versions: ["1.0.1", "1.0.2", "1.0.3"]}
   - {name: "@tallyui/connector-vendure", versions: ["1.0.1", "1.0.2", "1.0.3"]}

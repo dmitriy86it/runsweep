@@ -78,7 +78,7 @@ refs:
 |---|---|
 | `axios-2026-03` | axios 1.14.1 / 0.30.4 malicious release |
 | `chaindrop-2026-08` | Shai-Hulud wave: keyv / cacheable and 400+ npm packages |
-| `tanstack-2026-05` | Mini Shai-Hulud wave: TanStack and 160+ npm packages (CVE-2026-45321) |
+| `tanstack-2026-05` | Mini Shai-Hulud wave: TanStack and 128 other npm packages, 170 packages / 432 versions (CVE-2026-45321) |
 | `tj-actions-2025-03` | tj-actions/changed-files compromised (CVE-2025-30066) |
 | `trivy-action-2026-03` | aquasecurity/trivy-action and setup-trivy tags hijacked (CVE-2026-33634) |
 
