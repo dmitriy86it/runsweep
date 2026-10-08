@@ -110,6 +110,8 @@ func TestBadInputNeverTouchesNetwork(t *testing.T) {
 		{"scan", "--incident", good, "--repo", "o/a", "--since", "yesterday"},
 		{"scan", "--incident", good, "--repo", "o/a", "--bogus"},
 		{"scan", "--repo", "o/a"},
+		{"scan", "--incident", good, "--repo", "o/a", "--lookback", "31d"},
+		{"scan", "--incident", good, "--repo", "o/a", "--lookback", "-1h"},
 	} {
 		var out, errb bytes.Buffer
 		if code := run(args, &out, &errb, noNetDeps(t)); code != 2 {
@@ -279,5 +281,36 @@ func TestRetentionByWindowStart(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "incident window starts more than 90 days ago") {
 		t.Fatalf("window started 100 days ago, ended yesterday: want retention warning\n%s", errb.String())
+	}
+}
+
+func TestParseLookback(t *testing.T) {
+	for in, want := range map[string]time.Duration{"7d": 7 * 24 * time.Hour, "36h": 36 * time.Hour, "0": 0, "0d": 0, "30d": 30 * 24 * time.Hour, "720h": 720 * time.Hour} {
+		if got, err := parseLookback(in); err != nil || got != want {
+			t.Errorf("%q: got %v %v, want %v", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"31d", "721h", "-1d", "-1h", "d", "1.5d", "7days", "", "99999999999999d"} {
+		if _, err := parseLookback(in); err == nil {
+			t.Errorf("%q: want error", in)
+		}
+	}
+}
+
+func TestLookbackFindsReRun(t *testing.T) {
+	f := sourcetest.New()
+	created := time.Date(2026, 3, 29, 1, 0, 0, 0, time.UTC) // two days before the window
+	inWindow := time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)
+	f.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: created, StartedAt: inWindow, UpdatedAt: inWindow, Attempt: 2}}
+	f.Jobs[1] = []source.Job{{ID: 2, Name: "build", Attempt: 2, StartedAt: inWindow}}
+	f.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	inc := writeInc(t, incYAML)
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 1 {
+		t.Fatalf("default lookback must find the re-run: code %d\n%s%s", code, out.String(), errb.String())
+	}
+	out.Reset()
+	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a", "--lookback", "0"}, &out, &errb, fakeDeps(f)); code != 0 {
+		t.Fatalf("--lookback 0: code %d\n%s", code, out.String())
 	}
 }

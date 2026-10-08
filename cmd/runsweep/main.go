@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,6 +49,25 @@ var (
 	repoRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	orgRe  = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 )
+
+const maxLookback = 30 * 24 * time.Hour // GitHub allows re-running a run for 30 days
+
+// parseLookback accepts a Go duration ("36h") or whole days ("7d"), from 0 to 30 days.
+func parseLookback(s string) (time.Duration, error) {
+	bad := fmt.Errorf("--lookback must be a duration from 0 to 30d (e.g. 7d, 36h), got %q", s)
+	if n, ok := strings.CutSuffix(s, "d"); ok {
+		days, err := strconv.Atoi(n)
+		if err != nil || days < 0 || days > 30 {
+			return 0, bad
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 || d > maxLookback {
+		return 0, bad
+	}
+	return d, nil
+}
 
 func validateTargets(repos []string, org string) error {
 	for _, r := range repos {
@@ -112,7 +132,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 }
 
 func scanCmd(d deps) *cobra.Command {
-	var incRef, org, format, since, until string
+	var incRef, org, format, since, until, lookback string
 	var repos []string
 	c := &cobra.Command{
 		Use:   "scan",
@@ -127,6 +147,10 @@ func scanCmd(d deps) *cobra.Command {
 				return fmt.Errorf("--format must be md or json, got %q", format)
 			}
 			if err := validateTargets(repos, org); err != nil {
+				return err
+			}
+			back, err := parseLookback(lookback)
+			if err != nil {
 				return err
 			}
 			inc, err := incident.Load(incRef)
@@ -158,7 +182,7 @@ func scanCmd(d deps) *cobra.Command {
 				return err
 			}
 			logf := func(f string, a ...any) { _, _ = fmt.Fprintln(c.ErrOrStderr(), report.Clean(fmt.Sprintf(f, a...))) }
-			res, err := scan.Run(c.Context(), src, inc, scan.Options{Repos: repos, Org: org, Logf: logf})
+			res, err := scan.Run(c.Context(), src, inc, scan.Options{Repos: repos, Org: org, Lookback: back, Logf: logf})
 			if err != nil {
 				return err
 			}
@@ -206,6 +230,7 @@ func scanCmd(d deps) *cobra.Command {
 	c.Flags().StringVar(&format, "format", "md", "output format: md or json")
 	c.Flags().StringVar(&since, "since", "", "override window start (RFC3339)")
 	c.Flags().StringVar(&until, "until", "", "override window end (RFC3339)")
+	c.Flags().StringVar(&lookback, "lookback", "7d", "also check re-runs of runs created this long before the window (max 30d)")
 	_ = c.MarkFlagRequired("incident")
 	return c
 }
