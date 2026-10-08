@@ -458,8 +458,8 @@ npm:
   - {name: "workbench-browser-server", versions: ["0.0.2"]}
 iocs:
   files: [setup.mjs, Math_Symbol.js, math_init.js]
+# Enumeration: https://api.osv.dev/v1/vulns/MAL-2026-11400 through MAL-2026-12600 (each fetched; entries
+# mentioning setup.mjs or Math_Symbol.js selected); per-package publish times from https://registry.npmjs.org/.
 refs:
   - https://www.aikido.dev/blog/keyv-and-friends-compromised-in-npm-supply-chain-attack
   - https://osv.dev/vulnerability/MAL-2026-11524
-  - https://api.osv.dev/v1/vulns/MAL-2026-11400 through MAL-2026-12600 (each fetched; entries mentioning setup.mjs or Math_Symbol.js selected)
-  - https://registry.npmjs.org/ (per-package publish times)

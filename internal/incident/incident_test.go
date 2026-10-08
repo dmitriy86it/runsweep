@@ -1,6 +1,9 @@
 package incident
 
 import (
+	"io/fs"
+	"net/url"
+	"path"
 	"strings"
 	"testing"
 )
@@ -50,7 +53,7 @@ func TestBadYAMLHasLine(t *testing.T) {
 	}
 }
 
-func TestPresetsValidAndSourced(t *testing.T) {
+func TestPresetsLoad(t *testing.T) {
 	ps, err := Presets()
 	if err != nil {
 		t.Fatal(err)
@@ -58,16 +61,43 @@ func TestPresetsValidAndSourced(t *testing.T) {
 	if len(ps) < 3 {
 		t.Fatalf("want >= 3 presets, got %d", len(ps))
 	}
-	for _, p := range ps {
-		if len(p.Refs) == 0 {
-			t.Errorf("%s: every preset needs refs to primary sources", p.ID)
-		}
-	}
 	if _, err := Load("axios-2026-03"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load("no-such-incident"); err == nil {
 		t.Fatal("expected unknown incident error")
+	}
+}
+
+// Every built-in preset: valid, named after its file, and backed by at least two
+// independent sources (https refs on distinct hosts).
+func TestPresetFilesRule(t *testing.T) {
+	files, err := fs.Glob(presetFS, "presets/*.yaml")
+	if err != nil || len(files) == 0 {
+		t.Fatal(files, err)
+	}
+	for _, f := range files {
+		b, _ := presetFS.ReadFile(f)
+		inc, err := Parse(b)
+		if err != nil {
+			t.Errorf("%s: %v", f, err)
+			continue
+		}
+		if want := strings.TrimSuffix(path.Base(f), ".yaml"); inc.ID != want {
+			t.Errorf("%s: id %q must match the file name", f, inc.ID)
+		}
+		hosts := map[string]bool{}
+		for _, r := range inc.Refs {
+			u, err := url.Parse(r)
+			if err != nil || u.Scheme != "https" || u.Host == "" || strings.ContainsAny(r, " \t") {
+				t.Errorf("%s: ref %q is not an https URL", f, r)
+				continue
+			}
+			hosts[strings.TrimPrefix(u.Hostname(), "www.")] = true
+		}
+		if len(hosts) < 2 {
+			t.Errorf("%s: refs must name at least 2 independent sources (distinct hosts), got %v", f, inc.Refs)
+		}
 	}
 }
 
