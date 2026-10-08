@@ -28,9 +28,9 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 	if t := Clean(inc.Title); t != "" {
 		name = t + " (" + name + ")"
 	}
-	fmt.Fprintf(&b, "runsweep · %s · %s → %s UTC\n", name,
-		r.Start.UTC().Format("2006-01-02 15:04:05"), r.End.UTC().Format("2006-01-02 15:04:05"))
-	fmt.Fprintf(&b, "%d runs · %d jobs scanned · lookback %s\n", r.RunsScanned, r.JobsScanned, days(r.Lookback))
+	fmt.Fprintf(&b, "runsweep · %s\n", name)
+	fmt.Fprintf(&b, "%s → %s UTC · %d runs · %d jobs scanned · lookback %s\n",
+		r.Start.UTC().Format("2006-01-02 15:04:05"), r.End.UTC().Format("2006-01-02 15:04:05"), r.RunsScanned, r.JobsScanned, days(r.Lookback))
 	if r.RetentionWarning {
 		b.WriteString("Warning: " + RetentionNote + "\n")
 	}

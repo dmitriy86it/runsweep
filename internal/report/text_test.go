@@ -34,13 +34,36 @@ func TestTextColor(t *testing.T) {
 	}
 }
 
+func TestTextNoColorNoEscapes(t *testing.T) {
+	inc, res := sample()
+	var b bytes.Buffer
+	if err := Text(&b, inc, res, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "\x1b") {
+		t.Errorf("escape with color=false:\n%q", b.String())
+	}
+}
+
+func TestTextAttemptOneHidden(t *testing.T) {
+	inc, res := sample()
+	res.Findings[0].Run.Attempt = 1
+	var b bytes.Buffer
+	if err := Text(&b, inc, res, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "attempt") {
+		t.Errorf("attempt shown for attempt 1:\n%s", b.String())
+	}
+}
+
 func TestTextEmptyAndRetention(t *testing.T) {
 	var b bytes.Buffer
 	res := &model.Result{RetentionWarning: true}
 	if err := Text(&b, &incident.Incident{ID: "x"}, res, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"runsweep · x · ", "lookback 0d", "Warning: " + RetentionNote, "  Nothing to rotate.\n", "  No affected jobs found.\n"} {
+	for _, want := range []string{"runsweep · x\n", " UTC · 0 runs · 0 jobs scanned · lookback 0d", "Warning: " + RetentionNote, "  Nothing to rotate.\n", "  No affected jobs found.\n"} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("missing %q in\n%s", want, b.String())
 		}
@@ -50,13 +73,22 @@ func TestTextEmptyAndRetention(t *testing.T) {
 func TestTextStripsTerminalEscapes(t *testing.T) {
 	inc, res := sample()
 	evil := "\x1b]0;pwned\x07\x1b[2J\u0085\u202e\u2066"
-	inc.Title = evil
-	res.Findings[0].Run.Job = evil
-	res.Findings[0].Evidence[0].Detail = evil
-	res.Rotation[1].Name = evil
-	res.Rotation[1].Reason = evil
-	res.Rotation[1].Runs[0].Repo = evil
-	res.Skipped[0].Reason = evil
+	inc.ID, inc.Title = evil, evil
+	for i := range res.Findings {
+		f := &res.Findings[i]
+		f.Run.Repo, f.Run.Workflow, f.Run.Job = evil, evil, evil
+		for j := range f.Evidence {
+			f.Evidence[j].Detail = evil
+		}
+	}
+	for i := range res.Rotation {
+		it := &res.Rotation[i]
+		it.Name, it.Reason = evil, evil
+		for j := range it.Runs {
+			it.Runs[j].Repo, it.Runs[j].Job = evil, evil
+		}
+	}
+	res.Skipped[0].Repo, res.Skipped[0].Reason = evil, evil
 	var b bytes.Buffer
 	if err := Text(&b, inc, res, true); err != nil {
 		t.Fatal(err)

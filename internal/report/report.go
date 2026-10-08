@@ -124,7 +124,7 @@ func seenIn(runs []model.RunRef, wrap func(string) string) string {
 			parts = append(parts, fmt.Sprintf("+%d more", len(runs)-3))
 			break
 		}
-		parts = append(parts, wrap(fmt.Sprintf("%s#%d %s", r.Repo, r.RunID, r.Job)))
+		parts = append(parts, wrap(strings.TrimSpace(fmt.Sprintf("%s#%d %s", r.Repo, r.RunID, r.Job))))
 	}
 	return strings.Join(parts, ", ")
 }
