@@ -1,0 +1,55 @@
+{
+ "vulns": [
+  {
+   "id": "GHSA-35jp-ww65-95wh",
+   "summary": "axios Vulnerable to Full Man-in-the-Middle via Prototype Pollution Gadget in `config.proxy`",
+   "aliases": [
+    "CVE-2026-44494"
+   ],
+   "published": "2026-05-29T16:04:00Z",
+   "modified": "2026-09-10T03:51:04.268287831Z",
+   "affected": [
+    {
+     "package": {
+      "ecosystem": "npm",
+      "name": "axios"
+     },
+     "ranges": [
+      {
+       "type": "SEMVER",
+       "events": [
+        {
+         "introduced": "1.0.0"
+        },
+        {
+         "fixed": "1.16.0"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "MAL-2026-2307",
+   "summary": "Malicious code in axios (npm)",
+   "aliases": [
+    "GHSA-fw8c-xr5c-95f9"
+   ],
+   "published": "2026-03-31T03:15:49Z",
+   "modified": "2026-04-07T14:52:30.013937Z",
+   "affected": [
+    {
+     "package": {
+      "ecosystem": "npm",
+      "name": "axios"
+     },
+     "versions": [
+      "0.30.4",
+      "1.14.1"
+     ]
+    }
+   ]
+  }
+ ]
+}

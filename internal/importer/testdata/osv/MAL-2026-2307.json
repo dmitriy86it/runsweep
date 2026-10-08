@@ -1,0 +1,21 @@
+{
+ "id": "MAL-2026-2307",
+ "summary": "Malicious code in axios (npm)",
+ "aliases": [
+  "GHSA-fw8c-xr5c-95f9"
+ ],
+ "published": "2026-03-31T03:15:49Z",
+ "modified": "2026-04-07T14:52:30.013937Z",
+ "affected": [
+  {
+   "package": {
+    "ecosystem": "npm",
+    "name": "axios"
+   },
+   "versions": [
+    "0.30.4",
+    "1.14.1"
+   ]
+  }
+ ]
+}

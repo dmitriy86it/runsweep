@@ -1,0 +1,17 @@
+{
+ "id": "MAL-2026-17631",
+ "summary": "Malicious code in @pinecone-experience/messages (npm)",
+ "published": "2026-10-06T03:57:14Z",
+ "modified": "2026-10-06T04:30:45.574218521Z",
+ "affected": [
+  {
+   "package": {
+    "ecosystem": "npm",
+    "name": "@pinecone-experience/messages"
+   },
+   "versions": [
+    "99.9.1"
+   ]
+  }
+ ]
+}

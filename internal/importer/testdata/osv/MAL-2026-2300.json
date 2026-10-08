@@ -1,0 +1,27 @@
+{
+ "id": "MAL-2026-2300",
+ "summary": "Malicious code in eslint-validator (npm)",
+ "aliases": [
+  "GHSA-m9ph-m48c-mrq8"
+ ],
+ "published": "2026-03-30T15:59:45Z",
+ "modified": "2026-03-31T03:23:20.747899Z",
+ "affected": [
+  {
+   "package": {
+    "ecosystem": "npm",
+    "name": "eslint-validator"
+   },
+   "ranges": [
+    {
+     "type": "SEMVER",
+     "events": [
+      {
+       "introduced": "0"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "id": "MAL-2025-125",
+ "summary": "Malicious code in netflixdesign (npm)",
+ "published": "2025-01-15T22:30:33Z",
+ "modified": "2025-06-18T15:07:35Z",
+ "affected": [
+  {
+   "package": {
+    "ecosystem": "npm",
+    "name": "netflixdesign"
+   },
+   "versions": [
+    "1.0.1"
+   ]
+  }
+ ]
+}
