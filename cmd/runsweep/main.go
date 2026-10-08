@@ -179,9 +179,11 @@ func scanCmd(d deps) *cobra.Command {
 Exit codes:
   0  every job checked, nothing AFFECTED or POSSIBLE
   1  at least one job AFFECTED or POSSIBLE
-  2  error (bad flags or incident, no token, token rejected, nothing could be scanned)
+  2  error (bad flags or incident, no token, token rejected, organization not listed,
+     nothing could be scanned)
   3  nothing AFFECTED or POSSIBLE, but not everything was checked: UNCHECKED jobs,
-     skipped repositories, or the scan was interrupted (Ctrl-C, API error)`,
+     skipped repositories, or the scan was interrupted (Ctrl-C, API error)
+1 wins over 2 and 3: findings are reported even if the scan then stops on an error.`,
 		Example: `  runsweep scan --incident axios-2026-03 --repo owner/name
   runsweep scan --incident ./incident.yaml --org my-org --format json`,
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -235,8 +237,11 @@ Exit codes:
 			}
 			logf := func(f string, a ...any) { _, _ = fmt.Fprintln(c.ErrOrStderr(), report.Clean(fmt.Sprintf(f, a...))) }
 			res, scanErr := scan.Run(c.Context(), src, inc, scan.Options{Repos: repos, Org: org, Lookback: back, Logf: logf})
-			if res == nil { // nothing scanned: listing the organization failed
-				return stopped(c.ErrOrStderr(), scanErr, false)
+			if res == nil { // listing the organization failed: nothing scanned, so an error (2) unless interrupted
+				if errors.Is(scanErr, context.Canceled) {
+					return stopped(c.ErrOrStderr(), scanErr, false)
+				}
+				return scanErr
 			}
 			res.RetentionWarning = inc.Window.Start.Before(time.Now().Add(-90 * 24 * time.Hour))
 			switch format {

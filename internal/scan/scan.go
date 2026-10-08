@@ -123,8 +123,9 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 						firstErr = fmt.Errorf("%s run %d: %w", repo, run.ID, err)
 						cancel() // stop the other goroutines from issuing API calls
 					}
-					fs = []model.Finding{{Run: ref(repo, run, source.Job{}), Status: model.Unchecked,
-						Evidence: []model.Evidence{note("%s", stopNote(err))}}}
+					// keep the jobs judged before the error; the rest of the run is UNCHECKED
+					fs = append(fs, model.Finding{Run: ref(repo, run, source.Job{}), Status: model.Unchecked,
+						Evidence: []model.Evidence{note("%s", stopNote(err))}})
 				}
 				res.Findings = append(res.Findings, fs...)
 				res.JobsScanned += jobs
@@ -252,6 +253,8 @@ func note(format string, args ...any) model.Evidence {
 	return model.Evidence{Kind: "note", Detail: fmt.Sprintf(format, args...)}
 }
 
+// scanRun judges the jobs of one run. On a hard error it still returns the findings of the jobs
+// judged before it.
 func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]model.Finding, int, error) {
 	start := s.inc.Window.Start
 	// Listed through the lookback and finished before the window: nothing ran in it.
@@ -301,7 +304,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		call := callee{wf: wf, job: wj, matched: true}
 		if wj != nil && wj.Call != "" {
 			if call, err = s.resolveCall(ctx, repo, run.HeadSHA, wf, wj, job.Name); err != nil {
-				return nil, 0, err
+				return out, len(jobs), err
 			}
 			wj = call.job
 		}
@@ -314,7 +317,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		if len(s.inc.Actions) > 0 || npmRes.Status > model.Clean {
 			log, logErr = s.src.JobLog(ctx, repo, job.ID)
 			if logErr != nil && !soft(logErr) {
-				return nil, 0, logErr
+				return out, len(jobs), logErr
 			}
 		}
 		// Drop npm evidence only on positive evidence the job cannot install packages.
