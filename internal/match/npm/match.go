@@ -35,9 +35,11 @@ const maxManifests = 500
 // so a file shared by many commits is fetched and parsed once. The zero value is ready to use.
 type Cache struct{ m sync.Map }
 
-// parsed is a cached parse: pkgs of a lockfile or names of a package.json, or why it is unreadable.
+// parsed is a cached parse: pkgs of a lockfile or own name and dependency names of a package.json,
+// or why it is unreadable.
 type parsed struct {
 	pkgs  []Pkg
+	name  string
 	names []string
 	err   error
 }
@@ -141,6 +143,12 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 		}
 	}
 	if r.Status != model.Affected {
+		type pkgJSON struct {
+			path  string
+			names []string
+		}
+		var read []pkgJSON
+		local := map[string]bool{} // names of the tree's own packages (workspaces); yarn v1 does not lock them
 		for _, e := range entries {
 			if !isPkgJSON(e.Path) {
 				continue
@@ -149,21 +157,27 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 				continue
 			}
 			p, err := c.load(ctx, f, repo, e, func(b []byte) parsed {
-				names, err := declared(b)
-				return parsed{names: names, err: err}
+				name, names, err := declared(b)
+				return parsed{name: name, names: names, err: err}
 			})
 			if err != nil {
 				return r, err
 			}
-			names, err := p.names, p.err
-			if err != nil {
+			if p.err != nil {
 				r.Status = model.Worse(r.Status, model.Unchecked)
-				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("cannot parse %s: %v", e.Path, err)})
+				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("cannot parse %s: %v", e.Path, p.err)})
 				continue
 			}
+			read = append(read, pkgJSON{e.Path, p.names})
+			if p.name != "" && manifests <= maxManifests { // past the cap not every local name is known
+				local[p.name] = true
+			}
+		}
+		for _, pj := range read {
+			names := pj.names
 			// Covering lockfile: nearest ancestor dir with one (workspaces lock at the root).
 			// If the nearest one failed to parse, treat the package.json as unlocked.
-			dir := path.Dir(e.Path)
+			dir := path.Dir(pj.path)
 			for lockNames[dir] == nil && !failedDirs[dir] && dir != "." && dir != "/" {
 				dir = path.Dir(dir)
 			}
@@ -174,9 +188,9 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 				var detail string
 				switch {
 				case lockNames[dir] == nil:
-					detail = fmt.Sprintf("%s declared in %s without a lockfile — installed version unknown", name, e.Path)
-				case !lockNames[dir][name]:
-					detail = fmt.Sprintf("%s declared in %s but not in lockfile %s — install would resolve it fresh", name, e.Path, lockPaths[dir])
+					detail = fmt.Sprintf("%s declared in %s without a lockfile — installed version unknown", name, pj.path)
+				case !lockNames[dir][name] && !local[name]:
+					detail = fmt.Sprintf("%s declared in %s but not in lockfile %s — install would resolve it fresh", name, pj.path, lockPaths[dir])
 				default:
 					continue
 				}
@@ -185,7 +199,7 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			}
 			if lockNames[dir] == nil && !failedDirs[dir] && len(names) > 0 {
 				r.Status = model.Worse(r.Status, model.Unchecked)
-				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("no lockfile for %s — transitive dependencies unknown", e.Path)})
+				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("no lockfile for %s — transitive dependencies unknown", pj.path)})
 			}
 		}
 	}
@@ -200,15 +214,18 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 	return r, nil
 }
 
-// declared returns the sorted, distinct dependency names of a package.json, including the real
-// package behind an "npm:<real>@<range>" alias.
-func declared(pkgJSON []byte) ([]string, error) {
+// declared returns the own name of a package.json and its sorted, distinct dependency names,
+// including the real package behind an "npm:<real>@<range>" alias.
+func declared(pkgJSON []byte) (string, []string, error) {
 	var p struct {
+		Name                                                                  json.RawMessage
 		Dependencies, DevDependencies, OptionalDependencies, PeerDependencies map[string]json.RawMessage
 	}
 	if err := json.Unmarshal(bytes.TrimPrefix(pkgJSON, []byte("\uFEFF")), &p); err != nil {
-		return nil, err
+		return "", nil, err
 	}
+	var name string
+	_ = json.Unmarshal(p.Name, &name) // a non-string name is no local package
 	var out []string
 	for _, m := range []map[string]json.RawMessage{p.Dependencies, p.DevDependencies, p.OptionalDependencies, p.PeerDependencies} {
 		for name, raw := range m {
@@ -226,7 +243,7 @@ func declared(pkgJSON []byte) ([]string, error) {
 		}
 	}
 	slices.Sort(out)
-	return slices.Compact(out), nil
+	return name, slices.Compact(out), nil
 }
 
 func short(sha string) string {

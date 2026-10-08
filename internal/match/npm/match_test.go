@@ -345,3 +345,20 @@ func TestMatchTooManyManifests(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// Yarn v1 does not lock workspace packages: a dependency on a package of the same tree is local.
+func TestMatchWorkspacePackageNotMissing(t *testing.T) {
+	ws := []incident.NPMPackage{{Name: "@x/b", Versions: []string{"1.0.0"}}}
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "package.json", []byte(`{"private":true,"workspaces":["packages/*"]}`))
+	f.AddFile("o/r", "s1", "yarn.lock", []byte("# yarn lockfile v1\n\n\nleft-pad@^1.0.0:\n  version \"1.0.0\"\n"))
+	f.AddFile("o/r", "s1", "packages/a/package.json", []byte(`{"name":"@x/a","dependencies":{"@x/b":"^1.0.0"}}`))
+	r, err := new(Cache).Match(context.Background(), f, "o/r", "s1", ws)
+	if err != nil || r.Status != model.Possible || !hasDetail(r, "not in lockfile yarn.lock") {
+		t.Fatalf("without packages/b: %+v %v", r, err)
+	}
+	f.AddFile("o/r", "s1", "packages/b/package.json", []byte(`{"name":"@x/b","version":"1.0.0"}`))
+	if r, err := new(Cache).Match(context.Background(), f, "o/r", "s1", ws); err != nil || r.Status != model.Clean {
+		t.Fatalf("with packages/b: %+v %v", r, err)
+	}
+}
