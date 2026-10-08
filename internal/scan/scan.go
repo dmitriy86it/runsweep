@@ -205,9 +205,10 @@ type wfEntry struct {
 
 // workflow returns the parsed workflow file at repo@sha:path, or nil and a reason if it is
 // unavailable (soft error, missing, unparsable). Hard errors are returned and not cached, except
-// with lenient (a repository other than the scanned one): there they become "unavailable" too
-// (cached, so it is fetched once), unless the context ended, so an arbitrary `uses:` cannot abort the scan.
-func (s *scanner) workflow(ctx context.Context, repo, sha, path string, lenient bool) (*workflow.Workflow, string, error) {
+// with remote (a repository other than the scanned one, read as one file through the contents
+// API): there they become "unavailable" too (cached, so it is fetched once), unless the context
+// ended, so an arbitrary `uses:` cannot abort the scan.
+func (s *scanner) workflow(ctx context.Context, repo, sha, path string, remote bool) (*workflow.Workflow, string, error) {
 	key := repo + "@" + sha + ":" + path
 	if v, ok := s.wf.Load(key); ok {
 		e := v.(wfEntry)
@@ -222,11 +223,20 @@ func (s *scanner) workflow(ctx context.Context, repo, sha, path string, lenient 
 			}
 			s.wf.Store(key, wfEntry{reason: reason})
 			return nil, reason, nil
-		case lenient && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded):
+		case remote && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded):
 			s.wf.Store(key, wfEntry{reason: err.Error()})
 			return nil, err.Error(), nil
 		}
 		return nil, "", err
+	}
+	if remote {
+		b, err := s.src.File(ctx, repo, sha, path, source.MaxWorkflowBytes)
+		if err != nil {
+			return fail("file", err)
+		}
+		e := parseWorkflow(b)
+		s.wf.Store(key, e)
+		return e.wf, e.reason, nil
 	}
 	entries, truncated, err := s.src.Tree(ctx, repo, sha)
 	if err != nil {
@@ -475,6 +485,7 @@ func uniq[T comparable](in []T) []T {
 
 func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workflow.Workflow, wj *workflow.Job, segs []string, depth int, reads *int) (callee, error) {
 	c := callee{wf: wf, job: wj, matched: true}
+	homeOwner, _, _ := strings.Cut(home, "/")
 	for ; c.job.Call != ""; depth++ {
 		uses := c.job.Call
 		c.calls = append(c.calls, uses)
@@ -490,6 +501,11 @@ func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workfl
 		}
 		if call.Repo == "" { // local: same repository and commit as the calling file
 			call.Repo, call.SHA = repo, sha
+		}
+		if owner, _, _ := strings.Cut(call.Repo, "/"); !strings.EqualFold(owner, homeOwner) {
+			c.status = model.Unchecked
+			c.notes = append(c.notes, note("called workflow in another owner (%s) not read", call.Repo))
+			return c, nil
 		}
 		if *reads++; *reads > maxCallReads {
 			c.status = model.Unchecked

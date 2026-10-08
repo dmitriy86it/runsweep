@@ -3,6 +3,7 @@ package incident
 import (
 	"io/fs"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"testing"
@@ -113,5 +114,26 @@ func TestWildcardVersion(t *testing.T) {
 	}
 	if _, err := Parse([]byte(strings.Replace(valid, `versions: ["1.14.1"]`, `versions: ["*", "1.14.1"]`, 1))); err == nil {
 		t.Fatal("\"*\" mixed with versions must be rejected")
+	}
+}
+
+// A bare name is only a preset id, even when a file of that name exists; a file needs a '/' or
+// a .yaml/.yml suffix.
+func TestLoadBareNameIsPresetOnly(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("axios-2026-03", []byte("not: [an incident"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("mine", []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if inc, err := Load("axios-2026-03"); err != nil || inc.ID != "axios-2026-03" {
+		t.Fatalf("%v %v", inc, err)
+	}
+	if _, err := Load("mine"); err == nil || !strings.Contains(err.Error(), `unknown incident "mine"`) || !strings.Contains(err.Error(), "use ./mine.yaml for a file") {
+		t.Fatalf("%v", err)
+	}
+	if _, err := Load("./mine"); err == nil || strings.Contains(err.Error(), "unknown incident") {
+		t.Fatalf("a path must be read as a file: %v", err)
 	}
 }

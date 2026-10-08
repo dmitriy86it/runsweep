@@ -287,3 +287,27 @@ func TestSeenInAttempt(t *testing.T) {
 		t.Fatal(b.String())
 	}
 }
+
+// Every format character (zero-width, BOM, soft hyphen, ...) and the tag block U+E0000–E007F are
+// dropped from terminal text and escaped in JSON, so hidden text never reaches a reader.
+func TestFormatCharsAndTags(t *testing.T) {
+	in := "a\u200bb\ufeffc\u00add\u2060e\U000E0041f\U000E0000g\U000E007Fh\u061ci\tj\nk"
+	if got := Clean(in); got != "abcdefghij k" {
+		t.Fatalf("Clean: %q", got)
+	}
+	inc, res := sample()
+	res.Findings[0].Evidence[0].Detail = in
+	var b bytes.Buffer
+	if err := JSON(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(b.String(), "\u200b\ufeff\u00ad\u2060\U000E0041\U000E0000\U000E007F\u061c") || !strings.Contains(b.String(), `e\udb40\udc41f`) {
+		t.Fatalf("not escaped: %q", b.String())
+	}
+	var v struct {
+		Findings []struct{ Evidence []model.Evidence } `json:"findings"`
+	}
+	if err := json.Unmarshal(b.Bytes(), &v); err != nil || v.Findings[0].Evidence[0].Detail != in {
+		t.Fatalf("%v %q", err, v.Findings[0].Evidence[0].Detail)
+	}
+}

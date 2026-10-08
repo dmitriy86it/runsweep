@@ -63,8 +63,24 @@ func New(httpClient *http.Client, token, baseURL string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{gh: g, http: httpClient, sem: make(chan struct{}, maxParallel),
+	logHTTP := *httpClient // go-github copied it: this one carries no token
+	logHTTP.CheckRedirect = httpsOnly
+	return &Client{gh: g, http: &logHTTP, sem: make(chan struct{}, maxParallel),
 		Logf: func(string, ...any) {}, Sleep: sleepCtx}, nil
+}
+
+// errNotHTTPS refuses a job log URL or redirect hop that is not https.
+var errNotHTTPS = fmt.Errorf("%w: job log URL is not https", source.ErrNoAccess)
+
+// httpsOnly is the log client's redirect policy: https on every hop, at most 10 hops.
+func httpsOnly(req *http.Request, via []*http.Request) error {
+	if req.URL.Scheme != "https" {
+		return errNotHTTPS
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) error {
@@ -300,7 +316,13 @@ func (c *Client) downloadLog(ctx context.Context, u string) (string, int, error)
 	if err != nil {
 		return "", -1, err // not retryable
 	}
+	if req.URL.Scheme != "https" {
+		return "", -1, errNotHTTPS
+	}
 	resp, err := c.http.Do(req)
+	if errors.Is(err, errNotHTTPS) {
+		return "", -1, errNotHTTPS
+	}
 	if err != nil {
 		return "", 0, fmt.Errorf("download job log: %w", errors.Unwrap(err)) // drop the signed URL from *url.Error
 	}
@@ -357,6 +379,13 @@ func (c *Client) Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry
 func (c *Client) Blob(ctx context.Context, repo, blobSHA string, limit int) ([]byte, error) {
 	owner, name := split(repo)
 	return c.raw(ctx, fmt.Sprintf("repos/%v/%v/git/blobs/%v", owner, name, blobSHA), limit)
+}
+
+// File returns the content of path at ref through the contents API, or source.ErrIncomplete if
+// it exceeds limit bytes. One file, instead of the commit's whole tree.
+func (c *Client) File(ctx context.Context, repo, ref, path string, limit int) ([]byte, error) {
+	owner, name := split(repo)
+	return c.raw(ctx, fmt.Sprintf("repos/%v/%v/contents/%v?ref=%v", owner, name, (&url.URL{Path: path}).EscapedPath(), url.QueryEscape(ref)), limit)
 }
 
 // raw GETs an API URL with the raw media type, streaming the body into a buffer capped at limit

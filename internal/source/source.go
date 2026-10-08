@@ -80,4 +80,6 @@ type Source interface {
 	Tree(ctx context.Context, repo, sha string) (entries []TreeEntry, truncated bool, err error)
 	// Blob returns ErrIncomplete for a blob larger than limit bytes.
 	Blob(ctx context.Context, repo, blobSHA string, limit int) ([]byte, error)
+	// File returns one file at ref (commit SHA); ErrIncomplete if larger than limit bytes.
+	File(ctx context.Context, repo, ref, path string, limit int) ([]byte, error)
 }

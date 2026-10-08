@@ -703,3 +703,16 @@ func TestScanHelpListsExitCodes(t *testing.T) {
 		}
 	}
 }
+
+func TestTokenFromGHToken(t *testing.T) {
+	t.Setenv("PATH", "") // no gh CLI: it would print GH_TOKEN itself
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", " gh-tok ")
+	if tok, err := githubToken(); err != nil || tok != "gh-tok" {
+		t.Fatalf("%q %v", tok, err)
+	}
+	t.Setenv("GITHUB_TOKEN", "github-tok")
+	if tok, err := githubToken(); err != nil || tok != "github-tok" {
+		t.Fatalf("GITHUB_TOKEN comes first: %q %v", tok, err)
+	}
+}
