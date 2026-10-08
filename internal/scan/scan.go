@@ -41,6 +41,21 @@ type scanner struct {
 	inc *incident.Incident
 	wf  sync.Map // repo@sha:path and blob:<sha> -> wfEntry
 	npm npm.Cache
+	pub sync.Map // repo -> bool: public, so its called workflows may be read
+}
+
+// public reports whether repo is public; an error counts as not public (its call stays unread).
+// The answer is cached per repository.
+func (s *scanner) public(ctx context.Context, repo string) bool {
+	if v, ok := s.pub.Load(repo); ok {
+		return v.(bool)
+	}
+	p, err := s.src.RepoPublic(ctx, repo)
+	p = p && err == nil
+	if ctx.Err() == nil {
+		s.pub.Store(repo, p)
+	}
+	return p
 }
 
 // soft errors mean "could not check", never "clean".
@@ -223,7 +238,7 @@ func (s *scanner) workflow(ctx context.Context, repo, sha, path string, remote b
 			}
 			s.wf.Store(key, wfEntry{reason: reason})
 			return nil, reason, nil
-		case remote && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded):
+		case remote && ctx.Err() == nil: // a client timeout is soft too; only the scan's own end is not
 			s.wf.Store(key, wfEntry{reason: err.Error()})
 			return nil, err.Error(), nil
 		}
@@ -502,7 +517,7 @@ func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workfl
 		if call.Repo == "" { // local: same repository and commit as the calling file
 			call.Repo, call.SHA = repo, sha
 		}
-		if owner, _, _ := strings.Cut(call.Repo, "/"); !strings.EqualFold(owner, homeOwner) {
+		if owner, _, _ := strings.Cut(call.Repo, "/"); !strings.EqualFold(owner, homeOwner) && !s.public(ctx, call.Repo) {
 			c.status = model.Unchecked
 			c.notes = append(c.notes, note("called workflow in another owner (%s) not read", call.Repo))
 			return c, nil

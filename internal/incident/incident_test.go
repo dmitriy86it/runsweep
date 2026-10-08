@@ -130,10 +130,13 @@ func TestLoadBareNameIsPresetOnly(t *testing.T) {
 	if inc, err := Load("axios-2026-03"); err != nil || inc.ID != "axios-2026-03" {
 		t.Fatalf("%v %v", inc, err)
 	}
-	if _, err := Load("mine"); err == nil || !strings.Contains(err.Error(), `unknown incident "mine"`) || !strings.Contains(err.Error(), "use ./mine.yaml for a file") {
+	if _, err := Load("mine"); err == nil || !strings.Contains(err.Error(), `unknown incident "mine"`) || !strings.Contains(err.Error(), "use ./mine for a file") {
 		t.Fatalf("%v", err)
 	}
 	if _, err := Load("./mine"); err == nil || strings.Contains(err.Error(), "unknown incident") {
 		t.Fatalf("a path must be read as a file: %v", err)
+	}
+	if _, err := Load("MINE.YML"); err == nil || strings.Contains(err.Error(), "unknown incident") {
+		t.Fatalf(".YML is a file suffix too: %v", err)
 	}
 }
