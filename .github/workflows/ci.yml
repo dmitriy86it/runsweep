@@ -2,6 +2,7 @@ name: ci
 on:
   push: {branches: [main]}
   pull_request:
+  schedule: [{cron: '17 4 * * 1'}]
 permissions: {contents: read}
 jobs:
   test:
@@ -34,3 +35,28 @@ jobs:
         with: {persist-credentials: false}
       - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with: {version: v1.30.1}
+  fuzz:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {pkg: ./internal/match/npm, target: FuzzParsePackageLock}
+          - {pkg: ./internal/match/npm, target: FuzzParsePnpmLock}
+          - {pkg: ./internal/match/npm, target: FuzzParseYarnLock}
+          - {pkg: ./internal/workflow, target: FuzzWorkflowParse}
+          - {pkg: ./internal/workflow, target: FuzzParseCall}
+          - {pkg: ./internal/workflow, target: FuzzParseTokenPerms}
+          - {pkg: ./internal/match/actions, target: FuzzMatchLog}
+          - {pkg: ./internal/incident, target: FuzzIncidentParse}
+          - {pkg: ./internal/report, target: FuzzClean}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: {go-version-file: go.mod}
+      - run: go test -run='^$' -fuzz="^${TARGET}\$" -fuzztime=30s "$PKG"
+        env: {PKG: '${{ matrix.pkg }}', TARGET: '${{ matrix.target }}'}
