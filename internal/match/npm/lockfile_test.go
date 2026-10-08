@@ -295,6 +295,8 @@ func TestLockfileFailClosed(t *testing.T) {
 	for name, c := range map[string]struct{ path, body string }{
 		"package-lock without packages or dependencies": {"package-lock.json", `{"lockfileVersion":3}`},
 		"package-lock null":                             {"package-lock.json", `null`},
+		"package-lock v1 empty name":                    {"package-lock.json", `{"dependencies":{"":{"version":"1.0.0"}}}`},
+		"package-lock v3 empty name":                    {"package-lock.json", `{"packages":{"node_modules/":{"version":"1.0.0"}}}`},
 		"pnpm without packages":                         {"pnpm-lock.yaml", "lockfileVersion: '9.0'\n"},
 		"pnpm packages garbage":                         {"pnpm-lock.yaml", "packages: hello\n"},
 		"pnpm file: tarball":                            {"pnpm-lock.yaml", "packages:\n  axios@file:vendor/axios-1.14.1.tgz:\n    resolution: {}\n"},

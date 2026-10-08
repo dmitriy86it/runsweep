@@ -99,7 +99,7 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			continue
 		}
 		p, err := c.load(ctx, f, repo, e, func(b []byte) parsed {
-			pkgs, err := ParseLockfile(e.Path, b) // on an error, pkgs is what could be read (pnpm)
+			pkgs, err := ParseLockfile(e.Path, b) // on an error, pkgs is what could be read (pnpm, package-lock)
 			return parsed{pkgs: pkgs, err: err}
 		})
 		if err != nil {
