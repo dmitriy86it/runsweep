@@ -16,7 +16,7 @@ type Download struct{ Uses, Ref, SHA string }
 // The runner's own download records (actions/runner ActionManager.cs), matched as whole lines after
 // the timestamp, so that job output merely containing the text does not count:
 // "Download action repository 'o/r@ref' (SHA:…)", and the immutable action package group, whose
-// "Source commit SHA: …" line follows the header inside the group. Records appear in "Set up job"
+// "Source commit SHA: …" line must be one of the 3 lines after the header. Records appear in "Set up job"
 // and, for the nested actions of a local composite action, inside that action's step.
 var (
 	tsRe        = regexp.MustCompile(`^(?:\x{feff})?(?:\d{4}-\d\d-\d\dT[\d:.]+Z )?`)
@@ -37,18 +37,21 @@ func validSHA(s string) string {
 // SHA is missing or malformed has SHA "".
 func ParseDownloads(log string) []Download {
 	var out []Download
-	group := -1 // index of the immutable record whose group is open
+	group, left := -1, 0 // the open immutable record and how many lines may still carry its SHA
 	for line := range strings.Lines(log) {
 		line = strings.TrimRight(line, "\r\n")
 		line = line[len(tsRe.FindString(line)):]
 		if m := downloadRe.FindStringSubmatch(line); m != nil {
 			out, group = append(out, Download{Uses: m[1], Ref: m[2], SHA: validSHA(m[3])}), -1
 		} else if m := immutableRe.FindStringSubmatch(line); m != nil {
-			out, group = append(out, Download{Uses: m[1], Ref: m[2]}), len(out)
-		} else if v, ok := strings.CutPrefix(line, "Source commit SHA:"); ok && group >= 0 {
-			out[group].SHA, group = validSHA(strings.TrimSpace(v)), -1
-		} else if strings.HasPrefix(line, "##[endgroup]") {
-			group = -1
+			out, group, left = append(out, Download{Uses: m[1], Ref: m[2]}), len(out), 3 // Version, Digest, SHA
+		} else if group >= 0 {
+			left--
+			if v, ok := strings.CutPrefix(line, "Source commit SHA:"); ok {
+				out[group].SHA, group = validSHA(strings.TrimSpace(v)), -1
+			} else if left == 0 || strings.HasPrefix(line, "##[endgroup]") {
+				group = -1
+			}
 		}
 	}
 	return out

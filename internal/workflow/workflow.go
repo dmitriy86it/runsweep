@@ -335,10 +335,7 @@ func runInstalls(script string) []RunInstall {
 				a = args[i]
 			case isPkg:
 				a = v
-			case valueFlag(tool, a):
-				i++
-				continue
-			case strings.HasPrefix(a, "-"):
+			case strings.HasPrefix(a, "-"): // a value flag's value is read as a name: noise, never a miss
 				continue
 			}
 			for _, n := range pkgNames(a) {
