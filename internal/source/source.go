@@ -24,6 +24,9 @@ type Run struct {
 	HeadSHA   string
 	URL       string
 	CreatedAt time.Time
+	StartedAt time.Time // start of the latest attempt (run_started_at); zero if unknown
+	UpdatedAt time.Time
+	Attempt   int // latest attempt (run_attempt), 1 for a run never re-run
 }
 
 // Job is a job of a workflow run.
@@ -33,6 +36,8 @@ type Job struct {
 	URL  string
 	// Conclusion from the API ("success", "skipped", ...); empty while running.
 	Conclusion string
+	StartedAt  time.Time // zero if the job never started
+	Attempt    int       // run attempt this job belongs to
 }
 
 // TreeEntry is one entry of a git tree.

@@ -358,3 +358,31 @@ func TestBlobTooBig(t *testing.T) {
 		t.Fatalf("want ErrIncomplete, got %v", err)
 	}
 }
+
+func TestRunAndJobAttempts(t *testing.T) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/jobs") {
+			_, _ = fmt.Fprint(w, `{"total_count":2,"jobs":[`+
+				`{"id":1,"run_attempt":1,"started_at":"2026-03-20T10:00:00Z"},`+
+				`{"id":2,"run_attempt":2,"started_at":"2026-03-31T01:00:00Z"}]}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"total_count":1,"workflow_runs":[{"id":5,"run_attempt":2,`+
+			`"created_at":"2026-03-20T10:00:00Z","run_started_at":"2026-03-31T01:00:00Z","updated_at":"2026-03-31T01:05:00Z"}]}`)
+	}))
+	start := time.Date(2026, 3, 24, 0, 0, 0, 0, time.UTC)
+	runs, err := c.ListRuns(context.Background(), "o/r", start, start.Add(8*24*time.Hour))
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("%v %v", runs, err)
+	}
+	r := runs[0]
+	if r.Attempt != 2 || !r.StartedAt.Equal(time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)) ||
+		!r.UpdatedAt.Equal(time.Date(2026, 3, 31, 1, 5, 0, 0, time.UTC)) {
+		t.Fatalf("%+v", r)
+	}
+	jobs, err := c.ListJobs(context.Background(), "o/r", 5)
+	if err != nil || len(jobs) != 2 || jobs[0].Attempt != 1 || jobs[1].Attempt != 2 ||
+		!jobs[1].StartedAt.Equal(time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)) {
+		t.Fatalf("%+v %v", jobs, err)
+	}
+}

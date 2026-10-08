@@ -223,7 +223,8 @@ func (c *Client) ListRuns(ctx context.Context, repo string, start, end time.Time
 		}
 		for _, r := range page.WorkflowRuns {
 			out = append(out, source.Run{ID: r.GetID(), Name: r.GetName(), Path: r.GetPath(), HeadSHA: r.GetHeadSHA(),
-				URL: r.GetHTMLURL(), CreatedAt: r.GetCreatedAt().Time})
+				URL: r.GetHTMLURL(), CreatedAt: r.GetCreatedAt().Time, StartedAt: r.GetRunStartedAt().Time,
+				UpdatedAt: r.GetUpdatedAt().Time, Attempt: r.GetRunAttempt()})
 		}
 		if resp.NextPage == 0 {
 			return out, nil
@@ -249,7 +250,8 @@ func (c *Client) ListJobs(ctx context.Context, repo string, runID int64) ([]sour
 			return nil, err
 		}
 		for _, j := range jobs.Jobs {
-			out = append(out, source.Job{ID: j.GetID(), Name: j.GetName(), URL: j.GetHTMLURL(), Conclusion: j.GetConclusion()})
+			out = append(out, source.Job{ID: j.GetID(), Name: j.GetName(), URL: j.GetHTMLURL(), Conclusion: j.GetConclusion(),
+				StartedAt: j.GetStartedAt().Time, Attempt: int(j.GetRunAttempt())})
 		}
 		if resp.NextPage == 0 {
 			return out, nil
