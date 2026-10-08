@@ -162,6 +162,11 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 			f.notes = append(f.notes, fmt.Sprintf("%s: OSV range %s — %s — every version treated as malicious", name, segText(segs), why))
 			o.Warnf("%s: %s — every version treated as malicious", name, why)
 		}
+		for name, vs := range f.npm { // "*" must stand alone
+			if vs["*"] {
+				f.npm[name] = map[string]bool{"*": true}
+			}
+		}
 	}
 	if len(f.npm) > 0 {
 		times := map[string]PkgTimes{}

@@ -252,6 +252,15 @@ func TestVersionOrder(t *testing.T) {
 	if got := fmt.Sprint(v); got != "[0.0.1-security v0.5.0 1.2.0-beta 1.2.0 1.9.0 1.10.0 x]" {
 		t.Fatal(got)
 	}
+	// SemVer 2.0 §11 example, shuffled.
+	v = []string{"1.0.0", "1.0.0-beta.11", "1.0.0-alpha.beta", "1.0.0-rc.1", "1.0.0-alpha", "1.0.0-beta.2", "1.0.0-beta", "1.0.0-alpha.1"}
+	sort.Slice(v, func(i, j int) bool { return versionLess(v[i], v[j]) })
+	if got := fmt.Sprint(v); got != "[1.0.0-alpha 1.0.0-alpha.1 1.0.0-alpha.beta 1.0.0-beta 1.0.0-beta.2 1.0.0-beta.11 1.0.0-rc.1 1.0.0]" {
+		t.Fatal(got)
+	}
+	if versionCmp("v1.0.0+a", "1.0.0") != 0 || versionCmp("1.0.0-2", "1.0.0-10") >= 0 || versionCmp("1.0.0-9", "1.0.0-a") >= 0 {
+		t.Fatal("build metadata, numeric identifiers")
+	}
 }
 
 func TestAddAction(t *testing.T) {
@@ -304,6 +313,13 @@ func TestSegments(t *testing.T) {
 		`{"introduced":"1.0.0"},{"limit":"1.2.0"}`:                    "[1.0.0, 1.2.0)",
 		`{"introduced":"2.x"}`:                                        "[0, ∞)",
 		`{"introduced":"1.0.0"},{"fixed":"bad\nx"}`:                   "[1.0.0, ∞)",
+		// C-1: events are sorted by version before the walk.
+		`{"introduced":"0"},{"introduced":"2.0.0"},{"fixed":"1.0.0"}`: "[0, 1.0.0), [2.0.0, ∞)",
+		`{"introduced":"1.0.0"},{"introduced":"0"},{"fixed":"2.0.0"}`: "[0, 2.0.0)",
+		`{"introduced":"1.0.0"},{"fixed":"1.0.0"},{"introduced":"0"}`: "[0, 1.0.0), [1.0.0, ∞)",
+		`{"last_affected":"1.0.0"},{"introduced":"1.0.0"}`:            "[1.0.0, 1.0.0]",
+		// C-3: bounds are normalized like versions.
+		`{"introduced":"v1.0.0"},{"fixed":"2.0.0+build.5"}`: "[1.0.0, 2.0.0)",
 	} {
 		var a Affected
 		if err := json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[`+events+`]}]}`), &a); err != nil {
@@ -327,6 +343,7 @@ func TestExpandRange(t *testing.T) {
 	for events, want := range map[string]string{
 		`{"introduced":"0"},{"fixed":"1.0.0"},{"introduced":"2.0.0"}`: "[0.5.0 1.0.0-rc.1 2.1.0]",
 		`{"introduced":"0.5.0"},{"last_affected":"1.2.0"}`:            "[0.5.0 1.0.0-rc.1 1.2.0]",
+		`{"introduced":"v0.5.0"},{"last_affected":"v1.2.0+x"}`:        "[0.5.0 1.0.0-rc.1 1.2.0]",
 	} {
 		var a Affected
 		_ = json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[`+events+`]}]}`), &a)

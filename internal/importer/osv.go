@@ -1,12 +1,14 @@
 package importer
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -137,37 +139,63 @@ type segment struct {
 	incl     bool
 }
 
-// segments reads every span of a's non-GIT ranges. `fixed` and `limit` end a span
-// exclusively, `last_affected` inclusively; a span still open at the end never ends.
-// An unparsable introduced reads as "0" and an unparsable end as no end (bad is set).
+// segments reads every span of a's non-GIT ranges the way OSV evaluates them:
+// each range's events are sorted by version ("0" lowest; at one version fixed and
+// limit before introduced before last_affected), then walked. `fixed` and `limit`
+// end a span exclusively, `last_affected` inclusively; an introduced inside an open
+// span is ignored, and a span open at the end never ends. Bounds are normalized
+// (no "v", no "+build"). An unparsable introduced reads as "0" and an unparsable
+// end is ignored (bad is set).
 func segments(a Affected) (segs []segment, bad bool) {
-	ok := func(v string) bool {
-		_, parsed := triple(v)
-		return eventRe.MatchString(v) && parsed
+	type event struct {
+		kind, v string
+		rank    int
 	}
+	rank := map[string]int{"fixed": 0, "limit": 0, "introduced": 1, "last_affected": 2}
 	for _, r := range a.Ranges {
 		if r.Type == "GIT" {
 			continue
 		}
-		var cur segment
-		open := false
+		var evs []event
 		for _, ev := range r.Events {
-			if v, has := ev["introduced"]; has && !open { // a repeated introduced keeps the earlier, wider start
-				if v != "0" && !ok(v) {
-					v, bad = "0", true
-				}
-				cur, open = segment{from: v}, true
-			}
-			for _, k := range []string{"fixed", "limit", "last_affected"} {
-				v, has := ev[k]
-				if !has || !open {
+			for k, v := range ev {
+				if _, known := rank[k]; !known {
 					continue
 				}
-				if !ok(v) {
-					bad = true
-					continue // no usable end: the span stays open
+				if _, parsed := triple(v); !eventRe.MatchString(v) || !parsed {
+					if k != "introduced" || v != "0" {
+						bad = true
+					}
+					if k != "introduced" {
+						continue
+					}
+					v = "0"
 				}
-				cur.to, cur.incl, open = v, k == "last_affected", false
+				if v != "0" {
+					v, _, _ = strings.Cut(strings.TrimPrefix(v, "v"), "+")
+				}
+				evs = append(evs, event{k, v, rank[k]})
+			}
+		}
+		slices.SortStableFunc(evs, func(x, y event) int {
+			switch {
+			case x.v == "0" && y.v == "0":
+				return cmp.Compare(x.rank, y.rank)
+			case x.v == "0":
+				return -1
+			case y.v == "0":
+				return 1
+			}
+			return cmp.Or(versionCmp(x.v, y.v), cmp.Compare(x.rank, y.rank))
+		})
+		var cur segment
+		open := false
+		for _, e := range evs {
+			switch {
+			case e.kind == "introduced" && !open:
+				cur, open = segment{from: e.v}, true
+			case e.kind != "introduced" && open:
+				cur.to, cur.incl, open = e.v, e.kind == "last_affected", false
 				segs = append(segs, cur)
 			}
 		}
@@ -179,8 +207,8 @@ func segments(a Affected) (segs []segment, bad bool) {
 }
 
 func (s segment) has(v string) bool {
-	return (s.from == "0" || !versionLess(v, s.from)) &&
-		(s.to == "" || versionLess(v, s.to) || s.incl && !versionLess(s.to, v))
+	return (s.from == "0" || versionCmp(v, s.from) >= 0) &&
+		(s.to == "" || versionCmp(v, s.to) < 0 || s.incl && versionCmp(v, s.to) == 0)
 }
 
 func segText(segs []segment) string {

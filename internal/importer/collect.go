@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"sort"
@@ -65,7 +66,9 @@ func (f *found) addVuln(v *Vuln) bool {
 					}
 					continue
 				}
-				f.both("%s: %s affected by range only (%s) — versions not listed, add manually", v.ID, name, rangeText(a))
+				// D-007: no version and no usable span still means malicious; widen to every version.
+				f.npm[name] = map[string]bool{"*": true}
+				f.both("%s: %s affected by range only (%s) with no usable start — every version treated as malicious", v.ID, name, rangeText(a))
 				continue
 			}
 			for _, ver := range a.Versions {
@@ -111,24 +114,68 @@ func (f *found) addAction(s string) error {
 	return nil
 }
 
-// versionLess orders by numeric major.minor.patch, then by the whole string.
+// versionLess orders by SemVer precedence (versionCmp), ties by the whole string.
 func versionLess(a, b string) bool {
+	c := versionCmp(a, b)
+	return c < 0 || c == 0 && a < b
+}
+
+// versionCmp compares by SemVer 2.0 §11 precedence, ignoring a leading "v" and
+// "+build" metadata. Unparsable versions sort after parsable ones, as strings.
+func versionCmp(a, b string) int {
 	na, oka := triple(a)
 	nb, okb := triple(b)
 	switch {
-	case oka && okb && na != nb:
-		return slices.Compare(na[:], nb[:]) < 0
 	case oka != okb:
-		return oka // parseable versions first
-	case oka && pre(a) != pre(b):
-		return pre(a) // 1.0.0-rc.1 < 1.0.0
+		if oka {
+			return -1
+		}
+		return 1
+	case !oka:
+		return strings.Compare(a, b)
 	}
-	return a < b // ponytail: prereleases of one version compare as strings, not by semver identifiers
+	if c := slices.Compare(na[:], nb[:]); c != 0 {
+		return c
+	}
+	pa, pb := prerelease(a), prerelease(b)
+	switch {
+	case pa == pb:
+		return 0
+	case pa == "": // a release is higher than its prereleases
+		return 1
+	case pb == "":
+		return -1
+	}
+	ia, ib := strings.Split(pa, "."), strings.Split(pb, ".")
+	for i := range min(len(ia), len(ib)) {
+		x, y := ia[i], ib[i]
+		xn, yn := numeric(x), numeric(y)
+		var c int
+		switch {
+		case xn && yn: // no leading zeros in SemVer: longer is larger
+			c = cmp.Or(cmp.Compare(len(x), len(y)), strings.Compare(x, y))
+		case xn:
+			c = -1
+		case yn:
+			c = 1
+		default:
+			c = strings.Compare(x, y)
+		}
+		if c != 0 {
+			return c
+		}
+	}
+	return cmp.Compare(len(ia), len(ib))
 }
 
-func pre(v string) bool {
+func prerelease(v string) string {
 	v, _, _ = strings.Cut(v, "+")
-	return strings.Contains(v, "-")
+	_, p, _ := strings.Cut(v, "-")
+	return p
+}
+
+func numeric(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
 }
 
 func triple(v string) ([3]int, bool) {

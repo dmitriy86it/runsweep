@@ -384,3 +384,26 @@ func TestImportNothingInRange(t *testing.T) {
 		t.Fatalf("warns %q", warns)
 	}
 }
+
+func TestImportNoUsableRangeIsEveryVersion(t *testing.T) {
+	c, _ := fixtures(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/osv/v1/vulns/MAL-0000-4" {
+			return false
+		}
+		// Not a fixture: one entry with only a fixed event, one with a listed version.
+		_, _ = w.Write([]byte(`{"id":"MAL-0000-4","affected":[
+			{"package":{"ecosystem":"npm","name":"eslint-validator"},"ranges":[{"type":"SEMVER","events":[{"fixed":"1.0.1"}]}]},
+			{"package":{"ecosystem":"npm","name":"eslint-validator"},"versions":["1.0.0"]}]}`))
+		return true
+	})
+	out, warns, err := importWith(t, c, Options{IDs: []string{"MAL-0000-4"}, Since: importNow.Add(-time.Hour), Until: importNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `{name: "eslint-validator", versions: ["*"]}`) {
+		t.Fatalf("%s", out)
+	}
+	if !strings.Contains(strings.Join(warns, "|"), "eslint-validator affected by range only (fixed 1.0.1) with no usable start — every version treated as malicious") {
+		t.Fatalf("warns %q", warns)
+	}
+}
