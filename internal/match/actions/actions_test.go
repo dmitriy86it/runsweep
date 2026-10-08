@@ -103,3 +103,24 @@ func TestParseDownloadsImmutable(t *testing.T) {
 		t.Fatal("bad immutable action must be AFFECTED")
 	}
 }
+
+func TestMalformedDownloadRecords(t *testing.T) {
+	const imm = "2025-03-14T18:01:02.2Z ##[group]Download immutable action package 'tj-actions/changed-files@v45'\n"
+	for name, c := range map[string]struct {
+		log  string
+		want model.Status
+	}{
+		"empty immutable SHA":    {imm + "2025-03-14T18:01:02.5Z Source commit SHA: \n2025-03-14T18:01:02.6Z ##[endgroup]\n", model.Unchecked},
+		"unknown line between":   {imm + "2025-03-14T18:01:02.3Z Something new: x\n2025-03-14T18:01:02.5Z Source commit SHA: " + sha + "\n", model.Affected},
+		"no SHA line at all":     {imm + "2025-03-14T18:01:02.6Z ##[endgroup]\n", model.Unchecked},
+		"empty repository SHA":   {"2025-03-14T18:01:02Z Download action repository 'tj-actions/changed-files@v45' (SHA:)\n", model.Unchecked},
+		"invalid repository SHA": {"2025-03-14T18:01:02Z Download action repository 'tj-actions/changed-files@v45' (SHA:XYZ)\n", model.Unchecked},
+		"other repo without SHA": {"2025-03-14T18:01:02Z Download action repository 'actions/checkout@v4' (SHA:)\n", model.Clean},
+	} {
+		ds := ParseDownloads(c.log)
+		st, ev := MatchLog(c.log, bad)
+		if len(ds) != 1 || st != c.want || (c.want == model.Unchecked && !strings.Contains(ev[0].Detail, "download record without a commit SHA")) {
+			t.Errorf("%s: %+v %v %+v", name, ds, st, ev)
+		}
+	}
+}

@@ -524,6 +524,26 @@ func TestRunInstalls(t *testing.T) {
 		"npm run build":                            nil,
 		"bun install":                              nil,
 		"yarn global bin":                          nil,
+		"npm ci `npm i axios`":                     {"npm i axios", "axios"},
+		"npm ci $(npm i axios)":                    {"npm i axios", "axios"},
+		"yarn --version `npx axios`":               {"npx axios", "axios"},
+		"npm i \\\n  axios":                        {"npm i axios", "axios"},
+		"npm i `\r\n  axios":                       {"npm i axios", "axios"},
+		"npm i $PKG":                               {"npm i $PKG", "DYN"},
+		"npx ${{inputs.tool}}":                     {"npx ${{inputs.tool}}", "DYN"},
+		"npm i `cat pkgs`":                         {"npm i cat pkgs", "pkgs", "DYN"},
+		"npm i axios@$VER":                         {"npm i axios@$VER", "axios"},
+		"bun i axios":                              {"bun i axios", "axios"},
+		"bun install axios":                        {"bun install axios", "axios"},
+		"yarn workspace web add axios":             {"yarn workspace web add axios", "axios"},
+		"npm in axios":                             {"npm in axios", "axios"},
+		"npm ins axios":                            {"npm ins axios", "axios"},
+		"npm isntall axios":                        {"npm isntall axios", "axios"},
+		"npm it axios":                             {"npm it axios", "axios"},
+		"npm install-test axios":                   {"npm install-test axios", "axios"},
+		"npm i -w web axios":                       {"npm i -w web axios", "axios"},
+		"npm i --workspace web axios":              {"npm i --workspace web axios", "axios"},
+		"pnpm add -w axios":                        {"pnpm add -w axios", "axios"},
 		"npm ci":                                   nil,
 		"npm install":                              nil,
 		"npm init -y":                              nil,
@@ -535,6 +555,9 @@ func TestRunInstalls(t *testing.T) {
 		var got []string
 		for _, in := range runInstalls(script) {
 			got = append(append(got, in.Cmd), in.Pkgs...)
+			if in.Dynamic {
+				got = append(got, "DYN")
+			}
 		}
 		if !slices.Equal(got, want) {
 			t.Errorf("%q: got %q, want %q", script, got, want)

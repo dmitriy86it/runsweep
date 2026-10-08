@@ -943,3 +943,39 @@ jobs:
 		t.Fatalf("a job that installs at run time needs its log: %d logs read", src.n.Load())
 	}
 }
+
+func TestScanDownloadAfterFirstStepDoesNotProveDownloads(t *testing.T) {
+	const wfYAML = "on: push\njobs:\n  build:\n    runs-on: x\n    steps:\n      - uses: ./.github/actions/setup\n"
+	run := "2026-03-31T01:00:00Z ##[group]Run ./.github/actions/setup\n"
+	for name, c := range map[string]struct {
+		log  string
+		want model.Status
+	}{
+		"good record printed by the job":  {run + "2026-03-31T01:00:01Z Download action repository 'actions/checkout@v4' (SHA:1111111111111111111111111111111111111111)\n", model.Unchecked},
+		"bad record after the first step": {run + "2026-03-31T01:00:01Z Download action repository 'tj-actions/changed-files@v45' (SHA:" + actionSHA + ")\n", model.Affected},
+	} {
+		f := sourcetest.New()
+		f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+		f.Jobs[1] = []source.Job{{ID: 10, Name: "build"}}
+		f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(wfYAML))
+		f.Logs[10] = c.log
+		actionsOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+		res, err := Run(context.Background(), f, actionsOnly, Options{Repos: []string{"o/a"}})
+		if err != nil || len(res.Findings) != 1 || res.Findings[0].Status != c.want || !hasNote(res.Findings[0], "job log has no action download records") {
+			t.Errorf("%s: %v %+v", name, err, res.Findings)
+		}
+	}
+}
+
+func TestScanPackageNamedAtRunTime(t *testing.T) {
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "x"}}
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  x:\n    runs-on: x\n    steps:\n      - run: npm i -g $TOOL\n"))
+	npmOnly := &incident.Incident{ID: "t", Window: inc.Window, NPM: inc.NPM}
+	res, err := Run(context.Background(), f, npmOnly, Options{Repos: []string{"o/a"}})
+	if err != nil || len(res.Findings) != 1 || res.Findings[0].Status != model.Unchecked ||
+		!hasNote(res.Findings[0], "package named at run time: `npm i -g $TOOL`") {
+		t.Fatalf("%v %+v", err, res.Findings)
+	}
+}

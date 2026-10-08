@@ -340,6 +340,10 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			f.Evidence = append(f.Evidence, npmRes.Evidence...)
 		}
 		for _, in := range installs {
+			if in.Dynamic && len(s.inc.NPM) > 0 {
+				f.Status = model.Worse(f.Status, model.Unchecked)
+				f.Evidence = append(f.Evidence, note("package named at run time: `%s`", in.Cmd))
+			}
 			if slices.ContainsFunc(in.Pkgs, func(p string) bool {
 				return slices.ContainsFunc(s.inc.NPM, func(b incident.NPMPackage) bool { return b.Name == p })
 			}) {
@@ -354,11 +358,12 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			case logErr == nil:
 				st, ev = actions.MatchLog(log, s.inc.Actions)
 				// A log without download records (truncated, unexpected format) proves nothing about remote uses.
+				// Only the setup section counts: a record printed by the job's own output proves nothing.
 				uses := allUses(wf)
 				if wj != nil {
 					uses = wj.Uses
 				}
-				noDownloads := len(actions.ParseDownloads(log)) == 0
+				noDownloads := len(actions.ParseDownloads(workflow.SetupSection(log))) == 0
 				if noDownloads && wf == nil {
 					st = model.Worse(st, model.Unchecked)
 					ev = append(ev, note("job log has no action download records and the workflow file is unavailable"))

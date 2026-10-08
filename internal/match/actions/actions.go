@@ -13,29 +13,42 @@ import (
 // Download is an action download recorded in a job log.
 type Download struct{ Uses, Ref, SHA string }
 
-// downloadRe matches the runner's own download records, anchored to whole lines so that job output
-// merely containing the text does not count: "Download action repository 'o/r@ref' (SHA:…)" and the
-// immutable action package group, whose "Source commit SHA: …" line follows its Version and Digest
-// lines (actions/runner ActionManager.cs). Records appear in "Set up job" and, for the nested
-// actions of a local composite action, inside that action's step.
-var downloadRe = func() *regexp.Regexp {
-	ts := `(?:\d{4}-\d\d-\d\dT[\d:.]+Z )?`
-	return regexp.MustCompile(`(?m)^(?:\x{feff})?` + ts + `(?:` +
-		`Download action repository '([^'@]+)@([^']+)' \(SHA:([0-9a-f]{40})\)` + `|` +
-		`##\[group\]Download immutable action package '([^'@]+)@([^']+)'\r?\n` +
-		`(?:` + ts + `(?:Version|Digest): [^\r\n]*\r?\n)*` + ts + `Source commit SHA: ([0-9a-f]{40})` +
-		`)\r?$`)
-}()
-var shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+// The runner's own download records (actions/runner ActionManager.cs), matched as whole lines after
+// the timestamp, so that job output merely containing the text does not count:
+// "Download action repository 'o/r@ref' (SHA:…)", and the immutable action package group, whose
+// "Source commit SHA: …" line follows the header inside the group. Records appear in "Set up job"
+// and, for the nested actions of a local composite action, inside that action's step.
+var (
+	tsRe        = regexp.MustCompile(`^(?:\x{feff})?(?:\d{4}-\d\d-\d\dT[\d:.]+Z )?`)
+	downloadRe  = regexp.MustCompile(`^Download action repository '([^'@]+)@([^']*)' \(SHA:([^)]*)\)$`)
+	immutableRe = regexp.MustCompile(`^##\[group\]Download immutable action package '([^'@]+)@([^']*)'$`)
+	shaRe       = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
 
-// ParseDownloads extracts the resolved SHA of every action a job downloaded, in log order.
+// validSHA returns s if it is a full commit SHA, else "".
+func validSHA(s string) string {
+	if shaRe.MatchString(s) {
+		return s
+	}
+	return ""
+}
+
+// ParseDownloads extracts every action download a job log records, in log order. A record whose
+// SHA is missing or malformed has SHA "".
 func ParseDownloads(log string) []Download {
 	var out []Download
-	for _, m := range downloadRe.FindAllStringSubmatch(log, -1) {
-		if m[1] != "" {
-			out = append(out, Download{Uses: m[1], Ref: m[2], SHA: m[3]})
-		} else {
-			out = append(out, Download{Uses: m[4], Ref: m[5], SHA: m[6]})
+	group := -1 // index of the immutable record whose group is open
+	for line := range strings.Lines(log) {
+		line = strings.TrimRight(line, "\r\n")
+		line = line[len(tsRe.FindString(line)):]
+		if m := downloadRe.FindStringSubmatch(line); m != nil {
+			out, group = append(out, Download{Uses: m[1], Ref: m[2], SHA: validSHA(m[3])}), -1
+		} else if m := immutableRe.FindStringSubmatch(line); m != nil {
+			out, group = append(out, Download{Uses: m[1], Ref: m[2]}), len(out)
+		} else if v, ok := strings.CutPrefix(line, "Source commit SHA:"); ok && group >= 0 {
+			out[group].SHA, group = validSHA(strings.TrimSpace(v)), -1
+		} else if strings.HasPrefix(line, "##[endgroup]") {
+			group = -1
 		}
 	}
 	return out
@@ -69,6 +82,11 @@ func MatchLog(log string, bad []incident.Action) (model.Status, []model.Evidence
 	b := badSHAs(bad)
 	st, ev := model.Clean, []model.Evidence(nil)
 	for _, d := range ParseDownloads(log) {
+		if d.SHA == "" && b[repoKey(d.Uses)] != nil {
+			st = model.Worse(st, model.Unchecked)
+			ev = append(ev, model.Evidence{Kind: "note", Detail: fmt.Sprintf("download record without a commit SHA: %s@%s", d.Uses, d.Ref)})
+			continue
+		}
 		if b[repoKey(d.Uses)][d.SHA] {
 			st = model.Affected
 			detail := fmt.Sprintf("job log: downloaded %s@%s", d.Uses, d.Ref)
