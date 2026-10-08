@@ -3,6 +3,7 @@ package gh
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -189,7 +190,8 @@ func (c *Client) ListRepos(ctx context.Context, org string) ([]string, error) {
 	}
 }
 
-// ListRuns lists workflow runs created within the given window.
+// ListRuns lists workflow runs created within the given window. When GitHub caps a window it
+// will not split further, it returns the runs it got with source.ErrRunsCapped.
 func (c *Client) ListRuns(ctx context.Context, repo string, start, end time.Time) ([]source.Run, error) {
 	owner, name := split(repo)
 	opt := &github.ListWorkflowRunsOptions{
@@ -197,6 +199,7 @@ func (c *Client) ListRuns(ctx context.Context, repo string, start, end time.Time
 		ListOptions: github.ListOptions{PerPage: 100},
 	}
 	var out []source.Run
+	var capped error
 	for {
 		var page *github.WorkflowRuns
 		var resp *github.Response
@@ -211,19 +214,20 @@ func (c *Client) ListRuns(ctx context.Context, repo string, start, end time.Time
 		if opt.Page == 0 && page.GetTotalCount() >= runsCap && end.Sub(start) <= time.Minute {
 			c.Logf("%s: %d runs between %s and %s; GitHub returns at most %d — some runs not scanned",
 				repo, page.GetTotalCount(), start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339), runsCap)
+			capped = source.ErrRunsCapped
 		}
 		if opt.Page == 0 && page.GetTotalCount() >= runsCap && end.Sub(start) > time.Minute {
 			mid := start.Add(end.Sub(start) / 2)
 			c.Logf("%s: %d runs in window, splitting", repo, page.GetTotalCount())
-			a, err := c.ListRuns(ctx, repo, start, mid)
-			if err != nil {
-				return nil, err
+			a, errA := c.ListRuns(ctx, repo, start, mid)
+			if errA != nil && !errors.Is(errA, source.ErrRunsCapped) {
+				return nil, errA
 			}
-			b, err := c.ListRuns(ctx, repo, mid.Add(time.Second), end)
-			if err != nil {
-				return nil, err
+			b, errB := c.ListRuns(ctx, repo, mid.Add(time.Second), end)
+			if errB != nil && !errors.Is(errB, source.ErrRunsCapped) {
+				return nil, errB
 			}
-			return append(a, b...), nil
+			return append(a, b...), cmp.Or(errA, errB)
 		}
 		for _, r := range page.WorkflowRuns {
 			out = append(out, source.Run{ID: r.GetID(), Name: r.GetName(), Path: r.GetPath(), HeadSHA: r.GetHeadSHA(),
@@ -231,7 +235,7 @@ func (c *Client) ListRuns(ctx context.Context, repo string, start, end time.Time
 				UpdatedAt: r.GetUpdatedAt().Time, Attempt: r.GetRunAttempt(), Status: r.GetStatus()})
 		}
 		if resp.NextPage == 0 {
-			return out, nil
+			return out, capped
 		}
 		opt.Page = resp.NextPage
 	}

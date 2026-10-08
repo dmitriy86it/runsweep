@@ -31,6 +31,15 @@ func IsLockfile(p string) bool {
 	return false
 }
 
+// IsUnsupportedLockfile reports whether p is a lockfile runsweep cannot read (outside node_modules).
+func IsUnsupportedLockfile(p string) bool {
+	switch path.Base(p) {
+	case "bun.lock", "bun.lockb", "deno.lock", ".pnp.cjs":
+		return !InNodeModules(p)
+	}
+	return false
+}
+
 // InNodeModules reports whether p has a node_modules path segment.
 func InNodeModules(p string) bool {
 	return p == "node_modules" || strings.HasPrefix(p, "node_modules/") || strings.Contains(p, "/node_modules/")
@@ -72,6 +81,9 @@ func ParsePackageLock(b []byte) ([]Pkg, error) {
 	if err := json.Unmarshal(b, &lf); err != nil {
 		return nil, fmt.Errorf("package-lock: %w", err)
 	}
+	if lf.Packages == nil && lf.Dependencies == nil {
+		return nil, fmt.Errorf("package-lock: neither packages nor dependencies")
+	}
 	var out []Pkg
 	if len(lf.Packages) > 0 { // lockfileVersion 2 and 3
 		for key, p := range lf.Packages {
@@ -105,11 +117,13 @@ func ParsePackageLock(b []byte) ([]Pkg, error) {
 }
 
 var (
-	pnpmV5 = regexp.MustCompile(`^(@[^/]+/[^/]+|[^@/][^/]*)/(\d[^_/]*)(?:_.*)?$`) // /name/1.0.0_peer
-	pnpmV6 = regexp.MustCompile(`^(@[^/@]+/[^@]+|[^@][^@]*)@(\d[^_(]*)`)          // name@1.0.0(peer)
+	pnpmV5    = regexp.MustCompile(`^(@[^/]+/[^/]+|[^@/][^/]*)/(\d[^_/]*)(?:_.*)?$`) // /name/1.0.0_peer
+	pnpmV6    = regexp.MustCompile(`^(@[^/@]+/[^@]+|[^@][^@]*)@(\d[^_(]*)`)          // name@1.0.0(peer)
+	pnpmLocal = regexp.MustCompile(`^(?:[^:]*@)?(?:file|link):`)                     // in-repo package: name@file:../x, link:../x
 )
 
-// ParsePnpmLock extracts packages from a pnpm-lock.yaml.
+// ParsePnpmLock extracts packages from a pnpm-lock.yaml. A key it cannot read is an error that
+// names it; the packages read from the other keys are returned with it.
 func ParsePnpmLock(b []byte) ([]Pkg, error) {
 	var lf struct {
 		Packages map[string]yaml.Node `yaml:"packages"`
@@ -117,7 +131,11 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 	if err := yaml.Unmarshal(b, &lf); err != nil {
 		return nil, fmt.Errorf("pnpm-lock: %w", err)
 	}
+	if len(lf.Packages) == 0 && len(bytes.TrimSpace(b)) > 0 {
+		return nil, fmt.Errorf("pnpm-lock: no packages")
+	}
 	var out []Pkg
+	var unknown []string
 	for key := range lf.Packages {
 		k := strings.TrimPrefix(key, "/")
 		if i := strings.IndexByte(k, '('); i >= 0 {
@@ -127,7 +145,12 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 			out = append(out, Pkg{m[1], m[2]})
 		} else if m := pnpmV6.FindStringSubmatch(k); m != nil {
 			out = append(out, Pkg{m[1], m[2]})
+		} else if !pnpmLocal.MatchString(k) {
+			unknown = append(unknown, key)
 		}
+	}
+	if len(unknown) > 0 {
+		return out, fmt.Errorf("pnpm-lock: %d package keys not understood, e.g. %q", len(unknown), slices.Min(unknown))
 	}
 	return out, nil
 }
@@ -303,7 +326,10 @@ func yarnBerryPkgs(entries []yarnEntry) ([]Pkg, error) {
 		version := e.Version
 		var names []string
 		if e.Resolution != "" {
-			name, v, workspace := berryLocator(e.Resolution)
+			name, v, workspace, err := berryLocator(e.Resolution, 1)
+			if err != nil {
+				return nil, fmt.Errorf("yarn.lock: entry %q: %w", e.key, err)
+			}
 			if workspace {
 				continue
 			}
@@ -331,29 +357,36 @@ func yarnBerryPkgs(entries []yarnEntry) ([]Pkg, error) {
 
 // berryLocator parses a berry resolution locator: "name@npm:1.2.3[::params]", "@scope/name@npm:1.2.3",
 // "name@patch:<urlencoded inner locator>#<patch>[::params]" (the inner package is what gets installed).
-// version is set only for npm: references; name is "" if the locator has no name.
-func berryLocator(res string) (name, version string, workspace bool) {
+// version is set only for npm: references; name is "" if the locator has no name. Patch locators
+// nest at most maxLocatorDepth deep.
+func berryLocator(res string, depth int) (name, version string, workspace bool, err error) {
+	if depth > maxLocatorDepth {
+		return "", "", false, fmt.Errorf("resolution nested more than %d deep", maxLocatorDepth)
+	}
 	at := strings.Index(res[1:], "@")
 	if at < 0 {
-		return "", "", false
+		return "", "", false, nil
 	}
 	name, ref := res[:at+1], res[at+2:]
 	switch {
 	case strings.HasPrefix(ref, "workspace:"):
-		return name, "", true
+		return name, "", true, nil
 	case strings.HasPrefix(ref, "npm:"):
 		v, _, _ := strings.Cut(ref[len("npm:"):], "::")
-		return name, v, false
+		return name, v, false, nil
 	case strings.HasPrefix(ref, "patch:"):
 		src, _, _ := strings.Cut(ref[len("patch:"):], "#")
 		if inner, err := url.PathUnescape(src); err == nil && inner != "" {
-			if n, v, ws := berryLocator(inner); n != "" {
-				return n, v, ws
+			n, v, ws, err := berryLocator(inner, depth+1)
+			if err != nil || n != "" {
+				return n, v, ws, err
 			}
 		}
 	}
-	return name, "", false
+	return name, "", false, nil
 }
+
+const maxLocatorDepth = 16
 
 // yarnKeyNames returns the real package names of a lockfile key's comma-separated specs.
 func yarnKeyNames(key string) []string {

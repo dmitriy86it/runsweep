@@ -17,6 +17,9 @@ var (
 	ErrNoAccess = errors.New("no access (HTTP 4xx)")
 	// ErrAuth means the token was rejected (HTTP 401): fatal, nothing more can be read.
 	ErrAuth = errors.New("authentication failed (HTTP 401)")
+	// ErrRunsCapped comes with the runs that were listed: GitHub returned only part of a window
+	// it would not split further, so the rest of the repository's runs are UNCHECKED.
+	ErrRunsCapped = errors.New("runs not scanned: API cap of 1000 runs in a window ≤1 min")
 )
 
 // Run is a workflow run.

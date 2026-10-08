@@ -73,3 +73,12 @@ func TestMatchLogSHAOnce(t *testing.T) {
 		t.Fatalf("%+v", ev)
 	}
 }
+
+func TestParseDownloadsSetupOnly(t *testing.T) {
+	log := "2025-03-14T18:01:02Z Download action repository 'actions/checkout@v4' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)\n" +
+		"2025-03-14T18:01:03Z ##[group]Run echo hi\n" +
+		"2025-03-14T18:01:04Z Download action repository 'tj-actions/changed-files@v45' (SHA:" + sha + ")\n"
+	if ds := ParseDownloads(log); len(ds) != 1 || ds[0].Uses != "actions/checkout" {
+		t.Fatalf("job output after the first Run group is untrusted: %+v", ds)
+	}
+}

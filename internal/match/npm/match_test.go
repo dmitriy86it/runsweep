@@ -71,7 +71,7 @@ func TestMatchDeclared(t *testing.T) {
 		"alias to bad":     {`{"dependencies":{"http":"npm:axios@^1"}}`, model.Possible, "axios declared"},
 		"scoped alias":     {`{"dependencies":{"s":"npm:@s/p@^1"}}`, model.Possible, "@s/p declared"},
 		"unparseable":      {`{"dependencies":`, model.Unchecked, "cannot parse app/package.json"},
-		"clean":            {`{"dependencies":{"left-pad":"^1"}}`, model.Clean, ""},
+		"no lockfile":      {`{"dependencies":{"left-pad":"^1"}}`, model.Unchecked, "no lockfile for app/package.json"},
 	}
 	badPkgs := append([]incident.NPMPackage{{Name: "@s/p", Versions: []string{"1.0.0"}}}, bad...)
 	for name, c := range cases {
@@ -116,7 +116,8 @@ func TestMatchNodeModulesSegment(t *testing.T) {
 	f.AddFile("o/r", "s1", "x_node_modules/app/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
 	f.AddFile("o/r", "s1", "a/node_modules/b/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
 	r, _ := Match(context.Background(), f, "o/r", "s1", bad)
-	if r.Status != model.Possible || len(r.Evidence) != 1 || !strings.Contains(r.Evidence[0].Detail, "x_node_modules/app/package.json") {
+	if r.Status != model.Possible || len(r.Evidence) != 2 || !strings.Contains(r.Evidence[0].Detail, "x_node_modules/app/package.json") ||
+		r.Evidence[1].Detail != "no lockfile for x_node_modules/app/package.json — transitive dependencies unknown" {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -202,5 +203,61 @@ func TestMatchWildcardVersion(t *testing.T) {
 	r, _ = Match(context.Background(), f, "o/r", "s1", anyVer)
 	if r.Status != model.Possible {
 		t.Fatalf("declared only: %+v", r)
+	}
+}
+
+func hasDetail(r Result, s string) bool {
+	return slices.ContainsFunc(r.Evidence, func(e model.Evidence) bool { return strings.Contains(e.Detail, s) })
+}
+
+func TestMatchNoLockfile(t *testing.T) {
+	const noLock = "no lockfile for app/package.json — transitive dependencies unknown"
+	for name, c := range map[string]struct {
+		files map[string]string
+		want  model.Status
+		note  bool
+	}{
+		"no lockfile":        {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`}, model.Unchecked, true},
+		"direct dep wins":    {map[string]string{"app/package.json": `{"dependencies":{"axios":"^1"}}`}, model.Possible, true},
+		"no deps":            {map[string]string{"app/package.json": `{"name":"x"}`}, model.Clean, false},
+		"root lockfile":      {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`, "yarn.lock": "__metadata:\n  version: 8\n"}, model.Clean, false},
+		"same-dir lockfile":  {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`, "app/package-lock.json": `{"packages":{"":{}}}`}, model.Clean, false},
+		"sibling lockfile":   {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`, "web/package-lock.json": `{"packages":{"":{}}}`}, model.Unchecked, true},
+		"unsupported counts": {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`, "bun.lock": "{}"}, model.Unchecked, false},
+	} {
+		f := sourcetest.New()
+		for p, b := range c.files {
+			f.AddFile("o/r", "s1", p, []byte(b))
+		}
+		r, err := Match(context.Background(), f, "o/r", "s1", bad)
+		if err != nil || r.Status != c.want || hasDetail(r, noLock) != c.note {
+			t.Errorf("%s: %+v %v", name, r, err)
+		}
+	}
+}
+
+func TestMatchUnsupportedLockfile(t *testing.T) {
+	for _, name := range []string{"bun.lock", "bun.lockb", "deno.lock", ".pnp.cjs"} {
+		f := sourcetest.New()
+		f.AddFile("o/r", "s1", "web/"+name, []byte("x"))
+		r, _ := Match(context.Background(), f, "o/r", "s1", bad)
+		if r.Status != model.Unchecked || !hasDetail(r, "web/"+name) {
+			t.Errorf("%s: %+v", name, r)
+		}
+		// next to a supported lockfile it is ignored
+		f.AddFile("o/r", "s1", "web/package-lock.json", []byte(`{"packages":{"":{}}}`))
+		f.AddFile("o/r", "s1", "node_modules/x/"+name, []byte("x"))
+		if r, _ = Match(context.Background(), f, "o/r", "s1", bad); r.Status != model.Clean {
+			t.Errorf("%s with package-lock: %+v", name, r)
+		}
+	}
+}
+
+func TestMatchPnpmUnknownKeyKeepsHits(t *testing.T) {
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "pnpm-lock.yaml", []byte("lockfileVersion: '9.0'\npackages:\n  axios@1.14.1:\n    resolution: {integrity: x}\n  foo@https://codeload.github.com/a/b/tar.gz/abc:\n    resolution: {tarball: x}\n"))
+	r, _ := Match(context.Background(), f, "o/r", "s1", bad)
+	if r.Status != model.Affected || !hasDetail(r, "foo@https://codeload.github.com/a/b/tar.gz/abc") {
+		t.Fatalf("%+v", r)
 	}
 }

@@ -16,8 +16,10 @@ type Download struct{ Uses, Ref, SHA string }
 var downloadRe = regexp.MustCompile(`Download action repository '([^'@]+)@([^']+)' \(SHA:([0-9a-f]{40})\)`)
 var shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// ParseDownloads extracts the resolved SHA of every action a job downloaded.
+// ParseDownloads extracts the resolved SHA of every action a job downloaded. Only the "Set up job"
+// section is read: from the first step ("##[group]Run ") on, the log is the job's own output.
 func ParseDownloads(log string) []Download {
+	log, _, _ = strings.Cut(log, "##[group]Run ")
 	var out []Download
 	for _, m := range downloadRe.FindAllStringSubmatch(log, -1) {
 		out = append(out, Download{Uses: m[1], Ref: m[2], SHA: m[3]})

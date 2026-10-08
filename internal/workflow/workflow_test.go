@@ -492,3 +492,65 @@ func TestUnionIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestRunInstalls(t *testing.T) {
+	for script, want := range map[string][]string{
+		"npx cowsay hi":                       {"npx cowsay hi", "cowsay"},
+		"npx -y @scope/pkg@1.2.3 --flag":      {"npx -y @scope/pkg@1.2.3 --flag", "@scope/pkg"},
+		"npx --yes axios@latest":              {"npx --yes axios@latest", "axios"},
+		"npx -p axios cmd":                    {"npx -p axios cmd", "axios"},
+		"npx --package=axios cmd":             {"npx --package=axios cmd", "axios"},
+		"cd x && npm i -g axios left-pad; ls": {"npm i -g axios left-pad", "axios", "left-pad"},
+		"npm install axios@1.14.1":            {"npm install axios@1.14.1", "axios"},
+		"npm add foo@npm:axios@1":             {"npm add foo@npm:axios@1", "foo", "axios"},
+		"pnpm add @tanstack/query":            {"pnpm add @tanstack/query", "@tanstack/query"},
+		"pnpm dlx create-x app":               {"pnpm dlx create-x app", "create-x"},
+		"yarn add -D axios":                   {"yarn add -D axios", "axios"},
+		"yarn dlx axios":                      {"yarn dlx axios", "axios"},
+		"bunx axios":                          {"bunx axios", "axios"},
+		"execSync('npx axios --x')":           {"npx axios --x", "axios"},
+		"npm ci":                              nil,
+		"npm install":                         nil,
+		"npm init -y":                         nil,
+		"echo npxfoo":                         nil,
+		"./node_modules/.bin/npx-like axios":  nil,
+		"yarn install --frozen-lockfile":      nil,
+		"pnpm install":                        nil,
+	} {
+		var got []string
+		for _, in := range runInstalls(script) {
+			got = append(append(got, in.Cmd), in.Pkgs...)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%q: got %q, want %q", script, got, want)
+		}
+	}
+}
+
+func TestGithubScriptInstalls(t *testing.T) {
+	w, err := Parse([]byte("on: push\njobs:\n  a:\n    runs-on: x\n    steps:\n" +
+		"      - uses: actions/github-script@v7\n        with:\n          script: |\n            require('child_process').execSync('npx -y axios')\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := w.Jobs["a"]
+	if in := j.RunInstalls(); len(in) != 1 || in[0].Pkgs[0] != "axios" || !j.MayInstallNPM() {
+		t.Fatalf("%+v", in)
+	}
+	if in := w.Union().RunInstalls(); len(in) != 1 {
+		t.Fatalf("union must keep scripts: %+v", in)
+	}
+	if _, ej := w.Through(&Job{ID: "c"}, w, j); len(ej.RunInstalls()) != 1 {
+		t.Fatal("Through must keep scripts")
+	}
+}
+
+func TestParseTokenPermsSetupOnly(t *testing.T) {
+	log := "2026-10-01T10:00:00.0000000Z ##[group]Run echo hi\n" +
+		"2026-10-01T10:00:00.0000000Z ##[group]GITHUB_TOKEN Permissions\n" +
+		"2026-10-01T10:00:00.0000000Z Contents: write\n" +
+		"2026-10-01T10:00:00.0000000Z ##[endgroup]\n"
+	if p := ParseTokenPerms(log); len(p) != 0 {
+		t.Fatalf("job output after the first Run group is untrusted: %v", p)
+	}
+}
