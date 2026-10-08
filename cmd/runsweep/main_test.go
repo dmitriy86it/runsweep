@@ -531,3 +531,74 @@ func TestImportUsageErrorsNeverTouchNetwork(t *testing.T) {
 		}
 	}
 }
+
+func TestImportStdinOnlyWhenNoOtherSource(t *testing.T) {
+	act := "tj-actions/changed-files@0e58ed8671d6b60d0890c21b07f8835ace038e67"
+	in := strings.NewReader("junk\n")
+	var out, errb bytes.Buffer
+	args := []string{"incidents", "import", "--action", act, "--since", "2025-03-14T16:00:00Z", "--until", "2025-03-15T14:00:00Z"}
+	if code := run(args, &out, &errb, deps{newImporter: noNetImporter(t), stdin: in}); code != 0 || in.Len() != 5 {
+		t.Fatalf("code %d, unread %d: %s", code, in.Len(), errb.String())
+	}
+	in = strings.NewReader("junk\n")
+	out.Reset()
+	if code := run([]string{"incidents", "import", "MAL-2026-2307"}, &out, &errb, deps{newImporter: fixtureImporter(t), stdin: in}); code != 0 || in.Len() != 5 {
+		t.Fatalf("code %d, unread %d: %s", code, in.Len(), errb.String())
+	}
+}
+
+func TestReadIDs(t *testing.T) {
+	ids, err := readIDs(strings.NewReader("\xef\xbb\xbfMAL-1-1\nMAL-1-1\nMAL-2-2 # c\n"))
+	if err != nil || len(ids) != 2 || ids[0] != "MAL-1-1" {
+		t.Fatalf("%v %v", ids, err)
+	}
+	if _, err := readIDs(strings.NewReader("MAL-1-1\n" + strings.Repeat("a", 2<<20))); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("long line: %v", err)
+	}
+	var sb strings.Builder
+	for i := range 10001 {
+		fmt.Fprintf(&sb, "MAL-1-%d\n", i)
+	}
+	if _, err := readIDs(strings.NewReader(sb.String())); err == nil {
+		t.Fatal("want cap error")
+	}
+}
+
+func TestWriteAtomicCleansUpAndReplaces(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "target")
+	if err := os.Mkdir(sub, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(sub, []byte("x")); err == nil { // rename over a directory fails
+		t.Fatal("want error")
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, ".runsweep-import-*")); len(m) != 0 {
+		t.Fatalf("temp left behind: %v", m)
+	}
+	ro := filepath.Join(dir, "ro.yaml")
+	if err := os.WriteFile(ro, []byte("old"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAtomic(ro, []byte("new")); err != nil { // os.WriteFile would fail on a read-only file
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(ro) //nolint:gosec // G304: test temp path
+	if st, _ := os.Stat(ro); string(b) != "new" || st.Mode().Perm() != 0o400 {
+		t.Fatalf("%q %v", b, st.Mode())
+	}
+	fresh := filepath.Join(dir, "fresh.yaml")
+	if err := writeAtomic(fresh, []byte("n")); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(fresh); st.Mode().Perm() != 0o644 {
+		t.Fatalf("new file mode %v", st.Mode())
+	}
+}
+
+func TestIncidentsUnknownSubcommand(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"incidents", "bogus"}, &out, &errb, deps{}); code != 2 || !strings.Contains(errb.String(), `unknown subcommand "bogus"`) {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+}

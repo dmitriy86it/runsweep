@@ -119,7 +119,12 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	root.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Run: func(c *cobra.Command, _ []string) {
 		_, _ = fmt.Fprintf(c.OutOrStdout(), "runsweep %s (%s, %s)\n", version, commit, date)
 	}})
-	incidents := &cobra.Command{Use: "incidents", Short: "List built-in incident presets", RunE: func(c *cobra.Command, _ []string) error {
+	incidents := &cobra.Command{Use: "incidents", Short: "List built-in incident presets", Args: func(_ *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			return fmt.Errorf("unknown subcommand %q", args[0])
+		}
+		return nil
+	}, RunE: func(c *cobra.Command, _ []string) error {
 		ps, err := incident.Presets()
 		if err != nil {
 			return err
@@ -282,7 +287,7 @@ func importCmd(d deps) *cobra.Command {
   runsweep incidents import --action owner/repo@<sha> --since 2026-03-19T17:43:00Z --until 2026-03-20T06:00:00Z`,
 		RunE: func(c *cobra.Command, args []string) error {
 			o.IDs = args
-			if len(args) == 0 && d.stdin != nil {
+			if len(args) == 0 && len(packages) == 0 && len(o.Actions) == 0 && d.stdin != nil {
 				f, isFile := d.stdin.(*os.File)
 				if !isFile || !isTerminal(f) {
 					ids, err := readIDs(d.stdin)
@@ -343,12 +348,22 @@ func importCmd(d deps) *cobra.Command {
 	return c
 }
 
-// readIDs reads one OSV id per line; '#' starts a comment.
+const maxIDs = 10000
+
+// readIDs reads one OSV id per line ('#' starts a comment), deduplicated.
 func readIDs(r io.Reader) ([]string, error) {
 	var ids []string
+	seen := map[string]bool{}
 	sc := bufio.NewScanner(r)
-	for n := 1; sc.Scan(); n++ {
-		line, _, _ := strings.Cut(sc.Text(), "#")
+	sc.Buffer(nil, 1<<20)
+	n := 0
+	for sc.Scan() {
+		n++
+		text := sc.Text()
+		if n == 1 {
+			text = strings.TrimPrefix(text, "\ufeff")
+		}
+		line, _, _ := strings.Cut(text, "#")
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -356,19 +371,42 @@ func readIDs(r io.Reader) ([]string, error) {
 		if !importer.ValidID(line) {
 			return nil, fmt.Errorf("stdin line %d: %q is not an OSV id", n, line)
 		}
+		if seen[line] {
+			continue
+		}
+		if len(ids) == maxIDs {
+			return nil, fmt.Errorf("stdin line %d: more than %d ids", n, maxIDs)
+		}
+		seen[line] = true
 		ids = append(ids, line)
 	}
-	return ids, sc.Err()
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("stdin line %d: %w", n+1, err)
+	}
+	return ids, nil
 }
 
 // writeAtomic writes b to a temp file next to path and renames it over path.
+// The file keeps the mode of an existing path, else 0644.
 func writeAtomic(path string, b []byte) error {
+	mode := os.FileMode(0o644)
+	if st, err := os.Stat(path); err == nil {
+		mode = st.Mode().Perm()
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".runsweep-import-*")
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after a successful rename
 	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		return err
 	}
