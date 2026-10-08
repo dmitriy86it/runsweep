@@ -1234,3 +1234,29 @@ func TestScanNoLockfileSilentInstallKept(t *testing.T) {
 		t.Fatalf("env lines: %v %+v", err, res.Findings)
 	}
 }
+
+// Item 3: a package.json outside the root workspaces is installed only by a job that names its directory.
+func TestScanNonWorkspaceManifestNotInstalled(t *testing.T) {
+	fx := func(steps, log string) *sourcetest.Fake {
+		f := sourcetest.New()
+		f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+		f.Jobs[1] = []source.Job{{ID: 10, Name: "test"}}
+		f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  test:\n    runs-on: x\n    steps:\n      - uses: actions/checkout@v4\n"+steps))
+		f.AddFile("o/a", "s1", "package.json", []byte(`{"private":true,"workspaces":["packages/*","apis/*"],"packageManager":"yarn@4.17.1"}`))
+		f.AddFile("o/a", "s1", "yarn.lock", []byte("__metadata:\n  version: 8\n\n\"left-pad@npm:^1.0.0\":\n  version: 1.0.0\n  resolution: \"left-pad@npm:1.0.0\"\n"))
+		f.AddFile("o/a", "s1", "packages/a/package.json", []byte(`{"name":"@x/a","dependencies":{"left-pad":"^1.0.0"}}`))
+		f.AddFile("o/a", "s1", "examples/x/package.json", []byte(`{"dependencies":{"axios":"latest"}}`))
+		f.Logs[10] = log
+		return f
+	}
+	yarnLog := "2026-03-31T01:00:00Z ##[group]Run yarn install\n2026-03-31T01:00:00Z ➤ YN0000: ┌ Resolution step\n2026-03-31T01:00:00Z ➤ YN0000: ┌ Link step\n"
+	fd := scanOne(t, fx("      - run: yarn install\n", yarnLog), npmOnly)
+	if fd.Status != model.Unchecked || !hasNote(fd, "examples/x/package.json is not installed by this job as far as the workflow and log show; declared axios") {
+		t.Fatalf("root install: %+v", fd)
+	}
+	npmLog := "2026-03-31T01:00:00Z ##[group]Run npm install\n2026-03-31T01:00:00Z added 12 packages in 1s\n"
+	fd = scanOne(t, fx("      - run: npm install\n        working-directory: examples/x\n", npmLog), npmOnly)
+	if fd.Status != model.Possible {
+		t.Fatalf("working-directory: %+v", fd)
+	}
+}

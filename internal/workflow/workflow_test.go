@@ -604,3 +604,37 @@ func TestParseTokenPermsSetupOnly(t *testing.T) {
 		t.Fatalf("job output after the first Run group is untrusted: %v", p)
 	}
 }
+
+func TestMentions(t *testing.T) {
+	w, err := Parse([]byte(`on: push
+defaults: {run: {working-directory: site}}
+jobs:
+  a:
+    runs-on: x
+    defaults: {run: {working-directory: apps/web}}
+    steps:
+      - run: make
+        working-directory: tools/cli
+      - uses: some/action@v1
+        with: {path: examples/x, flag: true}
+      - run: cd docs && npm ci
+  b:
+    runs-on: x
+    steps: [{run: echo}]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := w.Jobs["a"], w.Jobs["b"]
+	for _, d := range []string{"apps/web", "tools/cli", "examples/x", "docs", "site"} {
+		if !a.Mentions(d) {
+			t.Errorf("a: %s", d)
+		}
+	}
+	if !b.Mentions("site") || b.Mentions("examples/x") || a.Mentions("packages/z") {
+		t.Errorf("b or negative: %+v %+v", a, b)
+	}
+	if !w.Union().Mentions("tools/cli") {
+		t.Error("union")
+	}
+}

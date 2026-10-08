@@ -37,6 +37,7 @@ The token needs read access to Actions, Contents and Metadata for these reposito
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread. bun.lock, bun.lockb, deno.lock and .pnp.cjs are not read: their directory is at least UNCHECKED, even next to a lockfile that is read (it may be stale).
 - A missing, unread or unsupported lockfile does not mark a job whose log shows no package install and whose workflow installs none. A dependency on a package of the same repository (a workspace) is not reported as missing from the lockfile.
 - An install whose output is fully suppressed inside a JS action or a called script is not seen.
+- A lockfile in a directory that declares workspaces covers only its members. A package.json that no lockfile covers, below the root, is POSSIBLE only for a job whose steps or log name its directory; otherwise UNCHECKED.
 - Packages named on the command line (npm i axios) are found only in the workflow's own run: steps, not in scripts it calls or in local composite actions.
 - Only repositories the token can see are scanned.
 - Pull request runs are checked at the pull request's head commit, not the merge commit.
