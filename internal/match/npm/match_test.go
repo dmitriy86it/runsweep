@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmitriy86it/runsweep/internal/incident"
 	"github.com/dmitriy86it/runsweep/internal/model"
@@ -425,3 +426,43 @@ func TestResolveUnlocked(t *testing.T) {
 
 // installedAll resolves Unlocked as if every job installed every package.json: the pre-job view.
 func installedAll(string) bool { return true }
+
+func TestMemberHardening(t *testing.T) {
+	start := time.Now()
+	if member([]string{strings.Repeat("**/a/", 30) + "b"}, strings.Repeat("a/", 200)+"c") {
+		t.Error("nested ** matched")
+	}
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Errorf("nested ** took %v", d)
+	}
+	for name, c := range map[string]struct {
+		globs []string
+		rel   string
+		want  bool
+	}{
+		"plain member":      {[]string{"packages/*"}, "packages/a", true},
+		"dot segment":       {[]string{"packages/*"}, "packages/.cache", false},
+		"dot under **":      {[]string{"**"}, ".github/x", false},
+		"brace negation":    {[]string{"apps/*", "!apps/{old,legacy}"}, "apps/web", false},
+		"bad negation":      {[]string{"apps/*", "!apps/[x"}, "apps/web", false},
+		"simple negation":   {[]string{"apps/*", "!apps/old"}, "apps/web", true},
+		"negation excludes": {[]string{"apps/*", "!apps/old"}, "apps/old", false},
+	} {
+		if got := member(c.globs, c.rel); got != c.want {
+			t.Errorf("%s: %v", name, got)
+		}
+	}
+}
+
+// With pnpm-workspace.yaml in a directory, package.json `workspaces` there are ignored.
+func TestMatchPnpmWorkspaceWins(t *testing.T) {
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "pnpm-lock.yaml", []byte("lockfileVersion: '9.0'\npackages:\n  left-pad@1.0.0:\n    resolution: {integrity: x}\n"))
+	f.AddFile("o/r", "s1", "pnpm-workspace.yaml", []byte("packages:\n  - 'libs/*'\n"))
+	f.AddFile("o/r", "s1", "package.json", []byte(`{"workspaces":["tools"]}`))
+	f.AddFile("o/r", "s1", "tools/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
+	r, err := new(Cache).Match(context.Background(), f, "o/r", "s1", bad)
+	if err != nil || len(r.Unlocked) != 1 || r.Unlocked[0].Dir != "tools" || r.Status == model.Possible {
+		t.Fatalf("%+v %v", r, err)
+	}
+}
