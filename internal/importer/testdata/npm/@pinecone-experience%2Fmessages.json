@@ -1,0 +1,15 @@
+{
+ "_id": "@pinecone-experience/messages",
+ "name": "@pinecone-experience/messages",
+ "dist-tags": {
+  "latest": "99.9.1"
+ },
+ "time": {
+  "created": "2026-10-05T16:06:40.777Z",
+  "99.9.1": "2026-10-05T16:06:41.272Z",
+  "modified": "2026-10-05T16:06:41.408Z"
+ },
+ "versions": {
+  "99.9.1": {}
+ }
+}
