@@ -23,8 +23,8 @@ const limits = `## Limits
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
 - A job whose log was unavailable is reported UNCHECKED: actions used via composite actions or reusable workflows can only be seen in the log.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread.
-- Runs are selected by creation time: re-runs of older runs and runs queued before the window are not scanned.
-- Reusable workflows are judged from the caller job: OIDC roles and permissions inside the called workflow are not shown.
+- Re-runs of runs created more than the lookback period (default 7 days) before the window are not scanned; use --lookback 30d for full coverage.
+- Called workflows are read when local or pinned to a commit SHA; others are judged from the caller job.
 `
 
 // RetentionNote explains why an old window can look clean.
@@ -67,7 +67,11 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 			if f.Run.Job != "" {
 				job += " / " + f.Run.Job
 			}
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", f.Status, code(f.Run.Repo), code(job), link(fmt.Sprint(f.Run.RunID), f.Run.RunURL), strings.Join(ev, "; "))
+			run := link(fmt.Sprint(f.Run.RunID), f.Run.RunURL)
+			if f.Run.Attempt > 1 {
+				run += fmt.Sprintf(" attempt %d", f.Run.Attempt)
+			}
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", f.Status, code(f.Run.Repo), code(job), run, strings.Join(ev, "; "))
 		}
 		b.WriteString("\n")
 	}

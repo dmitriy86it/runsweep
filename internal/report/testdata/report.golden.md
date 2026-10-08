@@ -15,7 +15,7 @@ Window: 2026-03-31 00:21:00 → 2026-03-31 03:21:00 UTC · runs scanned: 3 · jo
 
 | Status | Repo | Workflow / job | Run | Evidence |
 |---|---|---|---|---|
-| AFFECTED | `o/app` | `.github/workflows/ci.yml / build` | [42](https://github.com/o/app/actions/runs/42) | `axios@1.14.1 in package-lock.json at abcdef1` |
+| AFFECTED | `o/app` | `.github/workflows/ci.yml / build` | [42](https://github.com/o/app/actions/runs/42) attempt 2 | `axios@1.14.1 in package-lock.json at abcdef1` |
 | UNCHECKED | `o/old` | `.github/workflows/ci.yml` | 9 | `jobs unavailable: deleted by GitHub retention (HTTP 410)` |
 
 ## Skipped repositories
@@ -35,5 +35,5 @@ The token needs read access to Actions, Contents and Metadata for these reposito
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
 - A job whose log was unavailable is reported UNCHECKED: actions used via composite actions or reusable workflows can only be seen in the log.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread.
-- Runs are selected by creation time: re-runs of older runs and runs queued before the window are not scanned.
-- Reusable workflows are judged from the caller job: OIDC roles and permissions inside the called workflow are not shown.
+- Re-runs of runs created more than the lookback period (default 7 days) before the window are not scanned; use --lookback 30d for full coverage.
+- Called workflows are read when local or pinned to a commit SHA; others are judged from the caller job.

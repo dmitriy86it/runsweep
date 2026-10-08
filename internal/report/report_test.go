@@ -227,3 +227,22 @@ func TestJSONEscapesC1(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMarkdownAttempt(t *testing.T) {
+	inc, res := sample()
+	var b bytes.Buffer
+	if err := Markdown(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "| [42](https://github.com/o/app/actions/runs/42) attempt 2 |") {
+		t.Fatal(b.String())
+	}
+	res.Findings[0].Run.Attempt = 1
+	b.Reset()
+	if err := Markdown(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "attempt") {
+		t.Fatalf("first attempt must not be labelled:\n%s", b.String())
+	}
+}
