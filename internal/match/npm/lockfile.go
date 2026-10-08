@@ -117,9 +117,10 @@ func ParsePackageLock(b []byte) ([]Pkg, error) {
 }
 
 var (
-	pnpmV5    = regexp.MustCompile(`^(@[^/]+/[^/]+|[^@/][^/]*)/(\d[^_/]*)(?:_.*)?$`) // /name/1.0.0_peer
-	pnpmV6    = regexp.MustCompile(`^(@[^/@]+/[^@]+|[^@][^@]*)@(\d[^_(]*)`)          // name@1.0.0(peer)
-	pnpmLocal = regexp.MustCompile(`^(?:[^:]*@)?(?:file|link):`)                     // in-repo package: name@file:../x, link:../x
+	pnpmV5      = regexp.MustCompile(`^(@[^/]+/[^/]+|[^@/][^/]*)/(\d[^_/]*)(?:_.*)?$`) // /name/1.0.0_peer
+	pnpmV6      = regexp.MustCompile(`^(@[^/@]+/[^@]+|[^@][^@]*)@(\d[^_(]*)`)          // name@1.0.0(peer)
+	pnpmLocal   = regexp.MustCompile(`^(?:[^:]*@)?(?:file|link):`)                     // in-repo package: name@file:../x, link:../x
+	pnpmTarball = regexp.MustCompile(`(?i)\.(?:tgz|tar\.gz|tar)$`)                     // file: tarball: an installed package of unknown version
 )
 
 // ParsePnpmLock extracts packages from a pnpm-lock.yaml. A key it cannot read is an error that
@@ -145,7 +146,7 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 			out = append(out, Pkg{m[1], m[2]})
 		} else if m := pnpmV6.FindStringSubmatch(k); m != nil {
 			out = append(out, Pkg{m[1], m[2]})
-		} else if !pnpmLocal.MatchString(k) {
+		} else if !pnpmLocal.MatchString(k) || pnpmTarball.MatchString(k) {
 			unknown = append(unknown, key)
 		}
 	}

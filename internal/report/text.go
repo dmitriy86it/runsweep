@@ -64,12 +64,15 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		if f.Run.Job != "" {
 			job += " / " + f.Run.Job
 		}
-		attempt := ""
-		if f.Run.Attempt > 1 {
-			attempt = fmt.Sprintf(" attempt %d", f.Run.Attempt)
+		run := ""
+		if f.Run.RunID != 0 { // 0: a repository-level finding (runs cap)
+			run = fmt.Sprintf("  #%d", f.Run.RunID)
 		}
-		fmt.Fprintf(&b, "  %s%s%-*s  %s  #%d%s\n", paint(f.Status), strings.Repeat(" ", 11-len(f.Status.String())),
-			width, Clean(f.Run.Repo), Clean(job), f.Run.RunID, attempt)
+		if f.Run.Attempt > 1 {
+			run += fmt.Sprintf(" attempt %d", f.Run.Attempt)
+		}
+		fmt.Fprintf(&b, "  %s%s%-*s  %s%s\n", paint(f.Status), strings.Repeat(" ", 11-len(f.Status.String())),
+			width, Clean(f.Run.Repo), Clean(job), run)
 		for _, e := range f.Evidence {
 			fmt.Fprintf(&b, "%13s%s\n", "", Clean(e.Detail))
 		}
