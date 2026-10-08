@@ -13,16 +13,30 @@ import (
 // Download is an action download recorded in a job log.
 type Download struct{ Uses, Ref, SHA string }
 
-var downloadRe = regexp.MustCompile(`Download action repository '([^'@]+)@([^']+)' \(SHA:([0-9a-f]{40})\)`)
+// downloadRe matches the runner's own download records, anchored to whole lines so that job output
+// merely containing the text does not count: "Download action repository 'o/r@ref' (SHA:…)" and the
+// immutable action package group, whose "Source commit SHA: …" line follows its Version and Digest
+// lines (actions/runner ActionManager.cs). Records appear in "Set up job" and, for the nested
+// actions of a local composite action, inside that action's step.
+var downloadRe = func() *regexp.Regexp {
+	ts := `(?:\d{4}-\d\d-\d\dT[\d:.]+Z )?`
+	return regexp.MustCompile(`(?m)^(?:\x{feff})?` + ts + `(?:` +
+		`Download action repository '([^'@]+)@([^']+)' \(SHA:([0-9a-f]{40})\)` + `|` +
+		`##\[group\]Download immutable action package '([^'@]+)@([^']+)'\r?\n` +
+		`(?:` + ts + `(?:Version|Digest): [^\r\n]*\r?\n)*` + ts + `Source commit SHA: ([0-9a-f]{40})` +
+		`)\r?$`)
+}()
 var shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// ParseDownloads extracts the resolved SHA of every action a job downloaded. Only the "Set up job"
-// section is read: from the first step ("##[group]Run ") on, the log is the job's own output.
+// ParseDownloads extracts the resolved SHA of every action a job downloaded, in log order.
 func ParseDownloads(log string) []Download {
-	log, _, _ = strings.Cut(log, "##[group]Run ")
 	var out []Download
 	for _, m := range downloadRe.FindAllStringSubmatch(log, -1) {
-		out = append(out, Download{Uses: m[1], Ref: m[2], SHA: m[3]})
+		if m[1] != "" {
+			out = append(out, Download{Uses: m[1], Ref: m[2], SHA: m[3]})
+		} else {
+			out = append(out, Download{Uses: m[4], Ref: m[5], SHA: m[6]})
+		}
 	}
 	return out
 }

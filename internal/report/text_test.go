@@ -122,3 +122,21 @@ func TestTextSeenInAttempt(t *testing.T) {
 		t.Fatal(b.String())
 	}
 }
+
+func TestRepoLevelFindingHasNoRunNumber(t *testing.T) {
+	inc, res := sample()
+	res.Findings = []model.Finding{{Run: model.RunRef{Repo: "o/big"}, Status: model.Unchecked,
+		Evidence: []model.Evidence{{Kind: "note", Detail: "runs not scanned: API cap of 1000 runs in a window ≤1 min"}}}}
+	for name, render := range map[string]func(*bytes.Buffer) error{
+		"text": func(b *bytes.Buffer) error { return Text(b, inc, res, false) },
+		"md":   func(b *bytes.Buffer) error { return Markdown(b, inc, res) },
+	} {
+		var b bytes.Buffer
+		if err := render(&b); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(b.String(), "#0") || strings.Contains(b.String(), "| 0 |") {
+			t.Errorf("%s: run number shown for a repo-level finding:\n%s", name, b.String())
+		}
+	}
+}

@@ -67,7 +67,10 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 			if f.Run.Job != "" {
 				job += " / " + f.Run.Job
 			}
-			run := link(fmt.Sprint(f.Run.RunID), f.Run.RunURL)
+			run := ""
+			if f.Run.RunID != 0 { // 0: a repository-level finding (runs cap)
+				run = link(fmt.Sprint(f.Run.RunID), f.Run.RunURL)
+			}
 			if f.Run.Attempt > 1 {
 				run += fmt.Sprintf(" attempt %d", f.Run.Attempt)
 			}

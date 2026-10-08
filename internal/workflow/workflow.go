@@ -86,9 +86,8 @@ var (
 	installRe = regexp.MustCompile(`(?:^|[^\w./-])(npm|npx|yarn|pnpm|pnpx|bun|bunx)(?:$|[^\w.-])`)
 	// opaque runners and scripts that may install npm packages without naming npm in the workflow
 	opaqueRe = regexp.MustCompile(`(?:^|[^\w./-])(?:(?:make|task|just|mise|nx|turbo|lerna|rush|corepack|python3?|node|docker(?:-compose)?|podman|buildah|mvnw?|gradlew?|sbt|bazel|dotnet|composer)(?:$|[^\w.-])|(?:ba|z)?sh\s+\S)|(?:^|[\s;&|(])\./[\w-]|\.sh\b`)
-	// a package named at run time: npx, bunx, npm i/install/add, pnpm/yarn add/dlx, and the rest of
-	// the command up to a newline, shell separator or quote
-	runtimeRe = regexp.MustCompile(`(?:^|[^\w./-])(npx|bunx|npm[ \t]+(?:install|add|i)|(?:pnpm|yarn)[ \t]+(?:add|dlx))(?:$|[ \t]+([^\n;&|'"` + "`" + `)]*))`)
+	// a package manager command, up to a newline or shell separator; runInstalls reads its arguments
+	runtimeRe = regexp.MustCompile(`(?:^|[^\w./-])(npx|pnpx|bunx|npm|pnpm|yarn|bun)(?:$|[ \t]+([^\n;&|)]*))`)
 	tplRe     = regexp.MustCompile(`\$\{\{.*?\}\}`)
 	matrixRe  = regexp.MustCompile(` \([^)]*\)$`)
 )
@@ -261,15 +260,44 @@ func (j *Job) RunInstalls() []RunInstall {
 	return out
 }
 
-// runInstalls finds the commands of runtimeRe that name at least one package.
+// installSubs maps "tool subcommand" to whether it takes a single package (runs it) or several.
+var installSubs = map[string]bool{
+	"npm i": false, "npm install": false, "npm add": false, "pnpm add": false, "yarn add": false, "bun add": false,
+	"npm exec": true, "npm x": true, "pnpm dlx": true, "yarn dlx": true, "bun x": true,
+	"npx": true, "pnpx": true, "bunx": true,
+}
+
+// valueFlags take the next argument as their value, so it is neither a subcommand nor a package.
+var valueFlags = map[string]bool{"--registry": true, "--prefix": true, "--filter": true, "-F": true, "-C": true,
+	"--dir": true, "--cwd": true, "--workspace": true, "--cache": true, "--userconfig": true, "--loglevel": true,
+	"-c": true, "--call": true}
+
+// runInstalls finds the package manager commands in script that install or run named packages.
 func runInstalls(script string) []RunInstall {
 	var out []RunInstall
 	for _, m := range runtimeRe.FindAllStringSubmatchIndex(script, -1) {
 		tool := script[m[2]:m[3]]
-		one := tool == "npx" || tool == "bunx" || strings.HasSuffix(tool, "dlx") // runs a single package
 		var args []string
 		if m[4] >= 0 {
-			args = strings.Fields(script[m[4]:m[5]])
+			for _, f := range strings.Fields(script[m[4]:m[5]]) {
+				if f = strings.Trim(f, "'\"`,"); f != "" {
+					args = append(args, f)
+				}
+			}
+		}
+		cmd := strings.Join(append([]string{tool}, args...), " ") // quotes and commas trimmed
+		key := tool
+		if tool == "npm" || tool == "pnpm" || tool == "yarn" || tool == "bun" {
+			var sub string
+			sub, args = subcommand(args)
+			if tool == "yarn" && sub == "global" {
+				sub, args = subcommand(args)
+			}
+			key += " " + sub
+		}
+		one, ok := installSubs[key]
+		if !ok {
+			continue
 		}
 		var pkgs []string
 		for i := 0; i < len(args); i++ {
@@ -280,6 +308,9 @@ func runInstalls(script string) []RunInstall {
 				a = args[i]
 			case isPkg:
 				a = v
+			case valueFlags[a]:
+				i++
+				continue
 			case strings.HasPrefix(a, "-"):
 				continue
 			}
@@ -289,10 +320,23 @@ func runInstalls(script string) []RunInstall {
 			}
 		}
 		if len(pkgs) > 0 {
-			out = append(out, RunInstall{Cmd: strings.TrimSpace(script[m[2]:m[1]]), Pkgs: pkgs})
+			out = append(out, RunInstall{Cmd: cmd, Pkgs: pkgs})
 		}
 	}
 	return out
+}
+
+// subcommand returns the first positional argument and the arguments after it.
+func subcommand(args []string) (string, []string) {
+	for i := 0; i < len(args); i++ {
+		switch {
+		case valueFlags[args[i]]:
+			i++
+		case !strings.HasPrefix(args[i], "-"):
+			return args[i], args[i+1:]
+		}
+	}
+	return "", nil
 }
 
 // pkgNames strips the version from a package spec ("@s/p@1" -> "@s/p"); "x@npm:real@1" gives x and real.

@@ -74,11 +74,32 @@ func TestMatchLogSHAOnce(t *testing.T) {
 	}
 }
 
-func TestParseDownloadsSetupOnly(t *testing.T) {
-	log := "2025-03-14T18:01:02Z Download action repository 'actions/checkout@v4' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)\n" +
-		"2025-03-14T18:01:03Z ##[group]Run echo hi\n" +
-		"2025-03-14T18:01:04Z Download action repository 'tj-actions/changed-files@v45' (SHA:" + sha + ")\n"
-	if ds := ParseDownloads(log); len(ds) != 1 || ds[0].Uses != "actions/checkout" {
-		t.Fatalf("job output after the first Run group is untrusted: %+v", ds)
+func TestParseDownloadsLocalCompositeJIT(t *testing.T) {
+	// a local composite action downloads its nested actions inside its own step group
+	log := "\uFEFF2025-03-14T18:01:02.1Z Download action repository 'actions/checkout@v4' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)\n" +
+		"2025-03-14T18:01:03.1Z ##[group]Run ./.github/actions/setup\n" +
+		"2025-03-14T18:01:04.1Z Download action repository 'tj-actions/changed-files@v45' (SHA:" + sha + ")\r\n"
+	if st, _ := MatchLog(log, bad); st != model.Affected {
+		t.Fatalf("JIT download of a composite's nested action: %v %+v", st, ParseDownloads(log))
+	}
+	// job output that merely contains the text is not a download record
+	if ds := ParseDownloads("2025-03-14T18:01:04.1Z echo Download action repository 'tj-actions/changed-files@v45' (SHA:" + sha + ")\n"); len(ds) != 0 {
+		t.Fatalf("%+v", ds)
+	}
+}
+
+func TestParseDownloadsImmutable(t *testing.T) {
+	log := "2025-03-14T18:01:02.1Z Download action repository 'actions/checkout@v4' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)\n" +
+		"2025-03-14T18:01:02.2Z ##[group]Download immutable action package 'tj-actions/changed-files@v45'\n" +
+		"2025-03-14T18:01:02.3Z Version: 45.0.0\n" +
+		"2025-03-14T18:01:02.4Z Digest: sha256:abc\n" +
+		"2025-03-14T18:01:02.5Z Source commit SHA: " + sha + "\n" +
+		"2025-03-14T18:01:02.6Z ##[endgroup]\n"
+	ds := ParseDownloads(log)
+	if len(ds) != 2 || ds[1] != (Download{Uses: "tj-actions/changed-files", Ref: "v45", SHA: sha}) {
+		t.Fatalf("%+v", ds)
+	}
+	if st, _ := MatchLog(log, bad); st != model.Affected {
+		t.Fatal("bad immutable action must be AFFECTED")
 	}
 }
