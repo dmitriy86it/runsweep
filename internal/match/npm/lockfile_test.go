@@ -297,6 +297,9 @@ func TestLockfileFailClosed(t *testing.T) {
 		"package-lock null":                             {"package-lock.json", `null`},
 		"package-lock v1 empty name":                    {"package-lock.json", `{"dependencies":{"":{"version":"1.0.0"}}}`},
 		"package-lock v3 empty name":                    {"package-lock.json", `{"packages":{"node_modules/":{"version":"1.0.0"}}}`},
+		"package-lock v3 empty version":                 {"package-lock.json", `{"packages":{"node_modules/axios":{}}}`},
+		"package-lock v3 scope without name":            {"package-lock.json", `{"packages":{"node_modules/@scope/":{"version":"1.0.0"}}}`},
+		"package-lock v3 alias to scope without name":   {"package-lock.json", `{"packages":{"node_modules/x":{"name":"@scope/","version":"1.0.0"}}}`},
 		"pnpm without packages":                         {"pnpm-lock.yaml", "lockfileVersion: '9.0'\n"},
 		"pnpm packages garbage":                         {"pnpm-lock.yaml", "packages: hello\n"},
 		"pnpm file: tarball":                            {"pnpm-lock.yaml", "packages:\n  axios@file:vendor/axios-1.14.1.tgz:\n    resolution: {}\n"},
@@ -310,6 +313,7 @@ func TestLockfileFailClosed(t *testing.T) {
 	}
 	for name, c := range map[string]struct{ path, body string }{
 		"package-lock v1 empty deps": {"package-lock.json", `{"lockfileVersion":1,"dependencies":{}}`},
+		"package-lock v3 link":       {"package-lock.json", `{"packages":{"":{},"node_modules/app":{"resolved":"app","link":true},"app":{"name":"app"}}}`},
 		"pnpm empty file":            {"pnpm-lock.yaml", ""},
 		"pnpm local keys":            {"pnpm-lock.yaml", "packages:\n  file:../x:\n    resolution: {}\n  z@file:packages/z:\n    resolution: {}\n  /y@link:../y:\n    resolution: {}\n"},
 		"berry locator 16 deep": {"yarn.lock", "__metadata:\n  version: 8\n\"x@npm:1\":\n  version: 1.0.0\n  resolution: \"" +

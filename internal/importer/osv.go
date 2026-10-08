@@ -22,7 +22,6 @@ var (
 	repoRe     = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	eventRe    = regexp.MustCompile(`^[0-9A-Za-z.+_-]{1,64}$`)
 	safeNameRe = regexp.MustCompile(`^(@[A-Za-z0-9._~-]+/)?[A-Za-z0-9._~-]+$`)
-	shaRe      = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
 // ValidID reports whether s looks like an OSV id (MAL-…, GHSA-…, CVE-…).

@@ -25,11 +25,13 @@ import (
 
 var installLogRe = regexp.MustCompile(`npm (ci|install)|added \d+ packages|yarn install|pnpm install|Lockfile is up to date|bun install`)
 
+// concurrency is how many runs of a repository are scanned at once; tests set 1 for a fixed order.
+var concurrency = 10
+
 // Options configures a scan.
 type Options struct {
-	Repos       []string
-	Org         string
-	Concurrency int
+	Repos []string
+	Org   string
 	// Lookback widens run listing to runs created this long before the window, so re-runs
 	// started inside the window are found.
 	Lookback time.Duration
@@ -82,10 +84,6 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	conc := opt.Concurrency
-	if conc <= 0 {
-		conc = 10
-	}
 	repos := append([]string{}, opt.Repos...)
 	if opt.Org != "" {
 		r, err := src.ListRepos(ctx, opt.Org)
@@ -128,7 +126,7 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 			wg       sync.WaitGroup
 			mu       sync.Mutex
 			firstErr error
-			sem      = make(chan struct{}, conc)
+			sem      = make(chan struct{}, concurrency)
 		)
 		for _, run := range runs {
 			wg.Add(1)

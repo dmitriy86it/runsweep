@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/dmitriy86it/runsweep/internal/model"
 )
 
 // found accumulates what the importer extracted from OSV records and flags.
@@ -104,7 +106,7 @@ func (f *found) addNPM(name, ver string) {
 // addAction parses owner/repo@sha40.
 func (f *found) addAction(s string) error {
 	repo, sha, _ := strings.Cut(s, "@")
-	if !ValidRepo(repo) || !shaRe.MatchString(sha) {
+	if !ValidRepo(repo) || !model.CommitSHA.MatchString(sha) {
 		return fmt.Errorf("--action %q: want owner/repo@<40 lowercase hex>", s)
 	}
 	if f.actions[repo] == nil {

@@ -9,12 +9,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/dmitriy86it/runsweep/internal/model"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -75,8 +75,6 @@ type Incident struct {
 //go:embed presets/*.yaml
 var presetFS embed.FS
 
-var shaRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
-
 // Parse decodes and validates one incident. Unknown fields are errors.
 func Parse(b []byte) (*Incident, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(b))
@@ -116,7 +114,7 @@ func (i *Incident) Validate() error {
 			errs = append(errs, fmt.Errorf("actions %q: at least one sha is required", a.Uses))
 		}
 		for _, s := range a.SHAs {
-			if !shaRe.MatchString(s) {
+			if !model.CommitSHA.MatchString(s) {
 				errs = append(errs, fmt.Errorf("actions %q: sha %q must be 40 lowercase hex chars", a.Uses, s))
 			}
 		}

@@ -3,8 +3,12 @@ package model
 
 import (
 	"encoding/json"
+	"regexp"
 	"time"
 )
+
+// CommitSHA matches a full commit SHA: 40 lowercase hex digits.
+var CommitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // Status of a job with respect to an incident, ordered by severity.
 type Status int

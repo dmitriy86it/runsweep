@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +28,26 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version, commit, date = "dev", "none", "unknown"
+var version, commit, date = "dev", "none", "unknown" // set by the release build
+
+// versionString is "VERSION (COMMIT, DATE)". A build without release values (go install, go build)
+// falls back to what the Go toolchain recorded: the module version and the VCS revision and time.
+func versionString(v, c, d string, info *debug.BuildInfo) string {
+	if v == "dev" && info != nil {
+		if m := info.Main.Version; m != "" && m != "(devel)" {
+			v = m
+		}
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				c = s.Value
+			case "vcs.time":
+				d = s.Value
+			}
+		}
+	}
+	return fmt.Sprintf("%s (%s, %s)", v, c, d)
+}
 
 // exitCode ends the command with that code; its message has already been printed.
 type exitCode int
@@ -41,7 +61,7 @@ const (
 
 type deps struct {
 	newSource   func(token string) (source.Source, error)
-	token       func() (string, error)
+	token       func(ctx context.Context) (string, error)
 	isTerminal  func(w io.Writer) bool // nil: never a terminal
 	stdin       io.Reader              // nil: empty
 	newImporter func() *importer.Client
@@ -108,13 +128,13 @@ func validateTargets(repos []string, org string) error {
 	return nil
 }
 
-func githubToken() (string, error) {
+func githubToken(ctx context.Context) (string, error) {
 	for _, v := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
 		if t := strings.TrimSpace(os.Getenv(v)); t != "" {
 			return t, nil
 		}
 	}
-	out, err := exec.Command("gh", "auth", "token").Output()
+	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
 	if t := strings.TrimSpace(string(out)); err == nil && t != "" {
 		return t, nil
 	}
@@ -124,11 +144,14 @@ func githubToken() (string, error) {
 func run(args []string, stdout, stderr io.Writer, d deps) int {
 	root := &cobra.Command{Use: "runsweep", Short: "Find GitHub Actions jobs hit by a supply-chain incident and what to rotate",
 		SilenceUsage: true, SilenceErrors: true}
+	info, _ := debug.ReadBuildInfo()
+	root.Version = versionString(version, commit, date, info)
+	root.SetVersionTemplate("runsweep {{.Version}}\n")
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
 	root.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Run: func(c *cobra.Command, _ []string) {
-		_, _ = fmt.Fprintf(c.OutOrStdout(), "runsweep %s (%s, %s)\n", version, commit, date)
+		_, _ = fmt.Fprintf(c.OutOrStdout(), "runsweep %s\n", root.Version)
 	}})
 	incidents := &cobra.Command{Use: "incidents", Short: "List built-in incident presets", Args: func(_ *cobra.Command, args []string) error {
 		if len(args) > 0 {
@@ -230,7 +253,7 @@ Exit codes:
 			if err := inc.Validate(); err != nil {
 				return err
 			}
-			token, err := d.token()
+			token, err := d.token(c.Context())
 			if err != nil {
 				return err
 			}
@@ -299,7 +322,7 @@ Exit codes:
 			return nil
 		},
 	}
-	c.Flags().StringVar(&incRef, "incident", "", "built-in incident id (see `runsweep incidents`) or path to a YAML file")
+	c.Flags().StringVar(&incRef, "incident", "", "built-in incident id (see runsweep incidents) or path to a YAML file")
 	c.Flags().StringSliceVar(&repos, "repo", nil, "repository owner/name (repeatable)")
 	c.Flags().StringVar(&org, "org", "", "scan every repository of an organization")
 	c.Flags().StringVar(&format, "format", "", "output format: text, md or json (default text on a terminal, md otherwise)")

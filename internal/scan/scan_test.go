@@ -1018,7 +1018,9 @@ func TestScanParsedBlobsCached(t *testing.T) {
 	f.Trees["o/a@s2"] = f.Trees["o/a@s1"]
 	f.Jobs[2] = f.Jobs[1]
 	var n atomic.Int32
-	res, err := Run(context.Background(), countBlobs{f, &n}, inc, Options{Repos: []string{"o/a"}, Concurrency: 1})
+	defer func(n int) { concurrency = n }(concurrency)
+	concurrency = 1
+	res, err := Run(context.Background(), countBlobs{f, &n}, inc, Options{Repos: []string{"o/a"}})
 	if err != nil || res.Count(model.Affected) != 2 || n.Load() != 2 {
 		t.Fatalf("%d blob fetches, %v %+v", n.Load(), err, res.Findings)
 	}

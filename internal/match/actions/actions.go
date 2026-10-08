@@ -22,12 +22,11 @@ var (
 	tsRe        = regexp.MustCompile(`^(?:\x{feff})?(?:\d{4}-\d\d-\d\dT[\d:.]+Z )?`)
 	downloadRe  = regexp.MustCompile(`^Download action repository '([^'@]+)@([^']*)' \(SHA:([^)]*)\)$`)
 	immutableRe = regexp.MustCompile(`^##\[group\]Download immutable action package '([^'@]+)@([^']*)'$`)
-	shaRe       = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
 // validSHA returns s if it is a full commit SHA, else "".
 func validSHA(s string) string {
-	if shaRe.MatchString(s) {
+	if model.CommitSHA.MatchString(s) {
 		return s
 	}
 	return ""
@@ -129,7 +128,7 @@ func matchRefs(uses []string, bad []incident.Action, pinned, mutable string) (mo
 		case shas[ref]:
 			st = model.Affected
 			ev = append(ev, model.Evidence{Kind: "action", Detail: fmt.Sprintf(pinned, u)})
-		case shaRe.MatchString(ref):
+		case model.CommitSHA.MatchString(ref):
 			// pinned to a different, known-good SHA
 		default:
 			st = model.Worse(st, model.Possible)
