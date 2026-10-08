@@ -22,13 +22,11 @@ import (
 const (
 	maxRetries  = 5
 	maxParallel = 10
-	runsCap     = 1000 // GitHub returns at most 1000 runs for a `created` filter
+	maxWait     = time.Hour // longest single wait for a rate limit reset or Retry-After
+	runsCap     = 1000      // GitHub returns at most 1000 runs for a `created` filter
 )
 
-var (
-	maxLogBytes  int64 = 64 << 20 // vars so tests can shrink them
-	maxBlobBytes       = 32 << 20
-)
+var maxLogBytes int64 = 64 << 20 // a var so tests can shrink it
 
 // backoff between retries of transient failures (network errors, HTTP 5xx).
 var backoff = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
@@ -38,7 +36,7 @@ type Client struct {
 	gh    *github.Client
 	http  *http.Client
 	sem   chan struct{}
-	cache sync.Map // "tree:repo@sha" / "blob:repo@sha" -> value
+	cache sync.Map // "tree:repo@sha" -> treeVal; blobs are not cached, callers cache what they parse
 
 	Logf  func(format string, args ...any)
 	Sleep func(ctx context.Context, d time.Duration) error
@@ -141,7 +139,7 @@ func (c *Client) do(ctx context.Context, f func() (*github.Response, error)) err
 		if attempt >= maxRetries {
 			return err
 		}
-		wait = max(wait, time.Second)
+		wait = min(max(wait, time.Second), maxWait)
 		c.Logf("rate limited, waiting %s", wait.Round(time.Second))
 		if err := c.Sleep(ctx, wait); err != nil {
 			return err
@@ -355,17 +353,18 @@ func (c *Client) Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry
 	return t.entries, t.truncated, nil
 }
 
-// Blob returns the content of a git blob.
-func (c *Client) Blob(ctx context.Context, repo, blobSHA string) ([]byte, error) {
-	key := "blob:" + repo + "@" + blobSHA
-	if v, ok := c.cache.Load(key); ok {
-		return v.([]byte), nil
-	}
+// Blob returns the content of a git blob, or source.ErrIncomplete if it exceeds limit bytes.
+func (c *Client) Blob(ctx context.Context, repo, blobSHA string, limit int) ([]byte, error) {
 	owner, name := split(repo)
-	var buf capBuf
+	return c.raw(ctx, fmt.Sprintf("repos/%v/%v/git/blobs/%v", owner, name, blobSHA), limit)
+}
+
+// raw GETs an API URL with the raw media type, streaming the body into a buffer capped at limit
+// bytes instead of reading it whole.
+func (c *Client) raw(ctx context.Context, u string, limit int) ([]byte, error) {
+	buf := capBuf{max: limit}
 	err := c.do(ctx, func() (*github.Response, error) {
-		// GetBlobRaw with a size cap: stream into capBuf instead of reading the whole body.
-		req, err := c.gh.NewRequest(ctx, http.MethodGet, fmt.Sprintf("repos/%v/%v/git/blobs/%v", owner, name, blobSHA), nil)
+		req, err := c.gh.NewRequest(ctx, http.MethodGet, u, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -376,17 +375,18 @@ func (c *Client) Blob(ctx context.Context, repo, blobSHA string) ([]byte, error)
 	if err != nil {
 		return nil, err
 	}
-	b := buf.b.Bytes()
-	c.cache.Store(key, b)
-	return b, nil
+	return buf.b.Bytes(), nil
 }
 
-// capBuf fails writes past maxBlobBytes. Not an embedded bytes.Buffer: io.Copy would use its ReadFrom.
-type capBuf struct{ b bytes.Buffer }
+// capBuf fails writes past max bytes. Not an embedded bytes.Buffer: io.Copy would use its ReadFrom.
+type capBuf struct {
+	b   bytes.Buffer
+	max int
+}
 
 func (c *capBuf) Write(p []byte) (int, error) {
-	if c.b.Len()+len(p) > maxBlobBytes {
-		return 0, fmt.Errorf("%w: blob exceeds %d MB", source.ErrIncomplete, maxBlobBytes>>20)
+	if c.b.Len()+len(p) > c.max {
+		return 0, fmt.Errorf("%w: file exceeds %d bytes", source.ErrIncomplete, c.max)
 	}
 	return c.b.Write(p)
 }

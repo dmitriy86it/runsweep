@@ -22,6 +22,23 @@ var (
 	ErrRunsCapped = errors.New("runs not scanned: API cap of 1000 runs in a window ≤1 min")
 )
 
+// Size caps for fetched files: a larger file is unreadable (source.ErrIncomplete).
+const (
+	MaxWorkflowBytes = 1 << 20  // workflow files
+	MaxManifestBytes = 32 << 20 // lockfiles and package.json
+)
+
+// parseSem bounds concurrent parsing of fetched files: each parse may take several times its
+// file size in memory.
+var parseSem = make(chan struct{}, 2)
+
+// Parse runs f holding one of two process-wide parse slots.
+func Parse(f func()) {
+	parseSem <- struct{}{}
+	defer func() { <-parseSem }()
+	f()
+}
+
 // Run is a workflow run.
 type Run struct {
 	ID        int64
@@ -61,5 +78,6 @@ type Source interface {
 	ListJobs(ctx context.Context, repo string, runID int64) ([]Job, error)
 	JobLog(ctx context.Context, repo string, jobID int64) (string, error)
 	Tree(ctx context.Context, repo, sha string) (entries []TreeEntry, truncated bool, err error)
-	Blob(ctx context.Context, repo, blobSHA string) ([]byte, error)
+	// Blob returns ErrIncomplete for a blob larger than limit bytes.
+	Blob(ctx context.Context, repo, blobSHA string, limit int) ([]byte, error)
 }

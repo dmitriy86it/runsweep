@@ -118,7 +118,8 @@ func TestRetriesOnRateLimit(t *testing.T) {
 	}
 }
 
-func TestTreeAndBlobCached(t *testing.T) {
+// Trees are cached; blobs are not (callers cache what they parse from them).
+func TestTreeCached(t *testing.T) {
 	var n atomic.Int32
 	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n.Add(1)
@@ -135,12 +136,12 @@ func TestTreeAndBlobCached(t *testing.T) {
 		if err != nil || tr || len(es) != 1 || es[0].SHA != "b1" {
 			t.Fatalf("%v %v %v", es, tr, err)
 		}
-		if b, err := c.Blob(ctx, "o/r", "b1"); err != nil || string(b) != `{"lockfileVersion":3}` {
+		if b, err := c.Blob(ctx, "o/r", "b1", 100); err != nil || string(b) != `{"lockfileVersion":3}` {
 			t.Fatalf("%s %v", b, err)
 		}
 	}
-	if n.Load() != 2 {
-		t.Fatalf("want 2 HTTP calls (cached), got %d", n.Load())
+	if n.Load() != 3 {
+		t.Fatalf("want 3 HTTP calls (tree cached), got %d", n.Load())
 	}
 }
 
@@ -252,6 +253,41 @@ func TestRetryAfterSecondaryLimit(t *testing.T) {
 	jobs, err := c.ListJobs(context.Background(), "o/r", 1)
 	if err != nil || len(jobs) != 1 || slept != time.Second {
 		t.Fatalf("%v %v slept=%v", jobs, err, slept)
+	}
+}
+
+// A primary reset or a Retry-After far away is waited for at most an hour at a time.
+func TestRateLimitWaitCapped(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(http.Header)
+	}{
+		{"primary", func(h http.Header) {
+			h.Set("X-RateLimit-Limit", "5000")
+			h.Set("X-RateLimit-Remaining", "0")
+			h.Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(3*time.Hour).Unix(), 10))
+		}},
+		{"secondary", func(h http.Header) { h.Set("Retry-After", "10800") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				tc.set(w.Header())
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = fmt.Fprint(w, `{"message":"API rate limit exceeded","documentation_url":"https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits"}`)
+			}))
+			sleeps := recordSleeps(c)
+			if _, err := c.ListJobs(context.Background(), "o/r", 1); err == nil {
+				t.Fatal("want an error after the retries")
+			}
+			if len(*sleeps) != maxRetries {
+				t.Fatalf("want %d waits, got %v", maxRetries, *sleeps)
+			}
+			for _, d := range *sleeps {
+				if d > time.Hour {
+					t.Fatalf("wait %s exceeds 1h", d)
+				}
+			}
+		})
 	}
 }
 
@@ -386,9 +422,6 @@ func TestJobLogDownloadRetries(t *testing.T) {
 }
 
 func TestBlobTooBig(t *testing.T) {
-	old := maxBlobBytes
-	maxBlobBytes = 10
-	t.Cleanup(func() { maxBlobBytes = old })
 	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := "0123456789"
 		if strings.HasSuffix(r.URL.Path, "/big") {
@@ -396,10 +429,10 @@ func TestBlobTooBig(t *testing.T) {
 		}
 		_, _ = fmt.Fprint(w, body)
 	}))
-	if b, err := c.Blob(context.Background(), "o/r", "small"); err != nil || string(b) != "0123456789" {
+	if b, err := c.Blob(context.Background(), "o/r", "small", 10); err != nil || string(b) != "0123456789" {
 		t.Fatalf("%q %v", b, err)
 	}
-	if _, err := c.Blob(context.Background(), "o/r", "big"); !errors.Is(err, source.ErrIncomplete) {
+	if _, err := c.Blob(context.Background(), "o/r", "big", 10); !errors.Is(err, source.ErrIncomplete) {
 		t.Fatalf("want ErrIncomplete, got %v", err)
 	}
 }

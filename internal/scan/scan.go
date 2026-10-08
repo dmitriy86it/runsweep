@@ -39,7 +39,8 @@ type Options struct {
 type scanner struct {
 	src source.Source
 	inc *incident.Incident
-	wf  sync.Map // repo@sha:path -> wfEntry
+	wf  sync.Map // repo@sha:path and blob:<sha> -> wfEntry
+	npm npm.Cache
 }
 
 // soft errors mean "could not check", never "clean".
@@ -239,19 +240,31 @@ func (s *scanner) workflow(ctx context.Context, repo, sha, path string, lenient 
 		if t.Path != path {
 			continue
 		}
-		b, err := s.src.Blob(ctx, repo, t.SHA)
+		if v, ok := s.wf.Load("blob:" + t.SHA); ok {
+			e = v.(wfEntry)
+			continue
+		}
+		b, err := s.src.Blob(ctx, repo, t.SHA, source.MaxWorkflowBytes)
 		if err != nil {
 			return fail("file", err)
 		}
-		if e.wf, err = workflow.Parse(b); err != nil {
-			e.wf, e.reason = nil, "parse error: "+err.Error()
-		}
-	}
-	if e.wf != nil {
-		e.reason = ""
+		e = parseWorkflow(b)
+		s.wf.Store("blob:"+t.SHA, e)
 	}
 	s.wf.Store(key, e)
 	return e.wf, e.reason, nil
+}
+
+// parseWorkflow parses a workflow file into a cache entry.
+func parseWorkflow(b []byte) wfEntry {
+	var e wfEntry
+	source.Parse(func() {
+		var err error
+		if e.wf, err = workflow.Parse(b); err != nil {
+			e.wf, e.reason = nil, "parse error: "+err.Error()
+		}
+	})
+	return e
 }
 
 func note(format string, args ...any) model.Evidence {
@@ -287,7 +300,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 
 	var npmRes npm.Result
 	if len(s.inc.NPM) > 0 {
-		npmRes, err = npm.Match(ctx, s.src, repo, run.HeadSHA, s.inc.NPM)
+		npmRes, err = s.npm.Match(ctx, s.src, repo, run.HeadSHA, s.inc.NPM)
 		if soft(err) { // keep evidence found before the error
 			npmRes.Status = model.Worse(npmRes.Status, model.Unchecked)
 			npmRes.Evidence = append(npmRes.Evidence, note("commit tree or file unavailable: %v", err))

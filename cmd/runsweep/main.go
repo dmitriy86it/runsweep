@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -62,7 +63,7 @@ func isTerminal(w io.Writer) bool {
 }
 
 func newGitHub(token string) (source.Source, error) {
-	c, err := gh.New(nil, token, "")
+	c, err := gh.New(&http.Client{Timeout: 5 * time.Minute}, token, "") // bounds a stalled request, log downloads included
 	if err != nil {
 		return nil, err
 	}

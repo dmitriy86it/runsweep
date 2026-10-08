@@ -71,10 +71,13 @@ func (f *Fake) Tree(_ context.Context, repo, sha string) ([]source.TreeEntry, bo
 }
 
 // Blob implements source.Source.
-func (f *Fake) Blob(_ context.Context, _ string, blobSHA string) ([]byte, error) {
+func (f *Fake) Blob(_ context.Context, _ string, blobSHA string, limit int) ([]byte, error) {
 	b, ok := f.Blobs[blobSHA]
 	if !ok {
 		return nil, source.ErrNoAccess
+	}
+	if len(b) > limit {
+		return nil, source.ErrIncomplete
 	}
 	return b, nil
 }
