@@ -246,11 +246,18 @@ func TestMatchUnsupportedLockfile(t *testing.T) {
 		if r.Status != model.Unchecked || !hasDetail(r, "web/"+name) {
 			t.Errorf("%s: %+v", name, r)
 		}
-		// next to a supported lockfile it is ignored
+		// next to a supported lockfile, that lockfile is read but may be stale: UNCHECKED, hits kept
+		stale := "web/" + name + " present but not read — web/package-lock.json may be stale"
 		f.AddFile("o/r", "s1", "web/package-lock.json", []byte(`{"packages":{"":{}}}`))
 		f.AddFile("o/r", "s1", "node_modules/x/"+name, []byte("x"))
-		if r, _ = new(Cache).Match(context.Background(), f, "o/r", "s1", bad); r.Status != model.Clean {
+		if r, _ = new(Cache).Match(context.Background(), f, "o/r", "s1", bad); r.Status != model.Unchecked || !hasDetail(r, stale) || hasDetail(r, "node_modules") {
 			t.Errorf("%s with package-lock: %+v", name, r)
+		}
+		f = sourcetest.New()
+		f.AddFile("o/r", "s1", "web/"+name, []byte("x"))
+		f.AddFile("o/r", "s1", "web/package-lock.json", []byte(`{"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+		if r, _ = new(Cache).Match(context.Background(), f, "o/r", "s1", bad); r.Status != model.Affected || !hasDetail(r, stale) {
+			t.Errorf("%s with a bad package-lock: %+v", name, r)
 		}
 	}
 }

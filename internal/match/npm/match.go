@@ -128,8 +128,14 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 		}
 	}
 	for _, e := range entries {
-		if dir := path.Dir(e.Path); IsUnsupportedLockfile(e.Path) && lockNames[dir] == nil {
-			r.Status = model.Worse(r.Status, model.Unchecked)
+		if !IsUnsupportedLockfile(e.Path) {
+			continue
+		}
+		r.Status = model.Worse(r.Status, model.Unchecked)
+		// next to a supported lockfile: that one was read, but the project may install with the other
+		if dir := path.Dir(e.Path); lockNames[dir] != nil {
+			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("%s present but not read — %s may be stale", e.Path, lockPaths[dir])})
+		} else {
 			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("unsupported lockfile %s — packages not checked", e.Path)})
 			failedDirs[dir] = true
 		}

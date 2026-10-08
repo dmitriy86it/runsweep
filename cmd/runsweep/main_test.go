@@ -723,10 +723,16 @@ func TestTokenFromGHToken(t *testing.T) {
 }
 
 func TestVersionFlagAndCommand(t *testing.T) {
+	first := ""
 	for _, args := range [][]string{{"--version"}, {"-v"}, {"version"}} {
 		var out, errb bytes.Buffer
 		if code := run(args, &out, &errb, deps{}); code != 0 || !strings.HasPrefix(out.String(), "runsweep ") {
 			t.Fatalf("%v: code %d %q %q", args, code, out.String(), errb.String())
+		}
+		if first == "" {
+			first = out.String()
+		} else if out.String() != first {
+			t.Errorf("%v: %q, want the same as --version: %q", args, out.String(), first)
 		}
 	}
 }
