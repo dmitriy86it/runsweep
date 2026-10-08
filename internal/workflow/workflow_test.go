@@ -3,6 +3,7 @@ package workflow
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -355,6 +356,15 @@ func TestParseCall(t *testing.T) {
 		"./.github/workflows/../secrets.yml",
 		"./scripts/x.yml",
 		"actions/checkout@" + sha,
+		"org/shared/.github/workflows/a.yml@" + sha + "@" + sha,
+		"org/shared/.github/workflows/a.yml@" + strings.ToUpper(sha),
+		"/shared/.github/workflows/a.yml@" + sha,
+		"org/./.github/workflows/a.yml@" + sha,
+		"./.github/workflows/a.yml@main",
+		"/.github/workflows/a.yml",
+		"./.github/workflows/sub/a.yml",
+		"org/shared/.github/workflows/sub/a.yml@" + sha,
+		"./.github/workflows/a\\b.yml",
 	} {
 		if c, ok := ParseCall(uses); ok {
 			t.Errorf("%q must not be readable: %+v", uses, c)
@@ -418,6 +428,18 @@ func TestThrough(t *testing.T) {
 	// callee names (TOKEN, DEPLOY_KEY) are mapping keys or unset here, not the caller's secrets
 	if e.InheritAll || !e.IDTokenWrite || !slices.Equal(e.Secrets, []string{"CALLER_GLOBAL", "NPM_TOKEN"}) {
 		t.Fatalf("explicit: %+v", e)
+	}
+	// callee id-token: write is not lost to an empty callee permissions block either way
+	cw2, _ := Parse([]byte("on: workflow_call\njobs:\n  d: {permissions: {}, runs-on: x}\n"))
+	if _, ej2 := w.Through(w.Jobs["explicit"], cw2, cw2.Jobs["d"]); !ej2.IDTokenWrite {
+		t.Fatal("caller id-token: write must carry through")
+	}
+
+	// callee job with environment: reads that environment's secrets even when the caller passes explicitly
+	cw3, _ := Parse([]byte("on: workflow_call\nenv: {C: \"${{ secrets.CALLEE_GLOBAL }}\"}\njobs:\n  d:\n    runs-on: x\n    environment: prod\n    steps: [{run: x, env: {K: \"${{ secrets.PROD_AWS_KEY }}\"}}]\n"))
+	ew, ej = w.Through(w.Jobs["explicit"], cw3, cw3.Jobs["d"])
+	if e = ew.Exposure(ej); e.InheritAll || !slices.Contains(e.Secrets, "PROD_AWS_KEY") || !slices.Contains(e.Secrets, "NPM_TOKEN") {
+		t.Fatalf("environment: %+v", e)
 	}
 	if !slices.Equal(c.Secrets, []string{"DEPLOY_KEY", "TOKEN"}) || len(w.Jobs["explicit"].Secrets) != 1 {
 		t.Fatal("Through must not modify its inputs")

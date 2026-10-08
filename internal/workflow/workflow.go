@@ -4,7 +4,6 @@ package workflow
 import (
 	"bufio"
 	"fmt"
-	"path"
 	"regexp"
 	"slices"
 	"sort"
@@ -19,6 +18,7 @@ type Job struct {
 	ID             string
 	Name           string
 	Uses           []string // step-level `uses:` plus reusable-workflow `uses:`
+	Environment    bool     // job declares `environment:`, so it reads that environment's secrets directly
 	Call           string   // job-level `uses:`: the reusable workflow this job calls
 	Runs           []string // `run:` scripts
 	Secrets        []string
@@ -83,6 +83,9 @@ func Parse(b []byte) (*Workflow, error) {
 		if u := scalar(get(jn, "uses")); u != "" {
 			j.Uses = append(j.Uses, u)
 			j.Call = u
+		}
+		if env := get(jn, "environment"); env != nil {
+			j.Environment = env.Value != "" || len(env.Content) > 0
 		}
 		j.InheritSecrets = dyn || scalar(get(jn, "secrets")) == "inherit"
 		if steps := get(jn, "steps"); steps != nil {
@@ -268,6 +271,8 @@ type Call struct {
 var (
 	commitRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	nameRe   = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	// GitHub supports no subdirectories under .github/workflows
+	workflowPathRe = regexp.MustCompile(`^\.github/workflows/[^/\\]+\.ya?ml$`)
 )
 
 // ParseCall parses a job-level `uses:`. ok is false unless it is a local call
@@ -291,20 +296,24 @@ func ParseCall(uses string) (c Call, ok bool) {
 }
 
 func workflowPath(p string) bool {
-	return strings.HasPrefix(p, ".github/workflows/") && path.Clean(p) == p &&
-		(strings.HasSuffix(p, ".yml") || strings.HasSuffix(p, ".yaml"))
+	return workflowPathRe.MatchString(p)
 }
 
 // Through returns the job that ran when job j of w called workflow cw and the API job is cw's
 // job c, plus a one-job workflow for its Exposure. Uses, Runs, CloudRoles and Call come from c;
 // IDTokenWrite is j's or c's; secrets are those j passes, plus the names cw and c reference
-// when j uses `secrets: inherit` (only then are those the caller's secret names).
+// when j uses `secrets: inherit` or c declares `environment:` (only then are those the caller's secret names).
 func (w *Workflow) Through(j *Job, cw *Workflow, c *Job) (*Workflow, *Job) {
-	e := &Job{ID: j.ID, Name: j.Name, Uses: c.Uses, Runs: c.Runs, Call: c.Call,
-		Secrets: append([]string{}, j.Secrets...), InheritSecrets: j.InheritSecrets,
-		IDTokenWrite: j.IDTokenWrite || c.IDTokenWrite,
-		CloudRoles:   append(append([]model.CloudRole{}, j.CloudRoles...), c.CloudRoles...)}
-	if j.InheritSecrets {
+	e := &Job{ID: j.ID, Name: j.Name, Uses: slices.Clone(c.Uses), Runs: slices.Clone(c.Runs), Call: c.Call,
+		Secrets: slices.Clone(j.Secrets), InheritSecrets: j.InheritSecrets,
+		IDTokenWrite: j.IDTokenWrite || c.IDTokenWrite, CloudRoles: slices.Clone(j.CloudRoles)}
+	for _, r := range c.CloudRoles {
+		if !slices.Contains(e.CloudRoles, r) {
+			e.CloudRoles = append(e.CloudRoles, r)
+		}
+	}
+	// a callee job with `environment:` reads that environment's secrets directly
+	if j.InheritSecrets || c.Environment {
 		e.Secrets = append(append(e.Secrets, cw.globalSecrets...), c.Secrets...)
 	}
 	return &Workflow{Jobs: map[string]*Job{e.ID: e}, globalSecrets: w.globalSecrets, globalDynamic: w.globalDynamic}, e
