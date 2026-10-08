@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/dmitriy86it/runsweep/internal/incident"
 	"github.com/dmitriy86it/runsweep/internal/model"
@@ -17,7 +19,7 @@ import (
 // Fetcher is the part of source.Source the matcher needs.
 type Fetcher interface {
 	Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry, bool, error)
-	Blob(ctx context.Context, repo, blobSHA string) ([]byte, error)
+	Blob(ctx context.Context, repo, blobSHA string, limit int) ([]byte, error)
 }
 
 // Result is the outcome of matching lockfile packages against an incident.
@@ -26,15 +28,57 @@ type Result struct {
 	Evidence []model.Evidence
 }
 
+// maxManifests caps the lockfiles and package.json files read per commit tree.
+const maxManifests = 500
+
+// Cache keeps the parsed lockfiles and package.json files of one scan by file name and blob SHA,
+// so a file shared by many commits is fetched and parsed once. The zero value is ready to use.
+type Cache struct{ m sync.Map }
+
+// parsed is a cached parse: pkgs of a lockfile or names of a package.json, or why it is unreadable.
+type parsed struct {
+	pkgs  []Pkg
+	names []string
+	err   error
+}
+
+// load returns the parse of tree entry e; a file over the size cap is unreadable, like a parse error.
+func (c *Cache) load(ctx context.Context, f Fetcher, repo string, e source.TreeEntry, parse func([]byte) parsed) (parsed, error) {
+	key := path.Base(e.Path) + "@" + e.SHA
+	if v, ok := c.m.Load(key); ok {
+		return v.(parsed), nil
+	}
+	b, err := f.Blob(ctx, repo, e.SHA, source.MaxManifestBytes)
+	var p parsed
+	switch {
+	case errors.Is(err, source.ErrIncomplete):
+		p.err = err
+	case err != nil:
+		return p, err
+	default:
+		source.Parse(func() { p = parse(b) })
+	}
+	c.m.Store(key, p)
+	return p, nil
+}
+
 // Match checks every lockfile in repo@sha for bad versions. A package.json that lists a bad
 // package and has no lockfile in its directory yields POSSIBLE; one with dependencies and no
 // lockfile there or above, or a lockfile runsweep cannot read, yields UNCHECKED.
-func Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMPackage) (Result, error) {
+func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMPackage) (Result, error) {
 	var r Result
 	entries, truncated, err := f.Tree(ctx, repo, sha)
 	if err != nil {
 		return r, err
 	}
+	isPkgJSON := func(p string) bool { return path.Base(p) == "package.json" && !InNodeModules(p) }
+	manifests := 0
+	for _, e := range entries {
+		if IsLockfile(e.Path) || isPkgJSON(e.Path) {
+			manifests++
+		}
+	}
+	reads := 0 // manifests read so far; past maxManifests the rest are skipped
 	badVer := map[string]map[string]bool{}
 	for _, p := range bad {
 		badVer[p.Name] = map[string]bool{}
@@ -49,12 +93,19 @@ func Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMP
 		if !IsLockfile(e.Path) {
 			continue
 		}
-		b, err := f.Blob(ctx, repo, e.SHA)
+		dir := path.Dir(e.Path)
+		if reads++; reads > maxManifests {
+			failedDirs[dir] = true // not read: its package.json files count as unlocked
+			continue
+		}
+		p, err := c.load(ctx, f, repo, e, func(b []byte) parsed {
+			pkgs, err := ParseLockfile(e.Path, b) // on an error, pkgs is what could be read (pnpm)
+			return parsed{pkgs: pkgs, err: err}
+		})
 		if err != nil {
 			return r, err
 		}
-		pkgs, err := ParseLockfile(e.Path, b) // on an error, pkgs is what could be read (pnpm)
-		dir := path.Dir(e.Path)
+		pkgs, err := p.pkgs, p.err
 		if err != nil {
 			r.Status = model.Worse(r.Status, model.Unchecked)
 			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("cannot parse %s: %v", e.Path, err)})
@@ -85,14 +136,20 @@ func Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMP
 	}
 	if r.Status != model.Affected {
 		for _, e := range entries {
-			if path.Base(e.Path) != "package.json" || InNodeModules(e.Path) {
+			if !isPkgJSON(e.Path) {
 				continue
 			}
-			b, err := f.Blob(ctx, repo, e.SHA)
+			if reads++; reads > maxManifests {
+				continue
+			}
+			p, err := c.load(ctx, f, repo, e, func(b []byte) parsed {
+				names, err := declared(b)
+				return parsed{names: names, err: err}
+			})
 			if err != nil {
 				return r, err
 			}
-			names, err := declared(b)
+			names, err := p.names, p.err
 			if err != nil {
 				r.Status = model.Worse(r.Status, model.Unchecked)
 				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("cannot parse %s: %v", e.Path, err)})
@@ -125,6 +182,10 @@ func Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMP
 				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("no lockfile for %s — transitive dependencies unknown", e.Path)})
 			}
 		}
+	}
+	if manifests > maxManifests {
+		r.Status = model.Worse(r.Status, model.Unchecked)
+		r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("too many manifests (%d) — not all read", manifests)})
 	}
 	if truncated {
 		r.Status = model.Worse(r.Status, model.Unchecked)

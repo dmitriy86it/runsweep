@@ -120,11 +120,11 @@ type errSrc struct {
 	blobErr map[string]error // blob SHA -> error
 }
 
-func (s errSrc) Blob(ctx context.Context, repo, sha string) ([]byte, error) {
+func (s errSrc) Blob(ctx context.Context, repo, sha string, limit int) ([]byte, error) {
 	if err := s.blobErr[sha]; err != nil {
 		return nil, err
 	}
-	return s.Fake.Blob(ctx, repo, sha)
+	return s.Fake.Blob(ctx, repo, sha, limit)
 }
 
 func (s errSrc) JobLog(ctx context.Context, repo string, id int64) (string, error) {
@@ -977,5 +977,46 @@ func TestScanPackageNamedAtRunTime(t *testing.T) {
 	if err != nil || len(res.Findings) != 1 || res.Findings[0].Status != model.Unchecked ||
 		!hasNote(res.Findings[0], "package named at run time: `npm i -g $TOOL`") {
 		t.Fatalf("%v %+v", err, res.Findings)
+	}
+}
+
+// A workflow file over 1 MiB is unreadable: never judged from a partial read.
+func TestScanOversizeWorkflowIsUnavailable(t *testing.T) {
+	f := fixture()
+	f.Trees["o/a@s1"] = nil
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(ciYAML+"#"+strings.Repeat("x", source.MaxWorkflowBytes)))
+	f.Logs[10] = "2026-03-31T01:00:00Z log without download records\n"
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	res, err := Run(context.Background(), f, actOnly, Options{Repos: []string{"o/a"}})
+	if err != nil || len(res.Findings) != 2 {
+		t.Fatalf("%v %+v", err, res.Findings)
+	}
+	for _, fd := range res.Findings {
+		if fd.Status != model.Unchecked || !hasNote(fd, "the workflow file is unavailable") {
+			t.Fatalf("%+v", fd)
+		}
+	}
+}
+
+type countBlobs struct {
+	*sourcetest.Fake
+	n *atomic.Int32
+}
+
+func (s countBlobs) Blob(ctx context.Context, repo, sha string, limit int) ([]byte, error) {
+	s.n.Add(1)
+	return s.Fake.Blob(ctx, repo, sha, limit)
+}
+
+// Runs of different commits that share the workflow and lockfile blobs fetch each blob once.
+func TestScanParsedBlobsCached(t *testing.T) {
+	f := fixture()
+	f.Runs["o/a"] = append(f.Runs["o/a"], source.Run{ID: 2, Path: ".github/workflows/ci.yml", HeadSHA: "s2", CreatedAt: t0})
+	f.Trees["o/a@s2"] = f.Trees["o/a@s1"]
+	f.Jobs[2] = f.Jobs[1]
+	var n atomic.Int32
+	res, err := Run(context.Background(), countBlobs{f, &n}, inc, Options{Repos: []string{"o/a"}, Concurrency: 1})
+	if err != nil || res.Count(model.Affected) != 2 || n.Load() != 2 {
+		t.Fatalf("%d blob fetches, %v %+v", n.Load(), err, res.Findings)
 	}
 }
