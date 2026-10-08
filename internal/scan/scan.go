@@ -23,7 +23,11 @@ import (
 	"github.com/dmitriy86it/runsweep/internal/workflow"
 )
 
-var installLogRe = regexp.MustCompile(`npm (ci|install)|added \d+ packages|yarn install|pnpm install|Lockfile is up to date|bun install`)
+// installLogRe matches a job log line of a package install by npm, pnpm, yarn v1, yarn berry or bun.
+var installLogRe = regexp.MustCompile(`npm (ci|install|i)\b|added \d+ packages?|up to date, audited|` +
+	`pnpm (i|install|add)\b|Packages: \+\d+|Progress: resolved|Lockfile is up to date|` +
+	`yarn install|success Saved lockfile|\[\d/\d\] (Resolving|Fetching) packages|YN0000: .*(Resolution step|Fetch step|Link step)|` +
+	`bun install|\d+ packages? installed`)
 
 // concurrency is how many runs of a repository are scanned at once; tests set 1 for a fixed order.
 var concurrency = 10
@@ -374,7 +378,11 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			}
 		}
 		// Drop npm evidence only on positive evidence the job cannot install packages.
-		if npmRes.Status > model.Clean && (wj == nil || wj.MayInstallNPM() || logErr == nil && installLogRe.MatchString(log)) {
+		// A missing or unreadable lockfile matters only to a job that installed: an UNCHECKED-only
+		// result is dropped when the log was read and shows no install the workflow does not name.
+		noInstall := npmRes.Status == model.Unchecked && logErr == nil && !installLogRe.MatchString(log) &&
+			len(installs) == 0 && (wj == nil || !wj.InstallsNPM())
+		if npmRes.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logErr == nil && installLogRe.MatchString(log)) {
 			f.Status = model.Worse(f.Status, npmRes.Status)
 			f.Evidence = append(f.Evidence, npmRes.Evidence...)
 		}

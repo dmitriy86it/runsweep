@@ -1137,3 +1137,65 @@ func TestScanUnpinnedCallWithNPMIsUnchecked(t *testing.T) {
 		t.Fatalf("%+v", fd)
 	}
 }
+
+// A job whose log shows no package install is not UNCHECKED for a package.json without a lockfile.
+func TestScanNoLockfileWithoutInstallInLog(t *testing.T) {
+	rust := func(log, lock string) *sourcetest.Fake {
+		f := sourcetest.New()
+		f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+		f.Jobs[1] = []source.Job{{ID: 10, Name: "rust"}}
+		f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  rust:\n    runs-on: x\n    steps:\n"+
+			"      - uses: actions/checkout@v4\n      - uses: dtolnay/rust-toolchain@stable\n      - run: cargo build\n"))
+		f.AddFile("o/a", "s1", "bindings/node/package.json", []byte(`{"dependencies":{"@napi-rs/cli":"^2"}}`))
+		if lock != "" {
+			f.AddFile("o/a", "s1", "package-lock.json", []byte(lock))
+		}
+		f.Logs[10] = log
+		return f
+	}
+	cargo := "2026-03-31T01:00:00Z    Compiling serde v1.0.0\n2026-03-31T01:00:00Z     Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.20s\n"
+	if res, err := Run(context.Background(), rust(cargo, ""), npmOnly, Options{Repos: []string{"o/a"}}); err != nil || len(res.Findings) != 0 {
+		t.Fatalf("no install: %v %+v", err, res.Findings)
+	}
+	for _, l := range []string{"2026-03-31T01:00:00Z npm ci\n", "2026-03-31T01:00:00Z added 12 packages in 1s\n"} {
+		if fd := scanOne(t, rust(cargo+l, ""), npmOnly); fd.Status != model.Unchecked || !hasNote(fd, "no lockfile for bindings/node/package.json") {
+			t.Fatalf("%q: %+v", l, fd)
+		}
+	}
+	if fd := scanOne(t, rust(cargo, `{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`), npmOnly); fd.Status != model.Affected {
+		t.Fatalf("affected: %+v", fd)
+	}
+}
+
+func TestInstallLogRe(t *testing.T) {
+	for line, want := range map[string]bool{
+		"added 312 packages, and audited 313 packages in 4s":                true,
+		"added 1 package in 1s":                                             true,
+		"up to date, audited 120 packages in 900ms":                         true,
+		"[command]/usr/local/bin/npm ci":                                    true,
+		"npm i --no-audit":                                                  true,
+		"Packages: +245":                                                    true,
+		"Progress: resolved 245, reused 240, downloaded 5, added 245, done": true,
+		"pnpm i --frozen-lockfile":                                          true,
+		"pnpm add left-pad":                                                 true,
+		"success Saved lockfile.":                                           true,
+		"[1/4] Resolving packages...":                                       true,
+		"[2/4] Fetching packages...":                                        true,
+		"yarn install v1.22.22":                                             true,
+		"➤ YN0000: ┌ Resolution step":                                       true,
+		"➤ YN0000: ┌ Fetch step":                                            true,
+		"➤ YN0000: ┌ Link step":                                             true,
+		"245 packages installed [1.20s]":                                    true,
+		"bun install v1.1.0":                                                true,
+		"   Compiling serde v1.0.210":                                       false,
+		"    Finished `release` profile [optimized] target(s) in 1m 02s":    false,
+		"     Running unittests src/lib.rs (target/debug/deps/net-1a2b3c)":  false,
+		"Downloaded 42 crates (3.1 MB) in 1.20s":                            false,
+		"test result: ok. 12 passed; 0 failed; 0 ignored":                   false,
+		"npm warn config production Use `--omit=dev` instead.":              false,
+	} {
+		if installLogRe.MatchString(line) != want {
+			t.Errorf("%q: want %v", line, want)
+		}
+	}
+}
