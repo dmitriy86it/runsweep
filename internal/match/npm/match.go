@@ -182,6 +182,7 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 		var read []pkgJSON
 		local := map[string]bool{}  // names of the tree's own packages (workspaces); yarn v1 does not lock them
 		ws := map[string][]string{} // dir -> workspace globs; absent: its lockfile covers everything below
+		pnpmWS := map[string]bool{} // dirs with a pnpm-workspace.yaml
 		for _, e := range entries {
 			if path.Base(e.Path) != "pnpm-workspace.yaml" || InNodeModules(e.Path) {
 				continue
@@ -194,7 +195,8 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			if err != nil {
 				return r, err
 			}
-			if p.err == nil { // unreadable: keep the ancestor rule
+			pnpmWS[path.Dir(e.Path)] = true // package.json workspaces next to it are ignored
+			if p.err == nil {               // unreadable: keep the ancestor rule
 				ws[path.Dir(e.Path)] = p.m.ws
 			}
 		}
@@ -221,8 +223,7 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			if p.m.name != "" && manifests <= maxManifests { // past the cap not every local name is known
 				local[p.m.name] = true
 			}
-			if p.m.hasWS {
-				d := path.Dir(e.Path)
+			if d := path.Dir(e.Path); p.m.hasWS && !pnpmWS[d] {
 				ws[d] = append(ws[d], p.m.ws...)
 			}
 		}
@@ -278,13 +279,24 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 }
 
 // member reports whether rel (a dir relative to the workspace root) matches the workspace globs:
-// `*` within a segment, `**` across segments, a leading `!` excludes.
+// `*` within a segment, `**` across segments, a leading `!` excludes. A hidden segment is never
+// a member, and a negation runsweep cannot evaluate (braces, bad pattern) excludes everything.
 func member(globs []string, rel string) bool {
+	segs := strings.Split(rel, "/")
+	if slices.ContainsFunc(segs, func(s string) bool { return strings.HasPrefix(s, ".") }) {
+		return false
+	}
 	in := false
 	for _, g := range globs {
 		neg := strings.HasPrefix(g, "!")
-		g = strings.Trim(strings.TrimPrefix(strings.TrimPrefix(g, "!"), "./"), "/")
-		if globMatch(strings.Split(g, "/"), strings.Split(rel, "/")) {
+		pat := strings.Split(strings.Trim(strings.TrimPrefix(strings.TrimPrefix(g, "!"), "./"), "/"), "/")
+		if neg && (strings.Contains(g, "{") || slices.ContainsFunc(pat, func(p string) bool {
+			_, err := path.Match(p, "")
+			return err != nil
+		})) {
+			return false
+		}
+		if globMatch(pat, segs) {
 			if neg {
 				return false
 			}
@@ -294,23 +306,22 @@ func member(globs []string, rel string) bool {
 	return in
 }
 
+// globMatch matches path segments against pattern segments in O(len(pat)·len(segs)).
 func globMatch(pat, segs []string) bool {
-	if len(pat) == 0 {
-		return len(segs) == 0
-	}
-	if pat[0] == "**" {
-		for i := 0; i <= len(segs); i++ {
-			if globMatch(pat[1:], segs[i:]) {
-				return true
+	ok := make([]bool, len(segs)+1) // ok[j]: the pattern so far matches segs[:j]
+	ok[0] = true
+	for _, p := range pat {
+		next := make([]bool, len(segs)+1)
+		for j := range next {
+			if p == "**" {
+				next[j] = ok[j] || j > 0 && next[j-1]
+			} else if j > 0 && ok[j-1] {
+				next[j], _ = path.Match(p, segs[j-1])
 			}
 		}
-		return false
+		ok = next
 	}
-	if len(segs) == 0 {
-		return false
-	}
-	ok, _ := path.Match(pat[0], segs[0])
-	return ok && globMatch(pat[1:], segs[1:])
+	return ok[len(segs)]
 }
 
 // declared returns what a package.json declares: its own name, its sorted, distinct dependency
