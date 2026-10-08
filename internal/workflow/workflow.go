@@ -245,6 +245,10 @@ func (j *Job) InstallsNPM() bool {
 	return len(j.RunInstalls()) > 0
 }
 
+// CallsPackageManager reports whether s calls npm, npx, yarn, pnpm, pnpx, bun or bunx as a command
+// word; NPM_TOKEN or npm_config_* names do not count.
+func CallsPackageManager(s string) bool { return installRe.MatchString(s) }
+
 // RunInstall is a command that installs or runs npm packages named in the workflow itself.
 type RunInstall struct {
 	Cmd  string
