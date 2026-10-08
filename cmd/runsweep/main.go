@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dmitriy86it/runsweep/internal/gh"
@@ -172,11 +173,12 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	root.AddCommand(incidents)
 	root.AddCommand(scanCmd(d))
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// SIGTERM too: CI cancellation and timeouts send it, and the partial report should still print
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
 		<-ctx.Done()
-		stop() // a second Ctrl-C kills the process instead of waiting for the partial report
+		stop() // a second signal kills the process instead of waiting for the partial report
 	}()
 	err := root.ExecuteContext(ctx)
 	var code exitCode
