@@ -1,0 +1,109 @@
+id: trivy-action-2026-03
+title: "aquasecurity/trivy-action and setup-trivy tags hijacked (CVE-2026-33634)"
+# 75 trivy-action and 7 setup-trivy malicious commits. Full SHAs: StepSecurity (trivy-compromise-scanner
+# internal/scanner/patterns.go, 82 SHAs) and Socket (75 trivy-action SHAs; the 7 setup-trivy SHAs from Socket's
+# list as republished by Wiz). Each SHA was also checked on GitHub on 2026-10-08: the commit exists in the
+# aquasecurity repository and its entrypoint.sh / action.yaml contains the payload (scan.aquasecurtiy.org, tpcp-docs).
+# The advisory says 76 of 77 trivy-action tags; Wiz, Snyk and SafeDep say 75 of 76; both SHA lists have 75.
+# start: 2026-03-19 ~17:43 UTC, earliest attacker activity (advisory GHSA-69fq-xp46-6x23, StepSecurity, Snyk).
+# end: trivy-action tags restored ~05:40 UTC on 2026-03-20 (advisory, Snyk, Legit Security); widened to 06:00.
+# setup-trivy alone was exposed until ~21:44 UTC on 2026-03-19, inside this window.
+# Not covered: the trivy v0.69.4 binary and images (not an npm package or an action commit).
+window: {start: 2026-03-19T17:43:00Z, end: 2026-03-20T06:00:00Z}
+actions:
+  - uses: aquasecurity/trivy-action
+    shas:
+      - "f77738448eec70113cf711656914b61905b3bd47" # 0.0.1
+      - "f5c9fd927027beaa3760d2a84daa8b00e6e5ee21" # 0.0.2
+      - "22e864e71155122e2834eb0c10d0e7e0b8f65aa3" # 0.0.3
+      - "6ec7aaf336b7d2593d980908be9bc4fed6d407c6" # 0.0.4
+      - "555e7ad4c895c558c7214496df1cd56d1390c516" # 0.0.5
+      - "794b6d99daefd5e27ecb33e12691c4026739bf98" # 0.0.6
+      - "506d7ff06abc509692c600b5b69b4dc6ceaa4b15" # 0.0.7
+      - "91d5e0a13afab54533a95f8019dd7530bd38a071" # 0.0.8
+      - "252554b0e1130467f4301ba65c55a9c373508e35" # 0.0.9
+      - "b9faa60f85f6f780a34b8d0faaf45b3e3966fdda" # 0.0.10
+      - "3c615ac0f29e743eda8863377f9776619fd2db76" # 0.0.11
+      - "c19401b2f58dc6d2632cb473d44be98dd8292a93" # 0.0.12
+      - "4209dcadeaea6a7df69262fef1beeda940881d4d" # 0.0.13
+      - "61fbe20b7589e6b61eedcd5fe1e958e1a95fbd13" # 0.0.14
+      - "0d49ceb356f7d4735c63bd0d5c7e67665ec7f80c" # 0.0.15
+      - "2e7964d59cd24d1fd2aa4d6a5f93b7f09ea96947" # 0.0.16
+      - "1d74e4cf63b7cf083cf92bf5923cf037f7011c6b" # 0.0.17
+      - "3201ddddd69a1419c6f1511a14c5945ba3217126" # 0.0.18
+      - "ea56cd31d82b853932d50f1144e95b21817e52cf" # 0.0.19
+      - "9738180dd24427b8824445dbbc23c30ffc1cb0d8" # 0.0.20
+      - "ef3a510e3f94df3ea9fcd01621155ca5f2c3bf5b" # 0.0.21
+      - "bb75a9059c2d5803db49e6ed6c6f7e0b367f96be" # 0.0.22
+      - "9e8968cb83234f0de0217aa8c934a68a317ee518" # 0.1.0
+      - "7f6f0ce52a59bdfc5757c3982aac2353b58f4c73" # 0.2.0
+      - "0891663bc55073747be0eb864fbec3727840945d" # 0.2.1
+      - "3dffed04dc90cf1c548f40577d642c52241ec76c" # 0.2.2
+      - "cf1692a1fc7a47120e6508309765db7e33477946" # 0.2.3
+      - "848d665ed24dc1a41f6b4b7c7ffac7693d6b37be" # 0.2.4
+      - "fa4209b6182a4c1609ce34d40b67f5cfd7f00f53" # 0.2.5
+      - "8cfb9c31cc944da57458555aa398bb99336d5a1f" # 0.3.0
+      - "18f01febc4c3cd70ce6b94b70e69ab866fc033f5" # 0.4.0
+      - "7b955a5ece1e1b085c12dac7ac10e0eb1f5b0d4d" # 0.4.1
+      - "d488f4388ff4aa268906e25c2144f1433a4edec2" # 0.5.0
+      - "fa78e67c0df002c509bcdea88677fb5e2fe6a9b1" # 0.5.1
+      - "a5b4818debf2adbaba872aaffd6a0f64a26449fa" # 0.6.0
+      - "6fc874a1f9d65052d4c67a314da1dae914f1daff" # 0.6.1
+      - "2a51c5c5bb1fd1f0e134c9754f1702cfa359c3dd" # 0.6.2
+      - "ddb6697447a97198bdef9bae00215059eb5e8bc2" # 0.7.0
+      - "aa3c46a9643b18125abb8aefc13219014e9c4be8" # 0.7.1
+      - "4bdcc5d9ef3ddb42ccc9126e6c07faa3df2807e3" # 0.8.0
+      - "b745a35bad072d93a9b83080e9920ec52c6b5a27" # 0.9.0
+      - "da73ae0790e458e878b300b57ceb5f81ac573b46" # 0.9.1
+      - "7550f14b64c1c724035a075b36e71423719a1f30" # 0.9.2
+      - "8aa8af3ea1de8e968a3e49a40afb063692ab8eae" # 0.10.0
+      - "e53b0483d08da44da9dfe8a84bf2837e5163699b" # 0.11.0
+      - "276ca9680f6df9016db12f7c48571e5c4639451d" # 0.11.1
+      - "8ae5a08aec3013ee8f6132b2a9012b45002f8eaa" # 0.11.2
+      - "820428afeb64484d311211658383ce7f79d31a0a" # 0.12.0
+      - "cf19d27c8a7fb7a8bbf1e1000e9318749bcd82cf" # 0.13.0
+      - "405e91f329294fb696f55793203abf1f6aba9b40" # 0.13.1
+      - "2297a1b967ecc05ba2285eb6af56ab4da554ecae" # 0.14.0
+      - "2b1dac84ff12ba56158b3a97e2941a587cb20da9" # 0.15.0
+      - "f4f1785be270ae13f36f6a8cfbf6faaae50e660a" # 0.16.0
+      - "3d1b5be1589a83fc98b82781c263708b2eb3b47b" # 0.16.1
+      - "985447b035c447c1ed45f38fad7ca7a4254cb668" # 0.17.0
+      - "85cb72f1e8ee5e6e44488cd6cbdbca94722f96ed" # 0.18.0
+      - "38623bf26706d51c45647909dcfb669825442804" # 0.19.0
+      - "9092287c0339a8102f91c5a257a7e27625d9d029" # 0.20.0
+      - "b7befdc106c600585d3eec87d7e98e1c136839ae" # 0.21.0
+      - "9ba3c3cd3b23d033cd91253a9e61a4bf59c8a670" # 0.22.0
+      - "fd090040b5f584f4fcbe466878cb204d0735dcf4" # 0.23.0
+      - "e0198fd2b6e1679e36d32933941182d9afa82f6f" # 0.24.0
+      - "ddb94181dcbc723d96ffc07fddd14d97e4849016" # 0.25.0
+      - "b7252377a3d82c73d497bfafa3eabe84de1d02c4" # 0.26.0
+      - "66c90331c8b991e7895d37796ac712b5895dda3b" # 0.27.0
+      - "c5967f85626795f647d4bf6eb67227f9b79e02f5" # 0.28.0
+      - "9c000ba9d482773cbbc2c3544d61b109bc9eb832" # 0.29.0
+      - "ad623e14ebdfe82b9627811d57b9a39e283d6128" # 0.30.0
+      - "8519037888b189f13047371758f7aed2283c6b58" # 0.31.0
+      - "fd429cf86db999572f3d9ca7c54561fdf7d388a4" # 0.32.0
+      - "19851bef764b57ff95b35e66589f31949eeb229d" # 0.33.0
+      - "91e7c2c36dcad14149d8e455b960af62a2ffb275" # 0.33.1
+      - "ab6606b76e5a054be08cab3d07da323e90e751e8" # 0.34.0
+      - "a9bc513ea7989e3234b395cafb8ed5ccc3755636" # 0.34.1
+      - "ddb9da4475c1cef7d5389062bdfdfbdbd1394648" # 0.34.2
+  - uses: aquasecurity/setup-trivy
+    shas:
+      - "8afa9b9f9183b4e00c46e2b82d34047e3c177bd0"
+      - "386c0f18ac3d7f2ed33e2d884761119f4024ff8a"
+      - "384add36b52014a0f99c0ab3a3d58bd47e53d00f"
+      - "7a4b6f31edb8db48cc22a1d41e298b38c4a6417e"
+      - "6d8d730153d6151e03549f276faca0275ed9c7b2"
+      - "99b93c070aac11b52dfc3e41a55cbb24a331ae75"
+      - "f4436225d8a5fd1715d3c2290d8a50643e726031"
+iocs:
+  domains: [scan.aquasecurtiy.org]
+  ips: [45.148.10.212]
+refs:
+  - https://github.com/aquasecurity/trivy/security/advisories/GHSA-69fq-xp46-6x23
+  - https://osv.dev/vulnerability/GHSA-69fq-xp46-6x23
+  - https://www.stepsecurity.io/blog/trivy-compromised-a-second-time---malicious-v0-69-4-release
+  - https://github.com/step-security/trivy-compromise-scanner/blob/506f4e12e2f0a2d5917c1c27adccf78813503b9b/internal/scanner/patterns.go
+  - https://socket.dev/blog/trivy-under-attack-again-github-actions-compromise
+  - https://www.wiz.io/blog/trivy-compromised-teampcp-supply-chain-attack
