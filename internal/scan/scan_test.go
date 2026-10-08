@@ -808,3 +808,14 @@ func TestScanDepthCapIsUnchecked(t *testing.T) {
 		t.Fatalf("%+v", fd)
 	}
 }
+
+// An unpinned call ref is never read: with no download records it must not be judged CLEAN.
+func TestScanUnreadCallNoDownloadsIsUnchecked(t *testing.T) {
+	f := callFixture("org/shared/.github/workflows/deploy.yml@main", "deploy / release")
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1]
+	f.Logs[10] = "hello\n"
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	if fd := scanOne(t, f, actOnly); fd.Status != model.Unchecked || !hasNote(fd, "job log has no action download records") {
+		t.Fatalf("%+v", fd)
+	}
+}

@@ -297,7 +297,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 					ev = append(ev, note("job log has no action download records and the workflow file is unavailable"))
 				} else if noDownloads && slices.ContainsFunc(uses, func(u string) bool {
 					// a local action may be composite and download remote ones
-					return !strings.HasPrefix(u, "docker://") && !slices.Contains(call.calls, u)
+					return !strings.HasPrefix(u, "docker://") && !slices.Contains(call.read, u)
 				}) {
 					ust, uev := actions.MatchUses(uses, s.inc.Actions)
 					st = model.Worse(model.Worse(st, ust), model.Unchecked)
@@ -363,6 +363,7 @@ type callee struct {
 	status  model.Status // UNCHECKED when a called workflow could not be read
 	notes   []model.Evidence
 	calls   []string // every `uses:` ref followed: the runner log never lists them
+	read    []string // the call refs whose workflow was read; unread ones may still be remote
 	matched bool     // false when a called job was not identified and the union of its workflow was used
 }
 
@@ -419,6 +420,7 @@ func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workfl
 			c.notes = append(c.notes, note("called workflow %s unavailable (%s) — exposure judged from the caller job", uses, reason))
 			return c, nil
 		}
+		c.read = append(c.read, uses)
 		name := strings.Join(segs, " / ")
 		var cj *workflow.Job
 		if name != "" {
@@ -449,6 +451,7 @@ func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workfl
 				c.status = model.Worse(c.status, sub.status)
 				c.notes = append(c.notes, sub.notes...)
 				c.calls = append(c.calls, sub.calls...)
+				c.read = append(c.read, sub.read...)
 				if *reads > maxCallReads {
 					break // budget exhausted: the remaining members would only repeat its note
 				}
