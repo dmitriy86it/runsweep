@@ -238,11 +238,52 @@ func TestMarkdownAttempt(t *testing.T) {
 		t.Fatal(b.String())
 	}
 	res.Findings[0].Run.Attempt = 1
+	for i := range res.Rotation {
+		res.Rotation[i].Runs[0].Attempt = 1
+	}
 	b.Reset()
 	if err := Markdown(&b, inc, res); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(b.String(), "attempt") {
 		t.Fatalf("first attempt must not be labelled:\n%s", b.String())
+	}
+}
+
+func TestJSONEscapesBidiRoundTrip(t *testing.T) {
+	inc, res := sample()
+	in := "привет\u0085a\u200eb\u200fc\u202ad\u202ee\u2066f\u2069g"
+	res.Findings[0].Evidence[0].Detail = in
+	var b bytes.Buffer
+	if err := JSON(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(b.String(), "\u0085\u200e\u200f\u202a\u202e\u2066\u2069") || !strings.Contains(b.String(), `\u200e`) {
+		t.Fatalf("not escaped: %q", b.String())
+	}
+	var v struct {
+		Findings []struct{ Evidence []model.Evidence } `json:"findings"`
+	}
+	if err := json.Unmarshal(b.Bytes(), &v); err != nil || v.Findings[0].Evidence[0].Detail != in {
+		t.Fatalf("%v %q", err, v.Findings[0].Evidence[0].Detail)
+	}
+	b.Reset()
+	res.Findings[0].Evidence[0].Detail = "привет\u0085"
+	if err := JSON(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b.Bytes(), &v); err != nil || v.Findings[0].Evidence[0].Detail != "привет\u0085" {
+		t.Fatalf("%v %q", err, v.Findings[0].Evidence[0].Detail)
+	}
+}
+
+func TestSeenInAttempt(t *testing.T) {
+	inc, res := sample()
+	var b bytes.Buffer
+	if err := Markdown(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "`o/app#42 build attempt 2`") {
+		t.Fatal(b.String())
 	}
 }

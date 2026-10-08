@@ -8,8 +8,8 @@ Window: 2026-03-31 00:21:00 → 2026-03-31 03:21:00 UTC · runs scanned: 3 · jo
 
 | # | Secret / role | Priority | Why | Seen in |
 |---|---|---|---|---|
-| 1 | `OIDC token (id-token: write)` | 1 · cloud | review cloud roles | `o/app#42 build` |
-| 2 | `NPM_TOKEN` | 2 · publish/deploy | rotate | `o/app#42 build` |
+| 1 | `OIDC token (id-token: write)` | 1 · cloud | review cloud roles | `o/app#42 build attempt 2` |
+| 2 | `NPM_TOKEN` | 2 · publish/deploy | rotate | `o/app#42 build attempt 2` |
 
 ## Findings
 
@@ -33,7 +33,7 @@ The token needs read access to Actions, Contents and Metadata for these reposito
 - GitHub deletes workflow runs, checks and logs after the repository's retention period (default 90 days). Older runs cannot be checked and show as UNCHECKED or are absent.
 - Which secrets a job could read is derived from the workflow file at the run's commit; GitHub's API does not expose it directly.
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
-- A job whose log was unavailable is reported UNCHECKED: actions used via composite actions or reusable workflows can only be seen in the log.
+- A job whose log was unavailable is reported UNCHECKED: actions used via composite actions (and reusable workflows that are neither local nor pinned to a SHA) can only be seen in the log.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread.
 - Re-runs of runs created more than the lookback period (default 7 days) before the window are not scanned; use --lookback 30d for full coverage.
 - Called workflows are read when local or pinned to a commit SHA; others are judged from the caller job.

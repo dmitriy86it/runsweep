@@ -387,3 +387,22 @@ func TestRunAndJobAttempts(t *testing.T) {
 		t.Fatalf("%+v %v", jobs, err)
 	}
 }
+
+func TestRunAndJobMissingTimesAndAttempt(t *testing.T) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/jobs") {
+			_, _ = fmt.Fprint(w, `{"total_count":1,"jobs":[{"id":1}]}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"total_count":1,"workflow_runs":[{"id":5,"created_at":"2026-03-25T10:00:00Z"}]}`)
+	}))
+	start := time.Date(2026, 3, 24, 0, 0, 0, 0, time.UTC)
+	runs, err := c.ListRuns(context.Background(), "o/r", start, start.Add(8*24*time.Hour))
+	if err != nil || len(runs) != 1 || runs[0].Attempt != 0 || !runs[0].StartedAt.IsZero() || !runs[0].UpdatedAt.IsZero() {
+		t.Fatalf("%+v %v", runs, err)
+	}
+	jobs, err := c.ListJobs(context.Background(), "o/r", 5)
+	if err != nil || len(jobs) != 1 || jobs[0].Attempt != 0 || !jobs[0].StartedAt.IsZero() || !jobs[0].CompletedAt.IsZero() {
+		t.Fatalf("%+v %v", jobs, err)
+	}
+}

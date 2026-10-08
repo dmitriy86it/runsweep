@@ -21,7 +21,7 @@ const limits = `## Limits
 - GitHub deletes workflow runs, checks and logs after the repository's retention period (default 90 days). Older runs cannot be checked and show as UNCHECKED or are absent.
 - Which secrets a job could read is derived from the workflow file at the run's commit; GitHub's API does not expose it directly.
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
-- A job whose log was unavailable is reported UNCHECKED: actions used via composite actions or reusable workflows can only be seen in the log.
+- A job whose log was unavailable is reported UNCHECKED: actions used via composite actions (and reusable workflows that are neither local nor pinned to a SHA) can only be seen in the log.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread.
 - Re-runs of runs created more than the lookback period (default 7 days) before the window are not scanned; use --lookback 30d for full coverage.
 - Called workflows are read when local or pinned to a commit SHA; others are judged from the caller job.
@@ -110,15 +110,15 @@ func JSON(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	}{inc, r}); err != nil {
 		return err
 	}
-	_, err := w.Write(c1Re.ReplaceAllFunc(b.Bytes(), func(m []byte) []byte {
+	_, err := w.Write(escapeRe.ReplaceAllFunc(b.Bytes(), func(m []byte) []byte {
 		r, _ := utf8.DecodeRune(m)
 		return fmt.Appendf(nil, `\u%04x`, r)
 	}))
 	return err
 }
 
-// c1Re matches C1 control characters, which encoding/json leaves unescaped.
-var c1Re = regexp.MustCompile(`[\x{80}-\x{9f}]`)
+// escapeRe matches C1 control characters and bidi controls, which encoding/json leaves unescaped.
+var escapeRe = regexp.MustCompile(`[\x{80}-\x{9f}\x{200e}\x{200f}\x{202a}-\x{202e}\x{2066}-\x{2069}]`)
 
 // seenIn lists up to three runs, each rendered by wrap, then "+N more".
 func seenIn(runs []model.RunRef, wrap func(string) string) string {
@@ -128,7 +128,11 @@ func seenIn(runs []model.RunRef, wrap func(string) string) string {
 			parts = append(parts, fmt.Sprintf("+%d more", len(runs)-3))
 			break
 		}
-		parts = append(parts, wrap(strings.TrimSpace(fmt.Sprintf("%s#%d %s", r.Repo, r.RunID, r.Job))))
+		s := strings.TrimSpace(fmt.Sprintf("%s#%d %s", r.Repo, r.RunID, r.Job))
+		if r.Attempt > 1 {
+			s += fmt.Sprintf(" attempt %d", r.Attempt)
+		}
+		parts = append(parts, wrap(s))
 	}
 	return strings.Join(parts, ", ")
 }

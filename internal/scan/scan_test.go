@@ -3,6 +3,8 @@ package scan
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -74,7 +76,7 @@ func TestScanLogGoneFallsBackToWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(res.Findings) != 2 || res.Findings[0].Status != model.Possible || res.Findings[0].Run.Job != "build" ||
-		res.Findings[1].Status != model.Unchecked || res.Findings[1].Run.Job != "lint" || !hasNote(res.Findings[1], "job log unavailable") {
+		res.Findings[1].Status != model.Unchecked || res.Findings[1].Run.Job != "lint" || !hasNote(res.Findings[1], "job log unavailable (deleted by GitHub retention (HTTP 410)); composite actions not checked") {
 		t.Fatalf("%+v", res.Findings)
 	}
 }
@@ -624,8 +626,14 @@ func TestScanCalledWorkflowRefMatchesIncident(t *testing.T) {
 			f.Logs[10] = "2026-03-31T01:00:00Z hello\n"
 			f.GoneLogs[10] = tc.gone
 			i := &incident.Incident{ID: "t", Window: inc.Window, Actions: []incident.Action{{Uses: "org/shared", SHAs: []string{pinned}}}}
-			if fd := scanOne(t, f, i); fd.Status != model.Affected {
+			fd := scanOne(t, f, i)
+			if fd.Status != model.Affected || !slices.ContainsFunc(fd.Evidence, func(e model.Evidence) bool {
+				return e.Detail == "reusable workflow "+sharedCall+" at compromised SHA"
+			}) {
 				t.Fatalf("%+v", fd)
+			}
+			if !tc.gone && slices.ContainsFunc(fd.Evidence, func(e model.Evidence) bool { return strings.Contains(e.Detail, "log unavailable") }) {
+				t.Fatalf("the log is present: %+v", fd.Evidence)
 			}
 		})
 	}
@@ -706,5 +714,84 @@ func TestScanUnidentifiedCallerJobWithCallsIsUnchecked(t *testing.T) {
 	fd := scanOne(t, f, actOnly)
 	if fd.Status != model.Unchecked || !hasNote(fd, "called workflows were not read") {
 		t.Fatalf("%+v", fd)
+	}
+}
+
+// Two local workflows whose 20 jobs each call the other: the read budget ends the walk, once.
+func TestScanMutuallyRecursiveUnionStopsAtBudget(t *testing.T) {
+	f := callFixture("./.github/workflows/a.yml", "deploy / nope")
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1] // workflow only: no npm hit
+	f.Logs[10] = "2026-03-31T01:00:00Z Download action repository 'actions/checkout@v4' (SHA:1111111111111111111111111111111111111111)\n"
+	for _, p := range [][2]string{{"a", "b"}, {"b", "a"}} {
+		var b strings.Builder
+		b.WriteString("on: workflow_call\njobs:\n")
+		for i := range 20 {
+			fmt.Fprintf(&b, "  j%d:\n    uses: ./.github/workflows/%s.yml\n", i, p[1])
+		}
+		f.AddFile("o/a", "s1", ".github/workflows/"+p[0]+".yml", []byte(b.String()))
+	}
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	fd := scanOne(t, f, actOnly)
+	budget := 0
+	for _, e := range fd.Evidence {
+		if strings.Contains(e.Detail, "called workflows — not read") {
+			budget++
+		}
+	}
+	if fd.Status != model.Unchecked || len(fd.Evidence) >= 60 || budget != 1 {
+		t.Fatalf("status %v, %d evidence entries, budget note %d times: %+v", fd.Status, len(fd.Evidence), budget, fd.Evidence)
+	}
+}
+
+func TestScanDoesNotMutateSourceJobs(t *testing.T) {
+	f := rerun()
+	opt := Options{Repos: []string{"o/a"}, Lookback: 7 * 24 * time.Hour}
+	a, err := Run(context.Background(), f, inc, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Run(context.Background(), f, inc, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(a, b) {
+		t.Fatalf("second scan differs:\n%+v\n%+v", a, b)
+	}
+}
+
+// A local step `uses:` may be a composite action that downloads remote actions; a log without
+// download records cannot prove it clean.
+func TestScanLocalCompositeNoDownloadsIsUnchecked(t *testing.T) {
+	f := callFixture("./.github/workflows/deploy.yml", "deploy / release")
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1]
+	f.AddFile("o/a", "s1", ".github/workflows/deploy.yml", []byte("on: workflow_call\njobs:\n  release:\n    runs-on: x\n"+
+		"    steps:\n      - uses: ./local-composite\n      - run: make release\n"))
+	f.Logs[10] = "2026-03-31T01:00:00Z hello\n"
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	if fd := scanOne(t, f, actOnly); fd.Status != model.Unchecked || !hasNote(fd, "job log has no action download records") {
+		t.Fatalf("%+v", fd)
+	}
+}
+
+type countTree struct {
+	*sourcetest.Fake
+	n *int
+}
+
+func (s countTree) Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry, bool, error) {
+	if repo == "org/shared" {
+		*s.n++
+		return nil, false, errors.New("boom")
+	}
+	return s.Fake.Tree(ctx, repo, sha)
+}
+
+func TestScanRemoteCalleeHardErrorCached(t *testing.T) {
+	f := callFixture(sharedCall, "deploy / release")
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "deploy / release"}, {ID: 11, Name: "deploy / release"}}
+	n := 0
+	res, err := Run(context.Background(), countTree{f, &n}, npmOnly, Options{Repos: []string{"o/a"}})
+	if err != nil || len(res.Findings) != 2 || !hasNote(res.Findings[1], "unavailable (boom)") || n != 1 {
+		t.Fatalf("Tree called %d times, %v %+v", n, err, res.Findings)
 	}
 }

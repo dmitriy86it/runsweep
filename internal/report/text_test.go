@@ -48,6 +48,9 @@ func TestTextNoColorNoEscapes(t *testing.T) {
 func TestTextAttemptOneHidden(t *testing.T) {
 	inc, res := sample()
 	res.Findings[0].Run.Attempt = 1
+	for i := range res.Rotation {
+		res.Rotation[i].Runs[0].Attempt = 1
+	}
 	var b bytes.Buffer
 	if err := Text(&b, inc, res, false); err != nil {
 		t.Fatal(err)
@@ -96,5 +99,26 @@ func TestTextStripsTerminalEscapes(t *testing.T) {
 	out := strings.NewReplacer("\x1b[31m", "", "\x1b[33m", "", "\x1b[34m", "", "\x1b[0m", "").Replace(b.String())
 	if strings.ContainsAny(out, "\x1b\x07\u0085\u202e\u2066") {
 		t.Fatalf("control characters leaked: %q", out)
+	}
+}
+
+func TestTextSingular(t *testing.T) {
+	var b bytes.Buffer
+	if err := Text(&b, &incident.Incident{ID: "x"}, &model.Result{RunsScanned: 1, JobsScanned: 1}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), " UTC · 1 run · 1 job scanned · ") {
+		t.Fatal(b.String())
+	}
+}
+
+func TestTextSeenInAttempt(t *testing.T) {
+	inc, res := sample()
+	var b bytes.Buffer
+	if err := Text(&b, inc, res, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "seen in: o/app#42 build attempt 2\n") {
+		t.Fatal(b.String())
 	}
 }

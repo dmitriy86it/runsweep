@@ -6,10 +6,10 @@ AFFECTED 1   POSSIBLE 0   UNCHECKED 1
 Rotate first
   1  OIDC token (id-token: write)  1 · cloud
      review cloud roles
-     seen in: o/app#42 build
+     seen in: o/app#42 build attempt 2
   2  NPM_TOKEN                     2 · publish/deploy
      rotate
-     seen in: o/app#42 build
+     seen in: o/app#42 build attempt 2
 
 Findings
   AFFECTED   o/app  .github/workflows/ci.yml / build  #42 attempt 2

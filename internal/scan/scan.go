@@ -38,7 +38,7 @@ type Options struct {
 type scanner struct {
 	src source.Source
 	inc *incident.Incident
-	wf  sync.Map // repo@sha:path -> *workflow.Workflow (nil if unavailable)
+	wf  sync.Map // repo@sha:path -> wfEntry
 }
 
 // soft errors mean "could not check", never "clean".
@@ -80,7 +80,11 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", repo, err)
 		}
-		logf("%s: %d runs to check", repo, len(runs))
+		noun := "runs"
+		if len(runs) == 1 {
+			noun = "run"
+		}
+		logf("%s: %d %s to check", repo, len(runs), noun)
 		var (
 			wg       sync.WaitGroup
 			mu       sync.Mutex
@@ -152,8 +156,8 @@ type wfEntry struct {
 
 // workflow returns the parsed workflow file at repo@sha:path, or nil and a reason if it is
 // unavailable (soft error, missing, unparsable). Hard errors are returned and not cached, except
-// with lenient (a repository other than the scanned one): there they become "unavailable" too,
-// unless the context ended, so an arbitrary `uses:` cannot abort the scan.
+// with lenient (a repository other than the scanned one): there they become "unavailable" too
+// (cached, so it is fetched once), unless the context ended, so an arbitrary `uses:` cannot abort the scan.
 func (s *scanner) workflow(ctx context.Context, repo, sha, path string, lenient bool) (*workflow.Workflow, string, error) {
 	key := repo + "@" + sha + ":" + path
 	if v, ok := s.wf.Load(key); ok {
@@ -170,6 +174,7 @@ func (s *scanner) workflow(ctx context.Context, repo, sha, path string, lenient 
 			s.wf.Store(key, wfEntry{reason: reason})
 			return nil, reason, nil
 		case lenient && ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded):
+			s.wf.Store(key, wfEntry{reason: err.Error()})
 			return nil, err.Error(), nil
 		}
 		return nil, "", err
@@ -221,7 +226,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 	}
 	// Jobs that started and ended before the window did not run in it; a zero CompletedAt
 	// (still running or unknown) keeps the job.
-	jobs = slices.DeleteFunc(jobs, func(j source.Job) bool { return before(j.StartedAt, start) && before(j.CompletedAt, start) })
+	jobs = slices.DeleteFunc(slices.Clone(jobs), func(j source.Job) bool { return before(j.StartedAt, start) && before(j.CompletedAt, start) })
 	if len(jobs) == 0 {
 		return nil, 0, nil
 	}
@@ -290,7 +295,10 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 				if noDownloads && wf == nil {
 					st = model.Worse(st, model.Unchecked)
 					ev = append(ev, note("job log has no action download records and the workflow file is unavailable"))
-				} else if noDownloads && slices.ContainsFunc(uses, remote) {
+				} else if noDownloads && slices.ContainsFunc(uses, func(u string) bool {
+					// a local action may be composite and download remote ones
+					return !strings.HasPrefix(u, "docker://") && !slices.Contains(call.calls, u)
+				}) {
 					ust, uev := actions.MatchUses(uses, s.inc.Actions)
 					st = model.Worse(model.Worse(st, ust), model.Unchecked)
 					ev = append(append(ev, uev...), note("job log has no action download records"))
@@ -305,10 +313,10 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			if logErr != nil {
 				// Without the log `uses:` can raise the status but never prove the job clean.
 				st = model.Worse(st, model.Unchecked)
-				ev = append(ev, note("job log unavailable (%v); composite actions and reusable workflows not checked", logErr))
+				ev = append(ev, note("job log unavailable (%v); composite actions not checked", logErr))
 			}
 			// the runner log never lists reusable workflows, so match the followed call refs themselves
-			cst, cev := actions.MatchUses(call.calls, s.inc.Actions)
+			cst, cev := actions.MatchCalls(call.calls, s.inc.Actions)
 			f.Status = model.Worse(model.Worse(f.Status, st), cst)
 			f.Evidence = append(append(f.Evidence, ev...), cev...)
 		}
@@ -333,6 +341,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			f.Exposure = &e
 		}
 		if f.Status != model.Clean {
+			f.Evidence = uniq(f.Evidence) // a union of called workflows repeats notes and uses
 			out = append(out, f)
 		}
 	}
@@ -363,7 +372,19 @@ type callee struct {
 // were read).
 func (s *scanner) resolveCall(ctx context.Context, repo, sha string, wf *workflow.Workflow, wj *workflow.Job, apiName string) (callee, error) {
 	reads := 0
-	return s.follow(ctx, repo, repo, sha, wf, wj, strings.Split(apiName, " / ")[1:], 0, &reads)
+	c, err := s.follow(ctx, repo, repo, sha, wf, wj, strings.Split(apiName, " / ")[1:], 0, &reads)
+	c.calls = uniq(c.calls)
+	return c, err
+}
+
+// uniq drops repeated elements, keeping the first of each.
+func uniq[T comparable](in []T) []T {
+	seen := map[T]bool{}
+	return slices.DeleteFunc(in, func(x T) bool {
+		dup := seen[x]
+		seen[x] = true
+		return dup
+	})
 }
 
 func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workflow.Workflow, wj *workflow.Job, segs []string, depth int, reads *int) (callee, error) {
@@ -423,6 +444,9 @@ func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workfl
 				c.status = model.Worse(c.status, sub.status)
 				c.notes = append(c.notes, sub.notes...)
 				c.calls = append(c.calls, sub.calls...)
+				if *reads > maxCallReads {
+					break // budget exhausted: the remaining members would only repeat its note
+				}
 			}
 		}
 		repo, sha = call.Repo, call.SHA
@@ -445,11 +469,6 @@ func mergeInto(dst, src *workflow.Job) {
 			dst.CloudRoles = append(dst.CloudRoles, r)
 		}
 	}
-}
-
-// remote reports whether a `uses:` is downloaded by the runner (not a local path or docker image).
-func remote(u string) bool {
-	return !strings.HasPrefix(u, "./") && !strings.HasPrefix(u, "docker://")
 }
 
 func allUses(wf *workflow.Workflow) []string {

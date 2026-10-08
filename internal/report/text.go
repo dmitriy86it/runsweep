@@ -29,8 +29,9 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		name = t + " (" + name + ")"
 	}
 	fmt.Fprintf(&b, "runsweep · %s\n", name)
-	fmt.Fprintf(&b, "%s → %s UTC · %d runs · %d jobs scanned · lookback %s\n",
-		r.Start.UTC().Format("2006-01-02 15:04:05"), r.End.UTC().Format("2006-01-02 15:04:05"), r.RunsScanned, r.JobsScanned, days(r.Lookback))
+	fmt.Fprintf(&b, "%s → %s UTC · %s · %s scanned · lookback %s\n",
+		r.Start.UTC().Format("2006-01-02 15:04:05"), r.End.UTC().Format("2006-01-02 15:04:05"),
+		count(r.RunsScanned, "run"), count(r.JobsScanned, "job"), days(r.Lookback))
 	if r.RetentionWarning {
 		b.WriteString("Warning: " + RetentionNote + "\n")
 	}
@@ -84,6 +85,14 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 	b.WriteString("\nLimits: see --format md\nFull report: --format md\n")
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// count renders "1 run", "2 runs".
+func count(n int, noun string) string {
+	if n != 1 {
+		noun += "s"
+	}
+	return fmt.Sprintf("%d %s", n, noun)
 }
 
 // days renders whole days as "7d", anything else as a Go duration.

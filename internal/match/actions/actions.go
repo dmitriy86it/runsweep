@@ -55,7 +55,11 @@ func MatchLog(log string, bad []incident.Action) (model.Status, []model.Evidence
 	for _, d := range ParseDownloads(log) {
 		if b[repoKey(d.Uses)][d.SHA] {
 			st = model.Affected
-			ev = append(ev, model.Evidence{Kind: "action", Detail: fmt.Sprintf("job log: downloaded %s@%s (SHA %s)", d.Uses, d.Ref, d.SHA)})
+			detail := fmt.Sprintf("job log: downloaded %s@%s", d.Uses, d.Ref)
+			if d.Ref != d.SHA {
+				detail += " (SHA " + d.SHA + ")"
+			}
+			ev = append(ev, model.Evidence{Kind: "action", Detail: detail})
 		}
 	}
 	return st, ev
@@ -63,6 +67,16 @@ func MatchLog(log string, bad []incident.Action) (model.Status, []model.Evidence
 
 // MatchUses is the fallback when the log is gone: judge by `uses:` in the workflow.
 func MatchUses(uses []string, bad []incident.Action) (model.Status, []model.Evidence) {
+	return matchRefs(uses, bad, "workflow pins %s to compromised SHA (log unavailable)",
+		"workflow uses %s (mutable ref); job log unavailable, resolved SHA unknown")
+}
+
+// MatchCalls matches the reusable-workflow refs a job called, which the runner log never lists.
+func MatchCalls(calls []string, bad []incident.Action) (model.Status, []model.Evidence) {
+	return matchRefs(calls, bad, "reusable workflow %s at compromised SHA", "reusable workflow %s (mutable ref); resolved SHA unknown")
+}
+
+func matchRefs(uses []string, bad []incident.Action, pinned, mutable string) (model.Status, []model.Evidence) {
 	b := badSHAs(bad)
 	st, ev := model.Clean, []model.Evidence(nil)
 	for _, u := range uses {
@@ -77,12 +91,12 @@ func MatchUses(uses []string, bad []incident.Action) (model.Status, []model.Evid
 		switch {
 		case shas[ref]:
 			st = model.Affected
-			ev = append(ev, model.Evidence{Kind: "action", Detail: fmt.Sprintf("workflow pins %s to compromised SHA (log unavailable)", u)})
+			ev = append(ev, model.Evidence{Kind: "action", Detail: fmt.Sprintf(pinned, u)})
 		case shaRe.MatchString(ref):
 			// pinned to a different, known-good SHA
 		default:
 			st = model.Worse(st, model.Possible)
-			ev = append(ev, model.Evidence{Kind: "action", Detail: fmt.Sprintf("workflow uses %s (mutable ref); job log unavailable, resolved SHA unknown", u)})
+			ev = append(ev, model.Evidence{Kind: "action", Detail: fmt.Sprintf(mutable, u)})
 		}
 	}
 	return st, ev

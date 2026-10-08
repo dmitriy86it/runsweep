@@ -248,7 +248,7 @@ func TestScanWarnings(t *testing.T) {
 	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 0 {
 		t.Fatalf("code %d: %s", code, errb.String())
 	}
-	for _, want := range []string{retention, "warning: 1 jobs could not be checked (UNCHECKED)"} {
+	for _, want := range []string{retention, "warning: 1 jobs could not be checked (UNCHECKED)", "o/a: 1 run to check\n"} {
 		if !strings.Contains(errb.String(), want) {
 			t.Errorf("stderr lacks %q:\n%s", want, errb.String())
 		}
@@ -282,6 +282,19 @@ func TestRetentionByWindowStart(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "incident window starts more than 90 days ago") {
 		t.Fatalf("window started 100 days ago, ended yesterday: want retention warning\n%s", errb.String())
+	}
+}
+
+func TestNoRetentionWarningAt89Days(t *testing.T) {
+	now := time.Now().UTC()
+	body := fmt.Sprintf("id: x\nwindow: {start: %s, end: %s}\nnpm: [{name: axios, versions: [\"1.14.1\"]}]\n",
+		now.Add(-89*24*time.Hour).Format(time.RFC3339), now.Add(-24*time.Hour).Format(time.RFC3339))
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--incident", writeInc(t, body), "--repo", "o/a"}, &out, &errb, fakeDeps(sourcetest.New())); code != 0 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	if strings.Contains(errb.String()+out.String(), "more than 90 days ago") {
+		t.Fatalf("window started 89 days ago: no retention warning\n%s", errb.String())
 	}
 }
 

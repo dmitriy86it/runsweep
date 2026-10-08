@@ -2,6 +2,7 @@ package actions
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/dmitriy86it/runsweep/internal/incident"
@@ -52,5 +53,23 @@ func TestMatchUses(t *testing.T) {
 		if st, _ := MatchUses([]string{uses}, bad); st != want {
 			t.Errorf("%s: got %v want %v", uses, st, want)
 		}
+	}
+}
+
+func TestMatchCallsWording(t *testing.T) {
+	call := "tj-actions/changed-files/.github/workflows/x.yml@" + sha
+	st, ev := MatchCalls([]string{call, "tj-actions/changed-files/.github/workflows/x.yml@v1"}, bad)
+	if st != model.Affected || len(ev) != 2 || ev[0].Detail != "reusable workflow "+call+" at compromised SHA" ||
+		strings.Contains(ev[0].Detail+ev[1].Detail, "log unavailable") {
+		t.Fatalf("%v %+v", st, ev)
+	}
+}
+
+func TestMatchLogSHAOnce(t *testing.T) {
+	_, ev := MatchLog("2025-03-14T18:01:02Z Download action repository 'tj-actions/changed-files@"+sha+"' (SHA:"+sha+")\n"+
+		"2025-03-14T18:01:02Z Download action repository 'tj-actions/changed-files@v45' (SHA:"+sha+")\n", bad)
+	if len(ev) != 2 || ev[0].Detail != "job log: downloaded tj-actions/changed-files@"+sha ||
+		ev[1].Detail != "job log: downloaded tj-actions/changed-files@v45 (SHA "+sha+")" {
+		t.Fatalf("%+v", ev)
 	}
 }
