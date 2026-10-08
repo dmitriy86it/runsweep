@@ -14,9 +14,12 @@ The recording scans [runsweep-demo](https://github.com/dmitriy86it/runsweep-demo
 Download an archive from [Releases](https://github.com/dmitriy86it/runsweep/releases) and verify its build provenance before running it:
 
 ```bash
-gh attestation verify runsweep_*.tar.gz -R dmitriy86it/runsweep
-tar xzf runsweep_*.tar.gz runsweep
+gh release download v0.1.0 -R dmitriy86it/runsweep -p 'runsweep_*_linux_amd64.tar.gz'
+gh attestation verify runsweep_0.1.0_linux_amd64.tar.gz -R dmitriy86it/runsweep
+tar xzf runsweep_0.1.0_linux_amd64.tar.gz runsweep
 ```
+
+Archives are named `runsweep_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows) for linux, darwin and windows on amd64 and arm64.
 
 Or build from source (Go 1.27+):
 

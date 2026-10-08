@@ -1,5 +1,7 @@
 # Fire drill for the runsweep-demo repo: pretends a harmless package and an
 # action SHA were compromised. Not a real incident.
+# The window (2026-10-08) and the setup-node SHA (v7.1.0) are tied to the recorded
+# demo runs in dmitriy86it/runsweep-demo and internal/scan/testdata/cassettes/demo.yaml.
 id: drill
 title: "Fire drill: is-number 7.0.0 and actions/setup-node pinned SHA"
 window: {start: 2026-10-08T00:00:00Z, end: 2026-10-08T23:59:59Z}
