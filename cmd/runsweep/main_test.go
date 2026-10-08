@@ -602,3 +602,19 @@ func TestIncidentsUnknownSubcommand(t *testing.T) {
 		t.Fatalf("code %d: %s", code, errb.String())
 	}
 }
+
+func TestReadmeListsEveryPreset(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps, err := incident.Presets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ps {
+		if !strings.Contains(string(readme), "| `"+p.ID+"` |") {
+			t.Errorf("README.md \"Built-in incidents\" table has no row for %s", p.ID)
+		}
+	}
+}

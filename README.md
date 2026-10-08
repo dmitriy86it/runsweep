@@ -31,6 +31,7 @@ go install github.com/dmitriy86it/runsweep/cmd/runsweep@latest
 
 ```bash
 runsweep incidents                                          # built-in incident presets
+runsweep incidents import MAL-2026-2307 -o incident.yaml    # build an incident file from OSV and npm
 runsweep scan --incident axios-2026-03 --repo owner/name    # one or more repos (--repo is repeatable)
 runsweep scan --incident ./incident.yaml --org my-org       # every repository of an organization
 runsweep scan --incident tj-actions-2025-03 --repo owner/name --format json
@@ -71,6 +72,29 @@ refs:
 
 `id`, `window` and at least one of `npm` / `actions` are required. Unknown fields are errors.
 
+## Built-in incidents
+
+| Preset | Incident |
+|---|---|
+| `axios-2026-03` | axios 1.14.1 / 0.30.4 malicious release |
+| `chaindrop-2026-08` | Shai-Hulud wave: keyv / cacheable and 400+ npm packages |
+| `tj-actions-2025-03` | tj-actions/changed-files compromised (CVE-2025-30066) |
+
+## Importing a new incident
+
+`runsweep incidents import` turns OSV records into an incident file, so a new incident can be scanned minutes after it is published:
+
+```bash
+runsweep incidents import MAL-2026-2307 GHSA-g7cv-rxg3-hmpx -o incident.yaml   # OSV ids (MAL-, GHSA-, CVE-)
+runsweep incidents import --package npm:axios                                   # every MAL-* record for a package
+grep -o 'MAL-[0-9]*-[0-9]*' advisory.txt | runsweep incidents import            # ids on stdin, one per line
+runsweep incidents import --action owner/repo@<40-hex sha> --since 2026-03-19T17:43:00Z --until 2026-03-20T06:00:00Z
+```
+
+It takes the npm versions OSV lists (a range with no fix is expanded to every registry version from its start), looks up their publish times in the npm registry and derives the window: the start is the earliest publish, the end is when the registry shows the versions removed, or now if any is still published. Packages are grouped by when their bad versions were first published; groups separated by more than 7 days are treated as separate waves. The largest group (the latest on a tie) and everything after it are kept, earlier groups are dropped as unrelated and listed in a comment (`--keep-all` keeps everything). A package is never split. Every assumption is written as a comment in the file; check them, and override the window with `--since` / `--until` when a source gives better times.
+
+Ids on stdin are read only when no ids, `--package` or `--action` are given (at most 10 000). An import that has only `--action` needs `--since` and `--until`. GitHub Actions advisories are reported on stderr: OSV has no commit SHAs, so pass them with `--action`. The output is validated before it is written; `-o` replaces the file atomically. Only `api.osv.dev` and `registry.npmjs.org` are contacted. Any error, including an unknown subcommand, exits with `2`.
+
 ## How it decides
 
 For each job that ran inside the window (including re-runs of runs created up to `--lookback` earlier), runsweep reads the job, its log, the workflow file — and the called workflow when the job runs a reusable workflow that is local or pinned to a commit SHA — and the lockfiles at the run's commit, and gives every job one status:
@@ -97,7 +121,7 @@ For AFFECTED and POSSIBLE jobs the report lists what the job could read — secr
 
 ## Contributing incidents
 
-Open a pull request adding a YAML file to [`internal/incident/presets/`](internal/incident/presets/) in the format above. Include `refs` to primary sources (advisory, registry metadata, vendor write-up) and note in comments how the window start and end were derived.
+See [CONTRIBUTING.md](CONTRIBUTING.md): start with `runsweep incidents import`, confirm every version or SHA with two independent sources, and explain the window in comments. If you cannot open a pull request, use the [new incident](https://github.com/dmitriy86it/runsweep/issues/new?template=new-incident.yml) issue form.
 
 ## License
 

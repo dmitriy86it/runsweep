@@ -1,0 +1,43 @@
+name: New incident
+description: Propose a supply-chain incident for a built-in preset
+title: "incident: "
+labels: [incident]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Only public indicators. Do not paste links to attacker infrastructure or payloads.
+  - type: input
+    id: name
+    attributes:
+      label: Incident name
+      placeholder: "axios 1.14.1 / 0.30.4 malicious release"
+    validations:
+      required: true
+  - type: textarea
+    id: refs
+    attributes:
+      label: Sources (at least two independent)
+      description: OSV or GitHub advisory, maintainer post-mortem, vendor write-up. One URL per line.
+    validations:
+      required: true
+  - type: textarea
+    id: npm
+    attributes:
+      label: npm packages and versions
+      description: One `name@version` per line, or OSV ids (MAL-…, GHSA-…).
+      render: text
+  - type: textarea
+    id: actions
+    attributes:
+      label: GitHub Actions and commit SHAs
+      description: One `owner/repo@<40-hex sha>` per line.
+      render: text
+  - type: input
+    id: window
+    attributes:
+      label: Window (UTC)
+      description: When the bad artifact could be downloaded, and where the times come from.
+      placeholder: "2026-03-31T00:21Z – 2026-03-31T03:16Z (npm publish time; StepSecurity removal estimate)"
+    validations:
+      required: true
