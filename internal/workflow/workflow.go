@@ -249,6 +249,8 @@ func (j *Job) InstallsNPM() bool {
 type RunInstall struct {
 	Cmd  string
 	Pkgs []string // package names, version stripped; an npm: alias gives both names
+	// Dynamic: a positional argument is known only at run time ($VAR, $(…), `…`, ${{ … }})
+	Dynamic bool
 }
 
 // RunInstalls returns the run-time package installs in the job's `run:` and github-script scripts.
@@ -264,7 +266,10 @@ func (j *Job) RunInstalls() []RunInstall {
 // argument is read as a package, also for runners (npx, dlx) whose later arguments belong to the
 // command: an unknown value flag must not hide the name, and over-matching is only noise.
 var installSubs = map[string]bool{
-	"npm i": true, "npm install": true, "npm add": true, "pnpm add": true, "yarn add": true, "bun add": true,
+	"npm i": true, "npm in": true, "npm ins": true, "npm inst": true, "npm insta": true, "npm instal": true,
+	"npm install": true, "npm isnt": true, "npm isnta": true, "npm isntal": true, "npm isntall": true,
+	"npm add": true, "npm it": true, "npm install-test": true,
+	"pnpm add": true, "yarn add": true, "bun add": true, "bun i": true, "bun install": true,
 	"npm exec": true, "npm x": true, "pnpm dlx": true, "yarn dlx": true, "bun x": true,
 	"npx": true, "pnpx": true, "bunx": true,
 }
@@ -274,26 +279,46 @@ var valueFlags = map[string]bool{"--registry": true, "--prefix": true, "--filter
 	"--dir": true, "--cwd": true, "--workspace": true, "--cache": true, "--userconfig": true, "--loglevel": true,
 	"-c": true, "--call": true}
 
+func valueFlag(tool, a string) bool {
+	return valueFlags[a] || tool == "npm" && a == "-w" // pnpm -w is the boolean --workspace-root
+}
+
+// continuation joins shell (\) and PowerShell (`) continued lines.
+var continuation = strings.NewReplacer("\\\r\n", " ", "\\\n", " ", "`\r\n", " ", "`\n", " ")
+
 // runInstalls finds the package manager commands in script that install or run named packages.
 func runInstalls(script string) []RunInstall {
+	script = continuation.Replace(script)
 	var out []RunInstall
-	for _, m := range runtimeRe.FindAllStringSubmatchIndex(script, -1) {
-		tool := script[m[2]:m[3]]
+	for pos := 0; pos < len(script); {
+		m := runtimeRe.FindStringSubmatchIndex(script[pos:])
+		if m == nil {
+			break
+		}
+		tool := script[pos+m[2] : pos+m[3]]
 		var args []string
 		if m[4] >= 0 {
-			for _, f := range strings.Fields(script[m[4]:m[5]]) {
-				if f = strings.Trim(f, "'\"`,"); f != "" {
+			for _, f := range strings.Fields(script[pos+m[4] : pos+m[5]]) {
+				// a leading backtick stays: it marks a command substitution
+				if f = strings.TrimRight(strings.TrimLeft(f, `'",`), "'\"`,"); f != "" {
 					args = append(args, f)
 				}
 			}
 		}
-		cmd := strings.Join(append([]string{tool}, args...), " ") // quotes and commas trimmed
+		pos += m[3] // resume after the tool name: `…` and $(…) in its arguments are commands too
+		cmd := tool
+		for _, a := range args {
+			cmd += " " + strings.Trim(a, "`")
+		}
 		key := tool
 		if tool == "npm" || tool == "pnpm" || tool == "yarn" || tool == "bun" {
 			var sub string
-			sub, args = subcommand(args)
+			sub, args = subcommand(tool, args)
 			if tool == "yarn" && sub == "global" {
-				sub, args = subcommand(args)
+				sub, args = subcommand(tool, args)
+			}
+			if tool == "yarn" && sub == "workspace" && len(args) > 0 { // yarn workspace <name> add …
+				sub, args = subcommand(tool, args[1:])
 			}
 			key += " " + sub
 		}
@@ -301,6 +326,7 @@ func runInstalls(script string) []RunInstall {
 			continue
 		}
 		var pkgs []string
+		dynamic := false
 		for i := 0; i < len(args); i++ {
 			a := args[i]
 			switch v, isPkg := strings.CutPrefix(a, "--package="); {
@@ -309,26 +335,32 @@ func runInstalls(script string) []RunInstall {
 				a = args[i]
 			case isPkg:
 				a = v
-			case valueFlags[a]:
+			case valueFlag(tool, a):
 				i++
 				continue
 			case strings.HasPrefix(a, "-"):
 				continue
 			}
-			pkgs = append(pkgs, pkgNames(a)...)
+			for _, n := range pkgNames(a) {
+				if strings.ContainsAny(n, "$`") { // $VAR, $(…), `…`, ${{ … }}: named at run time
+					dynamic = true
+				} else {
+					pkgs = append(pkgs, n)
+				}
+			}
 		}
-		if len(pkgs) > 0 {
-			out = append(out, RunInstall{Cmd: cmd, Pkgs: pkgs})
+		if len(pkgs) > 0 || dynamic {
+			out = append(out, RunInstall{Cmd: cmd, Pkgs: pkgs, Dynamic: dynamic})
 		}
 	}
 	return out
 }
 
 // subcommand returns the first positional argument and the arguments after it.
-func subcommand(args []string) (string, []string) {
+func subcommand(tool string, args []string) (string, []string) {
 	for i := 0; i < len(args); i++ {
 		switch {
-		case valueFlags[args[i]]:
+		case valueFlag(tool, args[i]):
 			i++
 		case !strings.HasPrefix(args[i], "-"):
 			return args[i], args[i+1:]
@@ -472,13 +504,19 @@ func (w *Workflow) Through(j *Job, cw *Workflow, c *Job) (*Workflow, *Job) {
 	return &Workflow{Jobs: map[string]*Job{e.ID: e}, globalSecrets: w.globalSecrets, globalDynamic: w.globalDynamic}, e
 }
 
+// SetupSection is the part of a job log the runner writes before the first step ("##[group]Run ");
+// from there on the log is the job's own output, which can print anything.
+func SetupSection(log string) string {
+	setup, _, _ := strings.Cut(log, "##[group]Run ")
+	return setup
+}
+
 // ParseTokenPerms reads the "GITHUB_TOKEN Permissions" group from a job log. Only the "Set up job"
 // section is read: from the first step ("##[group]Run ") on, the log is the job's own output.
 func ParseTokenPerms(log string) map[string]string {
 	out := map[string]string{}
 	in := false
-	log, _, _ = strings.Cut(log, "##[group]Run ")
-	sc := bufio.NewScanner(strings.NewReader(log))
+	sc := bufio.NewScanner(strings.NewReader(SetupSection(log)))
 	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
