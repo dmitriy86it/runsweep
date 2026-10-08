@@ -21,7 +21,7 @@ func sample() (*incident.Incident, *model.Result) {
 		Refs: []string{"https://osv.dev/vulnerability/MAL-2026-2307"}}
 	run := model.RunRef{Repo: "o/app", RunID: 42, Workflow: ".github/workflows/ci.yml", HeadSHA: "abcdef1234567",
 		RunURL: "https://github.com/o/app/actions/runs/42", CreatedAt: t0.Add(time.Hour), JobID: 7, Job: "build",
-		JobURL: "https://github.com/o/app/actions/runs/42/job/7"}
+		JobURL: "https://github.com/o/app/actions/runs/42/job/7", Attempt: 2}
 	res := &model.Result{IncidentID: inc.ID, Start: inc.Window.Start, End: inc.Window.End, RunsScanned: 3, JobsScanned: 5,
 		Findings: []model.Finding{
 			{Run: run, Status: model.Affected, Evidence: []model.Evidence{{Kind: "npm", Detail: "axios@1.14.1 in package-lock.json at abcdef1"}},

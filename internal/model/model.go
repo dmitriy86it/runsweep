@@ -49,6 +49,7 @@ type RunRef struct {
 	JobID     int64     `json:"job_id,omitempty"`
 	Job       string    `json:"job,omitempty"`
 	JobURL    string    `json:"job_url,omitempty"`
+	Attempt   int       `json:"attempt,omitempty"` // run attempt; reports show it when > 1
 }
 
 // CloudRole is a cloud role a job can assume.
@@ -102,6 +103,8 @@ type Result struct {
 	Skipped       []Skip         `json:"skipped"`
 	// RetentionWarning: the window started more than 90 days ago, so missing runs prove nothing.
 	RetentionWarning bool `json:"retention_warning,omitempty"`
+	// Lookback is how long before the window runs were listed to catch re-runs (text report only).
+	Lookback time.Duration `json:"-"`
 }
 
 // Count returns how many findings have the given status.

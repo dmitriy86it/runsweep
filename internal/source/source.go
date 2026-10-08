@@ -26,7 +26,7 @@ type Run struct {
 	CreatedAt time.Time
 	StartedAt time.Time // start of the latest attempt (run_started_at); zero if unknown
 	UpdatedAt time.Time
-	Attempt   int // latest attempt (run_attempt), 1 for a run never re-run
+	Attempt   int // latest attempt (run_attempt); 0 means the API omitted it
 }
 
 // Job is a job of a workflow run.

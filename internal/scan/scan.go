@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dmitriy86it/runsweep/internal/incident"
 	"github.com/dmitriy86it/runsweep/internal/match/actions"
@@ -27,7 +28,10 @@ type Options struct {
 	Repos       []string
 	Org         string
 	Concurrency int
-	Logf        func(format string, args ...any)
+	// Lookback widens run listing to runs created this long before the window, so re-runs
+	// started inside the window are found.
+	Lookback time.Duration
+	Logf     func(format string, args ...any)
 }
 
 type scanner struct {
@@ -63,10 +67,11 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 	repos = slices.Compact(repos)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	res := &model.Result{ReposTargeted: len(repos), IncidentID: inc.ID, Start: inc.Window.Start, End: inc.Window.End}
+	res := &model.Result{ReposTargeted: len(repos), IncidentID: inc.ID, Start: inc.Window.Start, End: inc.Window.End,
+		Lookback: opt.Lookback}
 	s := &scanner{src: src, inc: inc}
 	for _, repo := range repos {
-		runs, err := src.ListRuns(ctx, repo, inc.Window.Start, inc.Window.End)
+		runs, err := src.ListRuns(ctx, repo, inc.Window.Start.Add(-opt.Lookback), inc.Window.End)
 		if soft(err) {
 			res.Skipped = append(res.Skipped, model.Skip{Repo: repo, Reason: err.Error()})
 			continue
@@ -74,7 +79,7 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", repo, err)
 		}
-		logf("%s: %d runs in window", repo, len(runs))
+		logf("%s: %d runs to check", repo, len(runs))
 		var (
 			wg       sync.WaitGroup
 			mu       sync.Mutex
@@ -96,13 +101,15 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 				}
 				res.Findings = append(res.Findings, fs...)
 				res.JobsScanned += jobs
+				if jobs > 0 || len(fs) > 0 {
+					res.RunsScanned++
+				}
 			}()
 		}
 		wg.Wait()
 		if firstErr != nil {
 			return nil, firstErr
 		}
-		res.RunsScanned += len(runs)
 	}
 	sort.SliceStable(res.Findings, func(a, b int) bool {
 		x, y := res.Findings[a], res.Findings[b]
@@ -125,9 +132,16 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 }
 
 func ref(repo string, r source.Run, j source.Job) model.RunRef {
+	attempt := j.Attempt
+	if attempt == 0 { // run-level finding: no job
+		attempt = r.Attempt
+	}
 	return model.RunRef{Repo: repo, RunID: r.ID, Workflow: r.Path, HeadSHA: r.HeadSHA, RunURL: r.URL,
-		CreatedAt: r.CreatedAt, JobID: j.ID, Job: j.Name, JobURL: j.URL}
+		CreatedAt: r.CreatedAt, JobID: j.ID, Job: j.Name, JobURL: j.URL, Attempt: attempt}
 }
+
+// before reports a known time earlier than the window start; a zero time is never before.
+func before(t, start time.Time) bool { return !t.IsZero() && t.Before(start) }
 
 // workflow returns the parsed workflow file of a run, or nil if it is unavailable (soft error,
 // missing, unparsable). Hard errors are returned and not cached.
@@ -162,6 +176,11 @@ func note(format string, args ...any) model.Evidence {
 }
 
 func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]model.Finding, int, error) {
+	start := s.inc.Window.Start
+	// Listed through the lookback and every attempt ended before the window: nothing ran in it.
+	if before(run.StartedAt, start) && before(run.UpdatedAt, start) {
+		return nil, 0, nil
+	}
 	jobs, err := s.src.ListJobs(ctx, repo, run.ID)
 	if soft(err) {
 		return []model.Finding{{Run: ref(repo, run, source.Job{}), Status: model.Unchecked,
@@ -169,6 +188,11 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 	}
 	if err != nil {
 		return nil, 0, err
+	}
+	// Jobs of earlier attempts that started before the window did not run in it.
+	jobs = slices.DeleteFunc(jobs, func(j source.Job) bool { return before(j.StartedAt, start) })
+	if len(jobs) == 0 {
+		return nil, 0, nil
 	}
 	wf, err := s.workflow(ctx, repo, run)
 	if err != nil {

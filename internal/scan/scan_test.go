@@ -360,3 +360,71 @@ func TestScanNoWorkflowNoDownloadsIsUnchecked(t *testing.T) {
 		}
 	}
 }
+
+// rerun: run 1 was created two days before the window; attempt 1 ran then, attempt 2 inside it.
+func rerun() *sourcetest.Fake {
+	f := fixture()
+	r := &f.Runs["o/a"][0]
+	r.CreatedAt, r.StartedAt, r.UpdatedAt, r.Attempt = t0.Add(-48*time.Hour), t0, t0.Add(10*time.Minute), 2
+	f.Jobs[1] = []source.Job{
+		{ID: 20, Name: "build", Attempt: 1, StartedAt: t0.Add(-48 * time.Hour)},
+		{ID: 10, Name: "build", Attempt: 2, StartedAt: t0},
+		{ID: 11, Name: "lint", Attempt: 2, StartedAt: t0},
+	}
+	f.Logs[20] = f.Logs[10]
+	return f
+}
+
+func TestScanReRunInWindow(t *testing.T) {
+	res, err := Run(context.Background(), rerun(), inc, Options{Repos: []string{"o/a"}, Lookback: 7 * 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RunsScanned != 1 || res.JobsScanned != 2 || len(res.Findings) != 1 {
+		t.Fatalf("%+v", res)
+	}
+	if f := res.Findings[0]; f.Status != model.Affected || f.Run.JobID != 10 || f.Run.Attempt != 2 {
+		t.Fatalf("attempt 1 started before the window must not be reported: %+v", f)
+	}
+	if res.Lookback != 7*24*time.Hour {
+		t.Fatalf("lookback %v", res.Lookback)
+	}
+	res, err = Run(context.Background(), rerun(), inc, Options{Repos: []string{"o/a"}})
+	if err != nil || res.RunsScanned != 0 || len(res.Findings) != 0 {
+		t.Fatalf("no lookback: the run is created before the window and not listed: %+v %v", res, err)
+	}
+}
+
+type noJobs struct {
+	*sourcetest.Fake
+	t *testing.T
+}
+
+func (s noJobs) ListJobs(_ context.Context, _ string, id int64) ([]source.Job, error) {
+	s.t.Errorf("ListJobs(%d) called for a run that ended before the window", id)
+	return nil, nil
+}
+
+func TestScanRunBeforeWindowSkipsJobs(t *testing.T) {
+	f := fixture()
+	r := &f.Runs["o/a"][0]
+	r.CreatedAt, r.StartedAt, r.UpdatedAt, r.Attempt = t0.Add(-72*time.Hour), t0.Add(-72*time.Hour), t0.Add(-71*time.Hour), 1
+	res, err := Run(context.Background(), noJobs{f, t}, inc, Options{Repos: []string{"o/a"}, Lookback: 7 * 24 * time.Hour})
+	if err != nil || res.RunsScanned != 0 || res.JobsScanned != 0 || len(res.Findings) != 0 {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+func TestScanZeroStartTimesAreChecked(t *testing.T) {
+	f := fixture()
+	r := &f.Runs["o/a"][0]
+	// created in the lookback; start times unknown, updated before the window: still checked
+	r.CreatedAt, r.UpdatedAt = t0.Add(-72*time.Hour), t0.Add(-71*time.Hour)
+	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}, Lookback: 7 * 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RunsScanned != 1 || res.JobsScanned != 2 || res.Count(model.Affected) != 1 {
+		t.Fatalf("unknown start time must be checked, never dropped: %+v", res)
+	}
+}
