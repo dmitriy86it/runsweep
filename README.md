@@ -34,9 +34,12 @@ runsweep incidents                                          # built-in incident 
 runsweep scan --incident axios-2026-03 --repo owner/name    # one or more repos (--repo is repeatable)
 runsweep scan --incident ./incident.yaml --org my-org       # every repository of an organization
 runsweep scan --incident tj-actions-2025-03 --repo owner/name --format json
+runsweep scan --incident axios-2026-03 --repo owner/name --lookback 30d   # also re-runs of month-old runs
 ```
 
-`--since` / `--until` (RFC3339) override the incident window. The report (Markdown or JSON) goes to stdout, progress and warnings to stderr.
+`--since` / `--until` (RFC3339) override the incident window. On a terminal the report is a short colored summary (`--format text`); piped or redirected — for example in CI — it is Markdown (`--format md`), and `--format json` gives machine-readable output. Colors are off when `NO_COLOR` is set or `TERM=dumb`. Progress and warnings go to stderr.
+
+`--lookback` (default `7d`, up to `30d`, the period GitHub allows re-runs) also lists runs created that long before the window, so a re-run started inside the window is scanned. Jobs of attempts that started before the window are skipped.
 
 Exit codes:
 
@@ -53,7 +56,7 @@ Exit codes:
 ```yaml
 id: axios-2026-03
 title: "axios 1.14.1 / 0.30.4 malicious release"
-# when the bad artifact could be downloaded; runs created in this window are scanned
+# when the bad artifact could be downloaded; jobs that ran in this window are scanned
 window: {start: 2026-03-31T00:21:58Z, end: 2026-03-31T03:15:30Z}
 npm:                       # compromised package versions
   - {name: axios, versions: ["1.14.1", "0.30.4"]}
@@ -70,7 +73,7 @@ refs:
 
 ## How it decides
 
-For each workflow run created inside the window, runsweep reads the jobs, their logs, the workflow file and the lockfiles at the run's commit, and gives every job one status:
+For each job that ran inside the window (including re-runs of runs created up to `--lookback` earlier), runsweep reads the job, its log, the workflow file — and the called workflow when the job runs a reusable workflow that is local or pinned to a commit SHA — and the lockfiles at the run's commit, and gives every job one status:
 
 | Status | Meaning |
 |---|---|
@@ -88,8 +91,8 @@ For AFFECTED and POSSIBLE jobs the report lists what the job could read — secr
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
 - A job whose log was unavailable is reported UNCHECKED: actions used via composite actions or reusable workflows can only be seen in the log.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread.
-- Runs are selected by creation time: re-runs of older runs and runs queued before the window are not scanned.
-- Reusable workflows are judged from the caller job: OIDC roles and permissions inside the called workflow are not shown.
+- Re-runs of runs created more than the lookback period (default 7 days) before the window are not scanned; use --lookback 30d for full coverage.
+- Called workflows are read when local or pinned to a commit SHA; others are judged from the caller job.
 - npm and GitHub Actions only; no PyPI yet.
 
 ## Contributing incidents

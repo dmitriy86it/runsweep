@@ -10,7 +10,7 @@ interactions:
         host: api.github.com
         form:
             created:
-                - 2026-10-08T00:00:00Z..2026-10-08T23:59:59Z
+                - 2026-10-01T00:00:00Z..2026-10-08T23:59:59Z
             per_page:
                 - "100"
         headers:
@@ -20,7 +20,7 @@ interactions:
                 - go-github/v92.0.0
             X-Github-Api-Version:
                 - "2022-11-28"
-        url: https://api.github.com/repos/dmitriy86it/runsweep-demo/actions/runs?created=2026-10-08T00%3A00%3A00Z..2026-10-08T23%3A59%3A59Z&per_page=100
+        url: https://api.github.com/repos/dmitriy86it/runsweep-demo/actions/runs?created=2026-10-01T00%3A00%3A00Z..2026-10-08T23%3A59%3A59Z&per_page=100
         method: GET
       response:
         proto: HTTP/2.0
@@ -41,7 +41,7 @@ interactions:
             Content-Type:
                 - application/json; charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:08 GMT
+                - Thu, 08 Oct 2026 09:29:57 GMT
             Etag:
                 - W/"295de342168ec7862904e035e1aef33786bd7a94a9be72c9ab08b997cd8df169"
             Referrer-Policy:
@@ -63,7 +63,7 @@ interactions:
             X-Github-Media-Type:
                 - github.v3; format=json
             X-Github-Request-Id:
-                - 97CE:92D3B:45D463:48D6C9:6AC71853
+                - 2386:3273BA:39726:3C00F:6AC76295
             X-Oauth-Client-Id:
                 - 178c6fc778ccc68e1d6a
             X-Oauth-Scopes:
@@ -71,18 +71,18 @@ interactions:
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4884"
+                - "4999"
             X-Ratelimit-Reset:
-                - "1791435479"
+                - "1791455397"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "116"
+                - "1"
             X-Xss-Protection:
                 - "0"
         status: 200 OK
         code: 200
-        duration: 890.940708ms
+        duration: 636.558375ms
     - id: 1
       request:
         proto: HTTP/1.1
@@ -123,7 +123,7 @@ interactions:
             Content-Type:
                 - application/json; charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:08 GMT
+                - Thu, 08 Oct 2026 09:29:58 GMT
             Etag:
                 - W/"78e9249c4d3b84fb60837aa716be7cdea5a20928aef53bfb28f5c3c55d8b2961"
             Referrer-Policy:
@@ -145,7 +145,7 @@ interactions:
             X-Github-Media-Type:
                 - github.v3; format=json
             X-Github-Request-Id:
-                - 97CE:92D3B:45D5D5:48D842:6AC71854
+                - 2386:3273BA:3981F:3C11C:6AC76296
             X-Oauth-Client-Id:
                 - 178c6fc778ccc68e1d6a
             X-Oauth-Scopes:
@@ -153,18 +153,18 @@ interactions:
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4883"
+                - "4998"
             X-Ratelimit-Reset:
-                - "1791435479"
+                - "1791455397"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "117"
+                - "2"
             X-Xss-Protection:
                 - "0"
         status: 200 OK
         code: 200
-        duration: 434.329209ms
+        duration: 590.117541ms
     - id: 2
       request:
         proto: HTTP/1.1
@@ -203,7 +203,7 @@ interactions:
             Content-Type:
                 - application/json; charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:09 GMT
+                - Thu, 08 Oct 2026 09:29:58 GMT
             Etag:
                 - W/"b08965ee7c2dd205b37ad371b58a188248de1c13e9577cebcca8d4b64d5d9c79"
             Last-Modified:
@@ -227,7 +227,7 @@ interactions:
             X-Github-Media-Type:
                 - github.v3; format=json
             X-Github-Request-Id:
-                - 97CE:92D3B:45D6AC:48D8FF:6AC71854
+                - 2386:3273BA:39960:3C277:6AC76296
             X-Oauth-Client-Id:
                 - 178c6fc778ccc68e1d6a
             X-Oauth-Scopes:
@@ -235,18 +235,18 @@ interactions:
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4882"
+                - "4997"
             X-Ratelimit-Reset:
-                - "1791435479"
+                - "1791455397"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "118"
+                - "3"
             X-Xss-Protection:
                 - "0"
         status: 200 OK
         code: 200
-        duration: 400.092708ms
+        duration: 404.983125ms
     - id: 3
       request:
         proto: HTTP/1.1
@@ -298,7 +298,7 @@ interactions:
             Content-Type:
                 - text/plain; charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:09 GMT
+                - Thu, 08 Oct 2026 09:29:59 GMT
             Etag:
                 - W/"1e0e445871ceab9cc67ada3ba55de3a3d993bc3ffd9afa7e72bb029291db9eb5"
             Referrer-Policy:
@@ -320,7 +320,7 @@ interactions:
             X-Github-Media-Type:
                 - github.v3; param=raw
             X-Github-Request-Id:
-                - 97CE:92D3B:45D755:48D9E4:6AC71855
+                - 2386:3273BA:39A44:3C36A:6AC76297
             X-Oauth-Client-Id:
                 - 178c6fc778ccc68e1d6a
             X-Oauth-Scopes:
@@ -328,18 +328,18 @@ interactions:
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4881"
+                - "4996"
             X-Ratelimit-Reset:
-                - "1791435479"
+                - "1791455397"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "119"
+                - "4"
             X-Xss-Protection:
                 - "0"
         status: 200 OK
         code: 200
-        duration: 414.827541ms
+        duration: 375.874375ms
     - id: 4
       request:
         proto: HTTP/1.1
@@ -400,7 +400,7 @@ interactions:
             Content-Type:
                 - text/plain; charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:09 GMT
+                - Thu, 08 Oct 2026 09:29:59 GMT
             Etag:
                 - W/"3735ea4d8be5b3ba2ac32e209a712ec525d8406a1ea3700ebe955469eefef5da"
             Referrer-Policy:
@@ -422,7 +422,7 @@ interactions:
             X-Github-Media-Type:
                 - github.v3; param=raw
             X-Github-Request-Id:
-                - 97CE:92D3B:45D826:48DAAA:6AC71855
+                - 2386:3273BA:39B2A:3C44C:6AC76297
             X-Oauth-Client-Id:
                 - 178c6fc778ccc68e1d6a
             X-Oauth-Scopes:
@@ -430,18 +430,18 @@ interactions:
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4880"
+                - "4995"
             X-Ratelimit-Reset:
-                - "1791435479"
+                - "1791455397"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "120"
+                - "5"
             X-Xss-Protection:
                 - "0"
         status: 200 OK
         code: 200
-        duration: 388.841709ms
+        duration: 427.061291ms
     - id: 5
       request:
         proto: HTTP/1.1
@@ -476,7 +476,7 @@ interactions:
             Content-Type:
                 - text/html;charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:10 GMT
+                - Thu, 08 Oct 2026 09:30:00 GMT
             Location:
                 - https://productionresultssa18.blob.core.windows.net/actions-results/1c798112-0017-88fc-8b1e-a9d50f8ac1ea/workflow-job-run-4ae5b3f8-5a7e-57e2-a4b9-cc076a5a761e/logs/job/job-logs.txt
             Referrer-Policy:
@@ -494,22 +494,22 @@ interactions:
             X-Github-Edge-Region:
                 - southeastasia
             X-Github-Request-Id:
-                - 97CE:92D3B:45D8CF:48DB6D:6AC71855
+                - 2386:3273BA:39C3E:3C555:6AC76297
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4847"
+                - "4999"
             X-Ratelimit-Reset:
-                - "1791435518"
+                - "1791455400"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "153"
+                - "1"
             X-Xss-Protection:
                 - "0"
         status: 302 Found
         code: 302
-        duration: 462.620125ms
+        duration: 459.935041ms
     - id: 6
       request:
         proto: HTTP/1.1
@@ -539,7 +539,7 @@ interactions:
             Content-Type:
                 - text/plain
             Date:
-                - Thu, 08 Oct 2026 04:13:10 GMT
+                - Thu, 08 Oct 2026 09:30:00 GMT
             Etag:
                 - '"0x8DF24F11223BB3A"'
             Last-Modified:
@@ -561,14 +561,14 @@ interactions:
             X-Ms-Lease-Status:
                 - unlocked
             X-Ms-Request-Id:
-                - 8da2ff14-f01e-010d-72db-5634d3000000
+                - 5143e18e-e01e-0101-3d07-57a3db000000
             X-Ms-Server-Encrypted:
                 - "true"
             X-Ms-Version:
                 - "2025-11-05"
         status: 200 OK
         code: 200
-        duration: 1.082118167s
+        duration: 1.3011825s
     - id: 7
       request:
         proto: HTTP/1.1
@@ -609,7 +609,7 @@ interactions:
             Content-Type:
                 - application/json; charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:12 GMT
+                - Thu, 08 Oct 2026 09:30:02 GMT
             Etag:
                 - W/"14556ae8084a869bdc95dac369393254f6a263447ef3ddc107de67a503088396"
             Referrer-Policy:
@@ -631,7 +631,7 @@ interactions:
             X-Github-Media-Type:
                 - github.v3; format=json
             X-Github-Request-Id:
-                - 97CE:92D3B:45DBB7:48DE8A:6AC71856
+                - 2386:3273BA:3A029:3C938:6AC76298
             X-Oauth-Client-Id:
                 - 178c6fc778ccc68e1d6a
             X-Oauth-Scopes:
@@ -639,18 +639,18 @@ interactions:
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4879"
+                - "4994"
             X-Ratelimit-Reset:
-                - "1791435479"
+                - "1791455397"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "121"
+                - "6"
             X-Xss-Protection:
                 - "0"
         status: 200 OK
         code: 200
-        duration: 893.442333ms
+        duration: 570.545375ms
     - id: 8
       request:
         proto: HTTP/1.1
@@ -689,7 +689,7 @@ interactions:
             Content-Type:
                 - application/json; charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:12 GMT
+                - Thu, 08 Oct 2026 09:30:02 GMT
             Etag:
                 - W/"aec94b1f11b9d941514b4c4e908dd66cc3b9532db9abc806d88e2bfce5b2d1a6"
             Last-Modified:
@@ -713,7 +713,7 @@ interactions:
             X-Github-Media-Type:
                 - github.v3; format=json
             X-Github-Request-Id:
-                - 97CE:92D3B:45DD98:48E092:6AC71858
+                - 2386:3273BA:3A14B:3CA90:6AC7629A
             X-Oauth-Client-Id:
                 - 178c6fc778ccc68e1d6a
             X-Oauth-Scopes:
@@ -721,18 +721,18 @@ interactions:
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4878"
+                - "4993"
             X-Ratelimit-Reset:
-                - "1791435479"
+                - "1791455397"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "122"
+                - "7"
             X-Xss-Protection:
                 - "0"
         status: 200 OK
         code: 200
-        duration: 369.156042ms
+        duration: 382.735125ms
     - id: 9
       request:
         proto: HTTP/1.1
@@ -786,7 +786,7 @@ interactions:
             Content-Type:
                 - text/plain; charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:12 GMT
+                - Thu, 08 Oct 2026 09:30:02 GMT
             Etag:
                 - W/"9c42189268d8992d7423b8f2d384779f3de46e5eb085b28e334e6f7ab58bcc05"
             Referrer-Policy:
@@ -808,7 +808,7 @@ interactions:
             X-Github-Media-Type:
                 - github.v3; param=raw
             X-Github-Request-Id:
-                - 97CE:92D3B:45DE68:48E18D:6AC71858
+                - 2386:3273BA:3A22B:3CB78:6AC7629A
             X-Oauth-Client-Id:
                 - 178c6fc778ccc68e1d6a
             X-Oauth-Scopes:
@@ -816,18 +816,18 @@ interactions:
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4877"
+                - "4992"
             X-Ratelimit-Reset:
-                - "1791435479"
+                - "1791455397"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "123"
+                - "8"
             X-Xss-Protection:
                 - "0"
         status: 200 OK
         code: 200
-        duration: 364.881833ms
+        duration: 417.57025ms
     - id: 10
       request:
         proto: HTTP/1.1
@@ -862,7 +862,7 @@ interactions:
             Content-Type:
                 - text/html;charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:13 GMT
+                - Thu, 08 Oct 2026 09:30:03 GMT
             Location:
                 - https://productionresultssa18.blob.core.windows.net/actions-results/46adf17b-d9dc-8d10-9c00-94b6c338c723/workflow-job-run-8cec1a9d-99b6-5a3a-a50f-8efa7b2831f9/logs/job/job-logs.txt
             Referrer-Policy:
@@ -880,22 +880,22 @@ interactions:
             X-Github-Edge-Region:
                 - southeastasia
             X-Github-Request-Id:
-                - 97CE:92D3B:45DF43:48E28D:6AC71859
+                - 2386:3273BA:3A31B:3CC74:6AC7629A
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4846"
+                - "4998"
             X-Ratelimit-Reset:
-                - "1791435518"
+                - "1791455400"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "154"
+                - "2"
             X-Xss-Protection:
                 - "0"
         status: 302 Found
         code: 302
-        duration: 446.808625ms
+        duration: 507.526666ms
     - id: 11
       request:
         proto: HTTP/1.1
@@ -925,7 +925,7 @@ interactions:
             Content-Type:
                 - text/plain
             Date:
-                - Thu, 08 Oct 2026 04:13:12 GMT
+                - Thu, 08 Oct 2026 09:30:02 GMT
             Etag:
                 - '"0x8DF24F129D37A74"'
             Last-Modified:
@@ -947,14 +947,14 @@ interactions:
             X-Ms-Lease-Status:
                 - unlocked
             X-Ms-Request-Id:
-                - 8da30193-f01e-010d-42db-5634d3000000
+                - 5143e4c9-e01e-0101-3407-57a3db000000
             X-Ms-Server-Encrypted:
                 - "true"
             X-Ms-Version:
                 - "2025-11-05"
         status: 200 OK
         code: 200
-        duration: 272.377625ms
+        duration: 276.954625ms
     - id: 12
       request:
         proto: HTTP/1.1
@@ -995,7 +995,7 @@ interactions:
             Content-Type:
                 - application/json; charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:14 GMT
+                - Thu, 08 Oct 2026 09:30:04 GMT
             Etag:
                 - W/"b6de92bd104bf3616d1237c34b62696c9a2f8933643bee7e89ccd0fb11522e0e"
             Referrer-Policy:
@@ -1017,7 +1017,7 @@ interactions:
             X-Github-Media-Type:
                 - github.v3; format=json
             X-Github-Request-Id:
-                - 97CE:92D3B:45E135:48E43D:6AC71859
+                - 2386:3273BA:3A4BC:3CE51:6AC7629B
             X-Oauth-Client-Id:
                 - 178c6fc778ccc68e1d6a
             X-Oauth-Scopes:
@@ -1025,18 +1025,18 @@ interactions:
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4875"
+                - "4991"
             X-Ratelimit-Reset:
-                - "1791435479"
+                - "1791455397"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "125"
+                - "9"
             X-Xss-Protection:
                 - "0"
         status: 200 OK
         code: 200
-        duration: 484.213916ms
+        duration: 609.6635ms
     - id: 13
       request:
         proto: HTTP/1.1
@@ -1071,7 +1071,7 @@ interactions:
             Content-Type:
                 - text/html;charset=utf-8
             Date:
-                - Thu, 08 Oct 2026 04:13:14 GMT
+                - Thu, 08 Oct 2026 09:30:04 GMT
             Location:
                 - https://productionresultssa3.blob.core.windows.net/actions-results/a16d5dee-f0c6-4eb8-b9cb-e6a6e994f5d2/workflow-job-run-c62c13df-52b7-5e2e-af1f-ab3b10d15d41/logs/job/job-logs.txt
             Referrer-Policy:
@@ -1089,22 +1089,22 @@ interactions:
             X-Github-Edge-Region:
                 - southeastasia
             X-Github-Request-Id:
-                - 97CE:92D3B:45E241:48E54C:6AC7185A
+                - 2386:3273BA:3A63A:3CFA7:6AC7629C
             X-Ratelimit-Limit:
                 - "5000"
             X-Ratelimit-Remaining:
-                - "4845"
+                - "4997"
             X-Ratelimit-Reset:
-                - "1791435518"
+                - "1791455400"
             X-Ratelimit-Resource:
                 - core
             X-Ratelimit-Used:
-                - "155"
+                - "3"
             X-Xss-Protection:
                 - "0"
         status: 302 Found
         code: 302
-        duration: 488.187417ms
+        duration: 561.826083ms
     - id: 14
       request:
         proto: HTTP/1.1
@@ -1134,7 +1134,7 @@ interactions:
             Content-Type:
                 - text/plain
             Date:
-                - Thu, 08 Oct 2026 04:13:15 GMT
+                - Thu, 08 Oct 2026 09:30:05 GMT
             Etag:
                 - '"0x8DF24F0F8B41DE6"'
             Last-Modified:
@@ -1156,11 +1156,11 @@ interactions:
             X-Ms-Lease-Status:
                 - unlocked
             X-Ms-Request-Id:
-                - 72fdc5f6-301e-0005-70db-563162000000
+                - 2112ab07-d01e-002d-2b07-5746dd000000
             X-Ms-Server-Encrypted:
                 - "true"
             X-Ms-Version:
                 - "2025-11-05"
         status: 200 OK
         code: 200
-        duration: 1.218831959s
+        duration: 1.195959167s

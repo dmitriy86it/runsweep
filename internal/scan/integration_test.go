@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmitriy86it/runsweep/internal/gh"
 	"github.com/dmitriy86it/runsweep/internal/incident"
@@ -64,7 +65,7 @@ func TestDemoCassette(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := Run(context.Background(), c, inc, Options{Repos: []string{"dmitriy86it/runsweep-demo"}, Concurrency: 1})
+	res, err := Run(context.Background(), c, inc, Options{Repos: []string{"dmitriy86it/runsweep-demo"}, Concurrency: 1, Lookback: 7 * 24 * time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
