@@ -475,8 +475,8 @@ func TestImportOutputFileIsAtomic(t *testing.T) {
 	d := deps{newImporter: fixtureImporter(t)}
 	var out, errb bytes.Buffer
 	if code := run([]string{"incidents", "import", "GHSA-35jh-r3h4-6jhm", "-o", path}, &out, &errb, d); code != 2 ||
-		!strings.Contains(errb.String(), "nothing to import") {
-		t.Fatalf("range-only record: code %d: %s", code, errb.String())
+		!strings.Contains(errb.String(), "window unknown") {
+		t.Fatalf("range-only record without registry data: code %d: %s", code, errb.String())
 	}
 	if b, _ := os.ReadFile(path); string(b) != "old\n" { //nolint:gosec // G304: test temp path
 		t.Fatalf("failed import must leave the file alone, got %q", b)

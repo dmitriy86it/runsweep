@@ -15,12 +15,12 @@ type found struct {
 	notes   []string                   // YAML comment lines (without "# ")
 	warns   []string                   // stderr warnings
 	refs    []string
-	open    map[string]string // package -> lowest introduced of its open-ended ranges
-	seen    map[string]bool   // OSV ids already added
+	ranges  map[string][]segment // package -> OSV range spans to fill from the registry
+	seen    map[string]bool      // OSV ids already added
 }
 
 func newFound() *found {
-	return &found{open: map[string]string{}, npm: map[string]map[string]bool{}, actions: map[string]map[string]bool{}, seen: map[string]bool{}}
+	return &found{ranges: map[string][]segment{}, npm: map[string]map[string]bool{}, actions: map[string]map[string]bool{}, seen: map[string]bool{}}
 }
 
 // both records the same text as a YAML note and a warning.
@@ -50,17 +50,16 @@ func (f *found) addVuln(v *Vuln) bool {
 				f.both("%s: skipped invalid npm package name %q", v.ID, name)
 				continue
 			}
-			from, isOpen, badIntro := openFrom(a)
-			if badIntro {
-				f.notes = append(f.notes, fmt.Sprintf("%s: %s: unparsable introduced in an open range (%s) — treated as 0 (every version)", v.ID, name, rangeText(a)))
+			segs, badRange := segments(a)
+			if badRange {
+				f.notes = append(f.notes, fmt.Sprintf("%s: %s: unparsable range event (%s) — read as 0 / no end, the wider choice", v.ID, name, rangeText(a)))
 			}
-			if isOpen {
-				if cur, had := f.open[name]; !had || from == "0" || (cur != "0" && versionLess(from, cur)) {
-					f.open[name] = from
-				}
+			// Listed versions are trusted unless the range never ends; then the registry adds the rest.
+			if len(a.Versions) == 0 || slices.ContainsFunc(segs, func(s segment) bool { return s.to == "" }) {
+				f.ranges[name] = append(f.ranges[name], segs...)
 			}
 			if len(a.Versions) == 0 {
-				if isOpen { // the registry fills the versions in
+				if len(segs) > 0 { // the registry fills the versions in
 					if f.npm[name] == nil {
 						f.npm[name] = map[string]bool{}
 					}
@@ -121,8 +120,15 @@ func versionLess(a, b string) bool {
 		return slices.Compare(na[:], nb[:]) < 0
 	case oka != okb:
 		return oka // parseable versions first
+	case oka && pre(a) != pre(b):
+		return pre(a) // 1.0.0-rc.1 < 1.0.0
 	}
-	return a < b
+	return a < b // ponytail: prereleases of one version compare as strings, not by semver identifiers
+}
+
+func pre(v string) bool {
+	v, _, _ = strings.Cut(v, "+")
+	return strings.Contains(v, "-")
 }
 
 func triple(v string) ([3]int, bool) {
@@ -154,16 +160,14 @@ func sortedVersions(m map[string]bool) []string {
 	return out
 }
 
-// expandOpen adds to f.npm[name] every registry version at or above the open
-// range's start. Versions without a publish time count only while still listed.
-func (f *found) expandOpen(name string, pt PkgTimes) {
-	from := f.open[name]
-	fromT, _ := triple(from)
+// expand adds to f.npm[name] every registry version inside one of its OSV
+// range spans. Versions without a publish time count only while still listed.
+func (f *found) expand(name string, pt PkgTimes) {
 	add := func(v string) {
-		if !validVersion(v) {
+		if _, ok := triple(v); !ok || !validVersion(v) {
 			return
 		}
-		if t, ok := triple(v); ok && (from == "0" || slices.Compare(t[:], fromT[:]) >= 0) {
+		if slices.ContainsFunc(f.ranges[name], func(s segment) bool { return s.has(v) }) {
 			f.addNPM(name, v)
 		}
 	}

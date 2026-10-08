@@ -85,12 +85,13 @@ func TestImportDefaultIDAndTitle(t *testing.T) {
 
 func TestImportNothing(t *testing.T) {
 	c, _ := fixtures(t, nil)
+	// Range-only lodash entries: no registry fixture (404), so every version and no publish time.
 	_, warns, err := importWith(t, c, Options{IDs: []string{"GHSA-35jh-r3h4-6jhm"}})
-	if !errors.Is(err, ErrNothing) {
-		t.Fatalf("range-only record: want ErrNothing, got %v", err)
+	if !errors.Is(err, errNoTimes) {
+		t.Fatalf("range-only record without registry data: want errNoTimes, got %v", err)
 	}
-	if len(warns) == 0 {
-		t.Fatal("range-only record must be reported on stderr")
+	if !strings.Contains(strings.Join(warns, "|"), "lodash: removed from npm, versions unknown") {
+		t.Fatalf("warns %q", warns)
 	}
 	if _, _, err := importWith(t, c, Options{Packages: []string{"left-pad"}}); !errors.Is(err, ErrNothing) {
 		t.Fatalf("package without MAL records: want ErrNothing, got %v", err)
@@ -177,7 +178,7 @@ func TestImportExpandsOpenRange(t *testing.T) {
 	}
 	for _, want := range []string{
 		`{name: "arpan-package", versions: ["0.0.1-security", "2.0.5"]}`,
-		"# arpan-package: open range from 0 — all registry versions included",
+		"# arpan-package: OSV range [0, ∞) — registry versions in range included",
 	} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("missing %q in\n%s", want, out)
@@ -197,7 +198,7 @@ func TestImportOpenRangeRegistryMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`{name: "arpan-package", versions: ["*"]}`, "# arpan-package: open range from 0 — removed from npm, versions unknown — every version treated as malicious"} {
+	for _, want := range []string{`{name: "arpan-package", versions: ["*"]}`, "# arpan-package: OSV range [0, ∞) — removed from npm, versions unknown — every version treated as malicious"} {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("missing %q in\n%s", want, out)
 		}
@@ -235,7 +236,7 @@ func TestImportExpandsRangeOnlyOpenEntry(t *testing.T) {
 	}
 	for _, want := range []string{
 		`{name: "eslint-validator", versions: ["0.0.1-security", "1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4"]}`,
-		"# eslint-validator: open range from 0 — all registry versions included",
+		"# eslint-validator: OSV range [0, ∞) — registry versions in range included",
 	} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("missing %q in\n%s", want, out)
@@ -336,5 +337,50 @@ func TestImportWarnsDroppedCluster(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "#   netflixdesign@1.0.1 (published") {
 		t.Fatalf("drop must stay in the comments:\n%s", out)
+	}
+}
+
+// rangeRecord serves a crafted (not captured) OSV record for eslint-validator, whose
+// captured registry document has 0.0.1-security and 1.0.0..1.0.4.
+func rangeRecord(t *testing.T, events string) *Client {
+	t.Helper()
+	c, _ := fixtures(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/osv/v1/vulns/MAL-0000-3" {
+			return false
+		}
+		_, _ = w.Write([]byte(`{"id":"MAL-0000-3","affected":[{"package":{"ecosystem":"npm","name":"eslint-validator"},"ranges":[{"type":"SEMVER","events":[` + events + `]}]}]}`))
+		return true
+	})
+	return c
+}
+
+func TestImportSegmentedRange(t *testing.T) {
+	c := rangeRecord(t, `{"introduced":"0"},{"fixed":"1.0.1"},{"introduced":"1.0.3"}`)
+	out, _, err := importWith(t, c, Options{IDs: []string{"MAL-0000-3"}, KeepAll: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`{name: "eslint-validator", versions: ["0.0.1-security", "1.0.0", "1.0.3", "1.0.4"]}`,
+		"# eslint-validator: OSV range [0, 1.0.1), [1.0.3, ∞) — registry versions in range included",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("missing %q in\n%s", want, out)
+		}
+	}
+}
+
+func TestImportNothingInRange(t *testing.T) {
+	c := rangeRecord(t, `{"introduced":"5.0.0"},{"last_affected":"5.1.0"}`)
+	out, warns, err := importWith(t, c, Options{IDs: []string{"MAL-0000-3"}, Since: importNow.Add(-time.Hour), Until: importNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `{name: "eslint-validator", versions: ["*"]}`) ||
+		!strings.Contains(string(out), "# eslint-validator: OSV range [5.0.0, 5.1.0] — no registry version falls in the OSV range — every version treated as malicious") {
+		t.Fatalf("%s", out)
+	}
+	if !strings.Contains(strings.Join(warns, "|"), "eslint-validator: no registry version falls in the OSV range — every version treated as malicious") {
+		t.Fatalf("warns %q", warns)
 	}
 }

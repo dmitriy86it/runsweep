@@ -143,28 +143,24 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 				return nil, err
 			}
 			pts[name] = pt
-			from, ok := f.open[name]
-			switch {
-			case !ok:
-			case len(pt.Times) == 0 && len(pt.Published) == 0: // 404 or no versions left
-				f.npm[name] = map[string]bool{"*": true}
-				f.notes = append(f.notes, fmt.Sprintf("%s: open range from %s — removed from npm, versions unknown — every version treated as malicious", name, from))
-				o.Warnf("%s: removed from npm, versions unknown — every version treated as malicious", name)
-			default:
-				f.expandOpen(name, pt)
-				f.notes = append(f.notes, fmt.Sprintf("%s: open range from %s — all registry versions included", name, from))
+			segs, ok := f.ranges[name]
+			if !ok {
+				continue
 			}
-		}
-		for _, name := range names { // open ranges with no registry version in range
-			if len(f.npm[name]) == 0 {
-				delete(f.npm, name)
+			why := ""
+			if len(pt.Times) == 0 && len(pt.Published) == 0 { // 404 or no versions left
+				why = "removed from npm, versions unknown"
+			} else if f.expand(name, pt); len(f.npm[name]) == 0 {
+				why = "no registry version falls in the OSV range"
 			}
-		}
-		if len(f.npm) == 0 && len(f.actions) == 0 {
-			return nil, ErrNothing
-		}
-		if len(f.npm) == 0 && (o.Since.IsZero() || o.Until.IsZero()) {
-			return nil, errActionWindow
+			if why == "" {
+				f.notes = append(f.notes, fmt.Sprintf("%s: OSV range %s — registry versions in range included", name, segText(segs)))
+				continue
+			}
+			// D-007: never drop a package OSV calls malicious; widen to every version instead.
+			f.npm[name] = map[string]bool{"*": true}
+			f.notes = append(f.notes, fmt.Sprintf("%s: OSV range %s — %s — every version treated as malicious", name, segText(segs), why))
+			o.Warnf("%s: %s — every version treated as malicious", name, why)
 		}
 	}
 	if len(f.npm) > 0 {

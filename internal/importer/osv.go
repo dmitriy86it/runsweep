@@ -130,33 +130,72 @@ func (c *Client) QueryMAL(ctx context.Context, name string) ([]Vuln, error) {
 	return nil, fmt.Errorf("OSV query %s: more than %d pages", name, maxPages)
 }
 
-// openFrom returns the lowest start of the ranges whose last segment never
-// ends (an `introduced` with no later fixed, last_affected or limit event);
-// "0" means every version. An unparsable `introduced` counts as "0" and sets bad.
-func openFrom(a Affected) (from string, open, bad bool) {
+// segment is one affected span of an OSV range: [from, to), or [from, to] when
+// incl (last_affected); to == "" means no end. from "0" means every version.
+type segment struct {
+	from, to string
+	incl     bool
+}
+
+// segments reads every span of a's non-GIT ranges. `fixed` and `limit` end a span
+// exclusively, `last_affected` inclusively; a span still open at the end never ends.
+// An unparsable introduced reads as "0" and an unparsable end as no end (bad is set).
+func segments(a Affected) (segs []segment, bad bool) {
+	ok := func(v string) bool {
+		_, parsed := triple(v)
+		return eventRe.MatchString(v) && parsed
+	}
 	for _, r := range a.Ranges {
-		intro, ended := "", true
-		for _, ev := range r.Events {
-			if v, ok := ev["introduced"]; ok {
-				intro, ended = v, false
-			}
-			for _, k := range []string{"fixed", "last_affected", "limit"} {
-				if _, ok := ev[k]; ok {
-					ended = true
-				}
-			}
-		}
-		if ended {
+		if r.Type == "GIT" {
 			continue
 		}
-		if _, ok := triple(intro); !ok && intro != "0" {
-			intro, bad = "0", true
+		var cur segment
+		open := false
+		for _, ev := range r.Events {
+			if v, has := ev["introduced"]; has && !open { // a repeated introduced keeps the earlier, wider start
+				if v != "0" && !ok(v) {
+					v, bad = "0", true
+				}
+				cur, open = segment{from: v}, true
+			}
+			for _, k := range []string{"fixed", "limit", "last_affected"} {
+				v, has := ev[k]
+				if !has || !open {
+					continue
+				}
+				if !ok(v) {
+					bad = true
+					continue // no usable end: the span stays open
+				}
+				cur.to, cur.incl, open = v, k == "last_affected", false
+				segs = append(segs, cur)
+			}
 		}
-		if !open || intro == "0" || (from != "0" && versionLess(intro, from)) {
-			from, open = intro, true
+		if open {
+			segs = append(segs, cur)
 		}
 	}
-	return from, open, bad
+	return segs, bad
+}
+
+func (s segment) has(v string) bool {
+	return (s.from == "0" || !versionLess(v, s.from)) &&
+		(s.to == "" || versionLess(v, s.to) || s.incl && !versionLess(s.to, v))
+}
+
+func segText(segs []segment) string {
+	out := make([]string, len(segs))
+	for i, s := range segs {
+		switch {
+		case s.to == "":
+			out[i] = "[" + s.from + ", ∞)"
+		case s.incl:
+			out[i] = "[" + s.from + ", " + s.to + "]"
+		default:
+			out[i] = "[" + s.from + ", " + s.to + ")"
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 // rangeText renders range events for a comment, keeping only safe tokens.

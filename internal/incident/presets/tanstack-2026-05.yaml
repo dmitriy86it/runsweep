@@ -19,7 +19,7 @@ title: "Mini Shai-Hulud wave: TanStack and 128 other npm packages, 170 packages 
 # Open range (MAL-2026-3514, {introduced: "0"}, no fix): @tallyui/components
 #   MAL-2026-3514 lists versions 1.0.1-1.0.3 (the only ones StepSecurity and Aikido confirm) and also carries an
 #   open range from 0, so every registry version is included: 1.0.0 (published 2026-02-25, before the wave) and
-#   2.0.0..3.9.2 (from 2026-09-28 on, after this window, so they cannot match a run inside it).
+#   2.0.0..3.9.2 (published from 2026-09-28 on, inside the window, whose end is a registry upper bound).
 # start: earliest npm publish time = @tanstack/react-router-ssr-query@1.166.15 2026-05-11T19:20:39.110Z (rounded down).
 # latest publish among the wave versions (the open-range expansion aside): @opensearch-project/opensearch@3.5.3 2026-05-12T00:47:39.185Z.
 # 6 packages return 404 from the registry (@dirigible-ai/sdk, @draftauth/client, @draftauth/core,

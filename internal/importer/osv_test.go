@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fixtures serves testdata/osv and testdata/npm the way api.osv.dev and registry.npmjs.org do.
@@ -193,11 +194,11 @@ func TestAddVuln(t *testing.T) {
 	if !f.addVuln(vulnFixture(t, "MAL-2026-2307")) || fmt.Sprint(sortedVersions(f.npm["axios"])) != "[0.30.4 1.14.1]" {
 		t.Fatalf("axios: %v", f.npm)
 	}
-	if !f.addVuln(vulnFixture(t, "MAL-2026-2300")) || len(f.npm["eslint-validator"]) != 0 || f.open["eslint-validator"] != "0" {
+	if !f.addVuln(vulnFixture(t, "MAL-2026-2300")) || len(f.npm["eslint-validator"]) != 0 || segText(f.ranges["eslint-validator"]) != "[0, ∞)" {
 		t.Fatal("open range-only entry must be left to the registry, without invented versions")
 	}
-	if !f.addVuln(vulnFixture(t, "GHSA-35jh-r3h4-6jhm")) || f.npm["lodash"] != nil {
-		t.Fatal("closed range-only entry must not invent versions")
+	if !f.addVuln(vulnFixture(t, "GHSA-35jh-r3h4-6jhm")) || len(f.npm["lodash"]) != 0 || segText(f.ranges["lodash"]) != "[0, 4.17.21)" {
+		t.Fatal("closed range-only entry is left to the registry, without invented versions")
 	}
 	if !f.addVuln(vulnFixture(t, "GHSA-mrrh-fwg8-r2c3")) || len(f.actions) != 0 {
 		t.Fatal("GitHub Actions advisory must not become an action SHA")
@@ -206,15 +207,14 @@ func TestAddVuln(t *testing.T) {
 		t.Fatal("CVE record without package entries must not count (its versions are git tags)")
 	}
 	for _, want := range []string{
-		"GHSA-35jh-r3h4-6jhm: lodash affected by range only (introduced 0, fixed 4.17.21) — versions not listed, add manually",
 		"GHSA-mrrh-fwg8-r2c3: affects tj-actions/changed-files introduced 0, fixed 46.0.1 — pass the compromised commit with --action tj-actions/changed-files@SHA",
 	} {
 		if !slices.Contains(f.notes, want) || !slices.Contains(f.warns, want) {
 			t.Fatalf("missing %q\nnotes %q\nwarns %q", want, f.notes, f.warns)
 		}
 	}
-	if slices.ContainsFunc(f.notes, func(n string) bool { return strings.Contains(n, "eslint-validator") }) {
-		t.Fatalf("open range-only entry needs no manual note: %q", f.notes)
+	if slices.ContainsFunc(f.notes, func(n string) bool { return strings.Contains(n, "add manually") }) {
+		t.Fatalf("range-only entries need no manual note: %q", f.notes)
 	}
 	if len(f.refs) != 5 || f.refs[0] != "https://osv.dev/vulnerability/MAL-2026-2307" {
 		t.Fatalf("refs %v", f.refs)
@@ -249,7 +249,7 @@ func TestAddVulnRejectsHostileStrings(t *testing.T) {
 func TestVersionOrder(t *testing.T) {
 	v := []string{"x", "1.10.0", "1.9.0", "0.0.1-security", "1.2.0-beta", "1.2.0", "v0.5.0"}
 	sort.Slice(v, func(i, j int) bool { return versionLess(v[i], v[j]) })
-	if got := fmt.Sprint(v); got != "[0.0.1-security v0.5.0 1.2.0 1.2.0-beta 1.9.0 1.10.0 x]" {
+	if got := fmt.Sprint(v); got != "[0.0.1-security v0.5.0 1.2.0-beta 1.2.0 1.9.0 1.10.0 x]" {
 		t.Fatal(got)
 	}
 }
@@ -274,13 +274,13 @@ func TestAddAction(t *testing.T) {
 func TestAddVulnRecordsOpenRange(t *testing.T) {
 	f := newFound()
 	f.addVuln(vulnFixture(t, "MAL-2022-1122"))
-	if fmt.Sprint(sortedVersions(f.npm["arpan-package"])) != "[2.0.5]" || f.open["arpan-package"] != "0" {
-		t.Fatalf("npm %v open %v", f.npm, f.open)
+	if fmt.Sprint(sortedVersions(f.npm["arpan-package"])) != "[2.0.5]" || segText(f.ranges["arpan-package"]) != "[0, ∞)" {
+		t.Fatalf("npm %v ranges %v", f.npm, f.ranges)
 	}
 	f = newFound()
 	f.addVuln(vulnFixture(t, "MAL-2026-2307")) // explicit versions, no ranges
-	if len(f.open) != 0 {
-		t.Fatalf("open %v", f.open)
+	if len(f.ranges) != 0 {
+		t.Fatalf("ranges %v", f.ranges)
 	}
 }
 
@@ -297,19 +297,45 @@ func TestAddVulnDedupesRefsAndChecksID(t *testing.T) {
 	}
 }
 
-func TestOpenFromLastSegment(t *testing.T) {
-	var a Affected
-	_ = json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.0.0"},{"introduced":"2.0.0"}]}]}`), &a)
-	if from, open, _ := openFrom(a); !open || from != "2.0.0" {
-		t.Fatalf("%q %v", from, open)
+func TestSegments(t *testing.T) {
+	for events, want := range map[string]string{
+		`{"introduced":"0"},{"fixed":"1.0.0"},{"introduced":"2.0.0"}`: "[0, 1.0.0), [2.0.0, ∞)",
+		`{"introduced":"1.0.0"},{"last_affected":"1.2.0"}`:            "[1.0.0, 1.2.0]",
+		`{"introduced":"1.0.0"},{"limit":"1.2.0"}`:                    "[1.0.0, 1.2.0)",
+		`{"introduced":"2.x"}`:                                        "[0, ∞)",
+		`{"introduced":"1.0.0"},{"fixed":"bad\nx"}`:                   "[1.0.0, ∞)",
+	} {
+		var a Affected
+		if err := json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[`+events+`]}]}`), &a); err != nil {
+			t.Fatal(err)
+		}
+		segs, _ := segments(a)
+		if got := segText(segs); got != want {
+			t.Errorf("%s: got %q, want %q", events, got, want)
+		}
 	}
-	_ = json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[{"introduced":"2.0.0"},{"fixed":"3.0.0"}]}]}`), &a)
-	if _, open, _ := openFrom(a); open {
-		t.Fatal("closed range reported open")
+}
+
+func TestExpandRange(t *testing.T) {
+	pt := func(vs ...string) PkgTimes {
+		p := PkgTimes{Found: true, Times: map[string]time.Time{}, Published: map[string]bool{}}
+		for _, v := range vs {
+			p.Times[v] = time.Unix(0, 0)
+		}
+		return p
 	}
-	_ = json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[{"introduced":"2.x"}]}]}`), &a)
-	if from, open, bad := openFrom(a); !open || from != "0" || !bad {
-		t.Fatalf("unparsable introduced: %q %v %v", from, open, bad)
+	for events, want := range map[string]string{
+		`{"introduced":"0"},{"fixed":"1.0.0"},{"introduced":"2.0.0"}`: "[0.5.0 1.0.0-rc.1 2.1.0]",
+		`{"introduced":"0.5.0"},{"last_affected":"1.2.0"}`:            "[0.5.0 1.0.0-rc.1 1.2.0]",
+	} {
+		var a Affected
+		_ = json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[`+events+`]}]}`), &a)
+		f := newFound()
+		f.ranges["p"], _ = segments(a)
+		f.expand("p", pt("0.5.0", "1.0.0-rc.1", "1.2.0", "2.1.0"))
+		if got := fmt.Sprint(sortedVersions(f.npm["p"])); got != want {
+			t.Errorf("%s: got %s, want %s", events, got, want)
+		}
 	}
 }
 
@@ -321,8 +347,8 @@ func TestAddVulnUnparsableIntroducedAndVPrefix(t *testing.T) {
 	f := newFound()
 	f.addVuln(&v)
 	notes := strings.Join(f.notes, "\n")
-	if f.open["a"] != "0" || !strings.Contains(notes, "a: unparsable introduced in an open range (introduced 2.x)") {
-		t.Fatalf("open %v notes %q", f.open, f.notes)
+	if segText(f.ranges["a"]) != "[0, ∞)" || !strings.Contains(notes, "a: unparsable range event (introduced 2.x) — read as 0 / no end, the wider choice") {
+		t.Fatalf("ranges %v notes %q", f.ranges, f.notes)
 	}
 	if !f.npm["b"]["1.2.3"] || f.npm["b"]["v1.2.3"] || !strings.Contains(notes, `b: version "v1.2.3" listed as "1.2.3"`) {
 		t.Fatalf("npm %v notes %q", f.npm, f.notes)
