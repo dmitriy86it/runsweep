@@ -24,7 +24,7 @@ import (
 )
 
 // installLogRe matches a job log line of a package install by npm, pnpm, yarn v1, yarn berry or bun.
-var installLogRe = regexp.MustCompile(`npm (ci|install|i)\b|added \d+ packages?|up to date, audited|` +
+var installLogRe = regexp.MustCompile(`npm (ci|install|i)\b|(added|removed|changed) \d+ packages?|audited \d+ packages?|up to date in \d|` +
 	`pnpm (i|install|add)\b|Packages: \+\d+|Progress: resolved|Lockfile is up to date|` +
 	`yarn install|success Saved lockfile|\[\d/\d\] (Resolving|Fetching) packages|YN0000: .*(Resolution step|Fetch step|Link step)|` +
 	`bun install|\d+ packages? installed`)
@@ -379,9 +379,10 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		}
 		// Drop npm evidence only on positive evidence the job cannot install packages.
 		// A missing or unreadable lockfile matters only to a job that installed: an UNCHECKED-only
-		// result is dropped when the log was read and shows no install the workflow does not name.
+		// result is dropped when the log was read, shows no install and no package-manager call
+		// (output may be silenced), and the job (every job when unidentified) names no install.
 		noInstall := npmRes.Status == model.Unchecked && logErr == nil && !installLogRe.MatchString(log) &&
-			len(installs) == 0 && (wj == nil || !wj.InstallsNPM())
+			!workflow.CallsPackageManager(log) && len(installs) == 0 && (rj == nil || !rj.InstallsNPM())
 		if npmRes.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logErr == nil && installLogRe.MatchString(log)) {
 			f.Status = model.Worse(f.Status, npmRes.Status)
 			f.Evidence = append(f.Evidence, npmRes.Evidence...)

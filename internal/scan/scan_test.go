@@ -1192,10 +1192,45 @@ func TestInstallLogRe(t *testing.T) {
 		"     Running unittests src/lib.rs (target/debug/deps/net-1a2b3c)":  false,
 		"Downloaded 42 crates (3.1 MB) in 1.20s":                            false,
 		"test result: ok. 12 passed; 0 failed; 0 ignored":                   false,
+		"removed 3 packages, and audited 300 packages in 2s":                true,
+		"changed 1 package in 800ms":                                        true,
+		"audited 1 package in 0.5s":                                         true,
+		"up to date in 412ms":                                               true,
 		"npm warn config production Use `--omit=dev` instead.":              false,
 	} {
 		if installLogRe.MatchString(line) != want {
 			t.Errorf("%q: want %v", line, want)
 		}
+	}
+}
+
+// Fix round 1: an unidentified job is judged by every job's installs, and a package manager
+// called with suppressed output still counts as an install.
+func TestScanNoLockfileSilentInstallKept(t *testing.T) {
+	fx := func(job, wf, log string) *sourcetest.Fake {
+		f := sourcetest.New()
+		f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+		f.Jobs[1] = []source.Job{{ID: 10, Name: job}}
+		f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(wf))
+		f.AddFile("o/a", "s1", "package.json", []byte(`{"dependencies":{"left-pad":"^1"}}`))
+		f.Logs[10] = log
+		return f
+	}
+	cargo := "2026-03-31T01:00:00Z    Compiling serde v1.0.0\n"
+	yarnWF := "on: push\njobs:\n  web:\n    runs-on: x\n    steps:\n      - run: yarn --silent\n"
+	actionWF := "on: push\njobs:\n  web:\n    runs-on: x\n    steps:\n      - uses: ./.github/actions/setup\n"
+	for name, f := range map[string]*sourcetest.Fake{
+		"unidentified job":   fx("web (matrix 1)", yarnWF, cargo),
+		"silent yarn in log": fx("web", actionWF, cargo+"2026-03-31T01:00:00Z ##[group]Run yarn --frozen-lockfile --silent\n"),
+		"bun i -s in log":    fx("web", actionWF, cargo+"2026-03-31T01:00:00Z ##[group]Run bun i --silent\n"),
+	} {
+		if fd := scanOne(t, f, npmOnly); fd.Status != model.Unchecked {
+			t.Errorf("%s: %+v", name, fd)
+		}
+	}
+	// token and config names are not package-manager calls
+	f := fx("web", actionWF, cargo+"2026-03-31T01:00:00Z   NPM_TOKEN: ***\n2026-03-31T01:00:00Z   npm_config_registry: https://r\n")
+	if res, err := Run(context.Background(), f, npmOnly, Options{Repos: []string{"o/a"}}); err != nil || len(res.Findings) != 0 {
+		t.Fatalf("env lines: %v %+v", err, res.Findings)
 	}
 }
