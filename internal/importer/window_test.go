@@ -78,7 +78,7 @@ func window(t *testing.T, keepAll bool, refs ...string) (map[string]map[string]b
 		}
 		times[name] = pt
 	}
-	start, end, notes, err := computeWindow(f.npm, times, keepAll, importNow)
+	start, end, notes, _, err := computeWindow(f.npm, times, keepAll, importNow)
 	return f.npm, start, end, notes, err
 }
 
@@ -198,7 +198,7 @@ func TestWindowGapClusters(t *testing.T) {
 	for _, c := range cases {
 		npm, times := map[string]map[string]bool{}, map[string]PkgTimes{}
 		c.build(npm, times)
-		if _, _, _, err := computeWindow(npm, times, false, importNow); err != nil || len(npm) != c.want {
+		if _, _, _, _, err := computeWindow(npm, times, false, importNow); err != nil || len(npm) != c.want {
 			t.Errorf("%s: kept %d, want %d (%v)", c.name, len(npm), c.want, err)
 		}
 	}
@@ -210,7 +210,7 @@ func TestWindowNeverSplitsPackage(t *testing.T) {
 	times := map[string]PkgTimes{"mixed": {Found: true, Published: map[string]bool{"1.0.0": true, "2.0.0": true},
 		Times: map[string]time.Time{"1.0.0": base.AddDate(-1, 0, 0), "2.0.0": base}}}
 	synth(3, base, time.Hour, "w", npm, times)
-	if _, _, _, err := computeWindow(npm, times, false, importNow); err != nil || len(npm["mixed"]) != 2 {
+	if _, _, _, _, err := computeWindow(npm, times, false, importNow); err != nil || len(npm["mixed"]) != 2 {
 		t.Fatalf("%v %v", npm["mixed"], err)
 	}
 }
@@ -228,8 +228,17 @@ func TestTimesNullIsNotATime(t *testing.T) {
 		t.Fatalf("%+v", pt)
 	}
 	npm := map[string]map[string]bool{"hostile": {"1.0.0": true, "2.0.0": true}}
-	_, _, notes, err := computeWindow(npm, map[string]PkgTimes{"hostile": pt}, false, importNow)
+	_, _, notes, _, err := computeWindow(npm, map[string]PkgTimes{"hostile": pt}, false, importNow)
 	if err != nil || !npm["hostile"]["1.0.0"] || !strings.Contains(strings.Join(notes, "\n"), "hostile@1.0.0: no valid publish time in registry; kept") {
 		t.Fatalf("%v %v %q", npm, err, notes)
+	}
+}
+
+func TestWindowSkipsWildcard(t *testing.T) {
+	npm := map[string]map[string]bool{"gone": {"*": true}, "axios": {"1.14.1": true}}
+	times := map[string]PkgTimes{"gone": {}, "axios": {Found: true, Times: map[string]time.Time{"1.14.1": importNow.Add(-time.Hour)}, Published: map[string]bool{}, Modified: importNow}}
+	_, _, notes, _, err := computeWindow(npm, times, false, importNow)
+	if err != nil || npm["gone"] == nil || strings.Contains(strings.Join(notes, "\n"), "gone@*") {
+		t.Fatalf("%v %v %q", err, npm, notes)
 	}
 }

@@ -60,7 +60,7 @@ title: "axios 1.14.1 / 0.30.4 malicious release"
 # when the bad artifact could be downloaded; jobs that ran in this window are scanned
 window: {start: 2026-03-31T00:21:58Z, end: 2026-03-31T03:15:30Z}
 npm:                       # compromised package versions
-  - {name: axios, versions: ["1.14.1", "0.30.4"]}
+  - {name: axios, versions: ["1.14.1", "0.30.4"]}  # ["*"] alone: every version is malicious
 actions:                   # compromised action commits (40-char SHAs)
   - {uses: tj-actions/changed-files, shas: ["0e58ed8671d6b60d0890c21b07f8835ace038e67"]}
 iocs:                      # informational, not matched

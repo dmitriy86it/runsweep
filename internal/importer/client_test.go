@@ -120,3 +120,54 @@ func TestFetchCancelledDuringSleep(t *testing.T) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
 }
+
+func TestFetchRetryAfterCapped(t *testing.T) {
+	var n atomic.Int32
+	c, slept := testClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if n.Add(1) == 1 {
+			w.Header().Set("Retry-After", "3600")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	if _, err := c.fetch(context.Background(), c.OSVBase+"/x", nil); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(*slept) != "[1m0s]" {
+		t.Fatalf("sleeps %v", *slept)
+	}
+}
+
+func TestFetchRefusesCrossHostRedirect(t *testing.T) {
+	var hit atomic.Int32
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit.Add(1)
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	t.Cleanup(other.Close)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/same" {
+			http.Redirect(w, r, "/ok", http.StatusFound)
+			return
+		}
+		if r.URL.Path == "/ok" {
+			_, _ = fmt.Fprint(w, `{}`)
+			return
+		}
+		http.Redirect(w, r, other.URL+"/x", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := New()
+	var slept int
+	c.Sleep = func(context.Context, time.Duration) error { slept++; return nil }
+	if b, err := c.fetch(context.Background(), srv.URL+"/same", nil); err != nil || string(b) != "{}" {
+		t.Fatalf("same-host redirect: %q %v", b, err)
+	}
+	if _, err := c.fetch(context.Background(), srv.URL+"/cross", nil); err == nil || !strings.Contains(err.Error(), "redirect") {
+		t.Fatalf("want redirect error, got %v", err)
+	}
+	if hit.Load() != 0 || slept != 0 {
+		t.Fatalf("other host hit %d times, %d retries", hit.Load(), slept)
+	}
+}

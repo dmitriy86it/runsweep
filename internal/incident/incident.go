@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -47,7 +48,7 @@ func (w *Window) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-// NPMPackage is a compromised npm package version.
+// NPMPackage is a compromised npm package version. Versions ["*"] means every version.
 type NPMPackage struct {
 	Name     string   `yaml:"name" json:"name"`
 	Versions []string `yaml:"versions" json:"versions"`
@@ -101,6 +102,9 @@ func (i *Incident) Validate() error {
 	for _, p := range i.NPM {
 		if p.Name == "" || len(p.Versions) == 0 {
 			errs = append(errs, fmt.Errorf("npm %q: name and versions are required", p.Name))
+		}
+		if len(p.Versions) > 1 && slices.Contains(p.Versions, "*") {
+			errs = append(errs, fmt.Errorf("npm %q: \"*\" (any version) must be the only version", p.Name))
 		}
 	}
 	for _, a := range i.Actions {

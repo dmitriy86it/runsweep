@@ -143,18 +143,19 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 				return nil, err
 			}
 			pts[name] = pt
-			if from, ok := f.open[name]; ok {
-				if pt.Found {
-					f.expandOpen(name, pt)
-					f.notes = append(f.notes, fmt.Sprintf("%s: open range from %s — all registry versions included", name, from))
-				} else {
-					msg := fmt.Sprintf("%s: open range from %s — registry unavailable; later versions may also be malicious, check manually", name, from)
-					f.notes = append(f.notes, msg)
-					o.Warnf("%s", msg)
-				}
+			from, ok := f.open[name]
+			switch {
+			case !ok:
+			case len(pt.Times) == 0 && len(pt.Published) == 0: // 404 or no versions left
+				f.npm[name] = map[string]bool{"*": true}
+				f.notes = append(f.notes, fmt.Sprintf("%s: open range from %s — removed from npm, versions unknown — every version treated as malicious", name, from))
+				o.Warnf("%s: removed from npm, versions unknown — every version treated as malicious", name)
+			default:
+				f.expandOpen(name, pt)
+				f.notes = append(f.notes, fmt.Sprintf("%s: open range from %s — all registry versions included", name, from))
 			}
 		}
-		for _, name := range names { // open ranges the registry could not fill
+		for _, name := range names { // open ranges with no registry version in range
 			if len(f.npm[name]) == 0 {
 				delete(f.npm, name)
 			}
@@ -171,11 +172,14 @@ func (c *Client) Import(ctx context.Context, o Options) ([]byte, error) {
 		for _, name := range sortedKeys(f.npm) {
 			times[name] = pts[name]
 		}
-		start, end, notes, err := computeWindow(f.npm, times, o.KeepAll, o.Now)
+		start, end, notes, dropped, err := computeWindow(f.npm, times, o.KeepAll, o.Now)
 		if err != nil && (o.Since.IsZero() || o.Until.IsZero()) {
 			return nil, err
 		}
 		f.notes = append(f.notes, notes...)
+		for _, d := range dropped {
+			o.Warnf("%s", d)
+		}
 		win = incident.Window{Start: start, End: end}
 	}
 	if !o.Since.IsZero() {

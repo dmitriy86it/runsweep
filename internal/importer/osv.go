@@ -130,15 +130,15 @@ func (c *Client) QueryMAL(ctx context.Context, name string) ([]Vuln, error) {
 	return nil, fmt.Errorf("OSV query %s: more than %d pages", name, maxPages)
 }
 
-// openFrom returns the lowest `introduced` of the ranges that never end (no
-// fixed, last_affected or limit event); "0" means every version.
-func openFrom(a Affected) (string, bool) {
-	best, found := "", false
+// openFrom returns the lowest start of the ranges whose last segment never
+// ends (an `introduced` with no later fixed, last_affected or limit event);
+// "0" means every version. An unparsable `introduced` counts as "0" and sets bad.
+func openFrom(a Affected) (from string, open, bad bool) {
 	for _, r := range a.Ranges {
-		intro, ended := "", false
+		intro, ended := "", true
 		for _, ev := range r.Events {
 			if v, ok := ev["introduced"]; ok {
-				intro = v
+				intro, ended = v, false
 			}
 			for _, k := range []string{"fixed", "last_affected", "limit"} {
 				if _, ok := ev[k]; ok {
@@ -146,17 +146,17 @@ func openFrom(a Affected) (string, bool) {
 				}
 			}
 		}
-		if ended || !eventRe.MatchString(intro) {
+		if ended {
 			continue
 		}
 		if _, ok := triple(intro); !ok && intro != "0" {
-			continue
+			intro, bad = "0", true
 		}
-		if !found || intro == "0" || (best != "0" && versionLess(intro, best)) {
-			best, found = intro, true
+		if !open || intro == "0" || (from != "0" && versionLess(intro, from)) {
+			from, open = intro, true
 		}
 	}
-	return best, found
+	return from, open, bad
 }
 
 // rangeText renders range events for a comment, keeping only safe tokens.

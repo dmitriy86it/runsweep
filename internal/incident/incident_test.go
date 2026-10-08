@@ -106,3 +106,12 @@ func TestLoadFile(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWildcardVersion(t *testing.T) {
+	if _, err := Parse([]byte(strings.Replace(valid, `versions: ["1.14.1"]`, `versions: ["*"]`, 1))); err != nil {
+		t.Fatalf("\"*\" alone must be valid: %v", err)
+	}
+	if _, err := Parse([]byte(strings.Replace(valid, `versions: ["1.14.1"]`, `versions: ["*", "1.14.1"]`, 1))); err == nil {
+		t.Fatal("\"*\" mixed with versions must be rejected")
+	}
+}

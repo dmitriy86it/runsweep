@@ -65,7 +65,11 @@ func Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMP
 		}
 		for _, p := range pkgs {
 			lockNames[dir][p.Name] = true
-			if badVer[p.Name][p.Version] {
+			switch {
+			case badVer[p.Name]["*"]:
+				r.Status = model.Affected
+				r.Evidence = append(r.Evidence, model.Evidence{Kind: "npm", Detail: fmt.Sprintf("%s@%s in %s at %s (any version listed as malicious)", p.Name, p.Version, e.Path, short(sha))})
+			case badVer[p.Name][p.Version]:
 				r.Status = model.Affected
 				r.Evidence = append(r.Evidence, model.Evidence{Kind: "npm", Detail: fmt.Sprintf("%s@%s in %s at %s", p.Name, p.Version, e.Path, short(sha))})
 			}

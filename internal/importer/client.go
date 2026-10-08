@@ -24,6 +24,19 @@ const maxRetryAfter = time.Minute
 // errNotFound is returned for HTTP 404.
 var errNotFound = errors.New("not found (HTTP 404)")
 
+// errRedirect refuses a redirect to another host; it is not retried.
+var errRedirect = errors.New("redirect to another host refused")
+
+func sameHostRedirect(req *http.Request, via []*http.Request) error {
+	if req.URL.Host != via[0].URL.Host {
+		return fmt.Errorf("%w: %s", errRedirect, req.URL.Host)
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
+}
+
 // Client talks to the OSV API and the npm registry.
 type Client struct {
 	HTTP    *http.Client
@@ -36,7 +49,7 @@ type Client struct {
 // New returns a Client for the public OSV API and npm registry.
 func New() *Client {
 	return &Client{
-		HTTP:    &http.Client{Timeout: 2 * time.Minute},
+		HTTP:    &http.Client{Timeout: 2 * time.Minute, CheckRedirect: sameHostRedirect},
 		OSVBase: "https://api.osv.dev",
 		NPMBase: "https://registry.npmjs.org",
 		Logf:    func(string, ...any) {},
@@ -88,6 +101,9 @@ func (c *Client) once(ctx context.Context, url string, body []byte) ([]byte, int
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.HTTP.Do(req)
+	if errors.Is(err, errRedirect) {
+		return nil, -1, 0, err
+	}
 	if err != nil {
 		return nil, 0, 0, err
 	}

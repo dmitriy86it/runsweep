@@ -187,3 +187,20 @@ func TestMatchEvidenceDeterministic(t *testing.T) {
 		t.Fatalf("%v", first)
 	}
 }
+
+func TestMatchWildcardVersion(t *testing.T) {
+	anyVer := []incident.NPMPackage{{Name: "axios", Versions: []string{"*"}}}
+	f := sourcetest.New()
+	f.AddFile("o/r", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"0.1.0"}}}`))
+	f.AddFile("o/r", "s1", "tools/package.json", []byte(`{"devDependencies":{"axios":"^1.0.0"}}`))
+	r, _ := Match(context.Background(), f, "o/r", "s1", anyVer)
+	if r.Status != model.Affected || r.Evidence[0].Detail != "axios@0.1.0 in package-lock.json at s1 (any version listed as malicious)" {
+		t.Fatalf("%+v", r)
+	}
+	f = sourcetest.New()
+	f.AddFile("o/r", "s1", "package.json", []byte(`{"dependencies":{"axios":"^1.0.0"}}`))
+	r, _ = Match(context.Background(), f, "o/r", "s1", anyVer)
+	if r.Status != model.Possible {
+		t.Fatalf("declared only: %+v", r)
+	}
+}

@@ -50,7 +50,10 @@ func (f *found) addVuln(v *Vuln) bool {
 				f.both("%s: skipped invalid npm package name %q", v.ID, name)
 				continue
 			}
-			from, isOpen := openFrom(a)
+			from, isOpen, badIntro := openFrom(a)
+			if badIntro {
+				f.notes = append(f.notes, fmt.Sprintf("%s: %s: unparsable introduced in an open range (%s) — treated as 0 (every version)", v.ID, name, rangeText(a)))
+			}
 			if isOpen {
 				if cur, had := f.open[name]; !had || from == "0" || (cur != "0" && versionLess(from, cur)) {
 					f.open[name] = from
@@ -70,6 +73,10 @@ func (f *found) addVuln(v *Vuln) bool {
 				if !validVersion(ver) {
 					f.both("%s: %s: skipped invalid version %q", v.ID, name, ver)
 					continue
+				}
+				if t, ok := strings.CutPrefix(ver, "v"); ok {
+					f.notes = append(f.notes, fmt.Sprintf("%s: %s: version %q listed as %q (npm versions have no v prefix)", v.ID, name, ver, t))
+					ver = t
 				}
 				f.addNPM(name, ver)
 			}

@@ -35,9 +35,9 @@ func ceilMinute(t time.Time) time.Time {
 // the window from registry times. Packages are clustered by their earliest bad
 // publish time, split at gaps over 7 days; the largest cluster (the latest on a
 // tie) is the wave, and clusters before it are dropped whole. A package is
-// never partly dropped.
-func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, keepAll bool, now time.Time) (time.Time, time.Time, []string, error) {
-	var notes []string
+// never partly dropped. dropped repeats the drop notes, for stderr. A "*"
+// version (every version) has no publish time and is skipped.
+func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, keepAll bool, now time.Time) (start, end time.Time, notes, dropped []string, err error) {
 	type pkg struct {
 		name  string
 		first time.Time
@@ -52,11 +52,11 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 		var first time.Time
 		for _, v := range sortedVersions(npm[name]) {
 			t, ok := pt.Times[v]
-			if !ok {
+			if !ok && v != "*" {
 				notes = append(notes, fmt.Sprintf("%s@%s: no valid publish time in registry; kept", name, v))
 				continue
 			}
-			if first.IsZero() || t.Before(first) {
+			if ok && (first.IsZero() || t.Before(first)) {
 				first = t
 			}
 		}
@@ -65,7 +65,7 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 		}
 	}
 	if len(pkgs) == 0 {
-		return time.Time{}, time.Time{}, notes, errNoTimes
+		return time.Time{}, time.Time{}, notes, nil, errNoTimes
 	}
 	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].first.Before(pkgs[j].first) })
 	mainStart, mainLen, cur := 0, 0, 0
@@ -82,7 +82,7 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 		at  time.Time
 		ref string
 	}
-	var dropped []drop
+	var drops []drop
 	if keepAll {
 		notes = append(notes, "--keep-all: nothing dropped by publish time")
 	} else {
@@ -99,27 +99,25 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 				found = append(found, drop{t, p.name + "@" + v})
 			}
 			if old {
-				dropped = append(dropped, found...)
+				drops = append(drops, found...)
 				delete(npm, p.name)
 			}
 		}
 	}
-	if len(dropped) > 0 {
-		sort.Slice(dropped, func(i, j int) bool { return dropped[i].at.Before(dropped[j].at) })
-		notes = append(notes, fmt.Sprintf("dropped %d version(s) of packages published in earlier clusters, more than 7 days before the wave starting %s (%d packages; --keep-all keeps them):",
-			len(dropped), pkgs[mainStart].first.UTC().Format(time.RFC3339), mainLen))
-		for _, d := range dropped[:min(len(dropped), maxExamples)] {
-			notes = append(notes, fmt.Sprintf("  %s (published %s)", d.ref, d.at.UTC().Format(time.RFC3339)))
+	if len(drops) > 0 {
+		sort.Slice(drops, func(i, j int) bool { return drops[i].at.Before(drops[j].at) })
+		dropped = append(dropped, fmt.Sprintf("dropped %d version(s) of packages published in earlier clusters, more than 7 days before the wave starting %s (%d packages; --keep-all keeps them):",
+			len(drops), pkgs[mainStart].first.UTC().Format(time.RFC3339), mainLen))
+		for _, d := range drops[:min(len(drops), maxExamples)] {
+			dropped = append(dropped, fmt.Sprintf("  %s (published %s)", d.ref, d.at.UTC().Format(time.RFC3339)))
 		}
-		if len(dropped) > maxExamples {
-			notes = append(notes, fmt.Sprintf("  … and %d more", len(dropped)-maxExamples))
+		if len(drops) > maxExamples {
+			dropped = append(dropped, fmt.Sprintf("  … and %d more", len(drops)-maxExamples))
 		}
+		notes = append(notes, dropped...)
 	}
 
-	var start time.Time
-	var startRef string
-	var end time.Time
-	var endNote string
+	var startRef, endNote string
 	var live, unknown []string
 	for _, name := range sortedKeys(npm) {
 		pt := times[name]
@@ -167,7 +165,7 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 		end = start.Add(time.Minute)
 	}
 	notes = append(notes, "end: "+endNote+" (rounded up to the minute)")
-	return start, end, notes, nil
+	return start, end, notes, dropped, nil
 }
 
 func examples(s []string) string {

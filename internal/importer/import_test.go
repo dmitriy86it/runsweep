@@ -197,10 +197,12 @@ func TestImportOpenRangeRegistryMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), `versions: ["2.0.5"]`) || !strings.Contains(string(out), "# arpan-package: open range from 0") {
-		t.Fatalf("%s", out)
+	for _, want := range []string{`{name: "arpan-package", versions: ["*"]}`, "# arpan-package: open range from 0 — removed from npm, versions unknown — every version treated as malicious"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("missing %q in\n%s", want, out)
+		}
 	}
-	if !strings.Contains(strings.Join(warns, "|"), "later versions may also be malicious, check manually") {
+	if !strings.Contains(strings.Join(warns, "|"), "arpan-package: removed from npm, versions unknown — every version treated as malicious") {
 		t.Fatalf("warns %q", warns)
 	}
 }
@@ -252,11 +254,17 @@ func TestImportOpenRangeOnlyRegistryMissing(t *testing.T) {
 		}
 		return false
 	})
-	_, warns, err := importWith(t, c, Options{IDs: []string{"MAL-2026-2300"}})
-	if !errors.Is(err, ErrNothing) {
-		t.Fatalf("want ErrNothing, got %v", err)
+	if _, _, err := importWith(t, c, Options{IDs: []string{"MAL-2026-2300"}}); !errors.Is(err, errNoTimes) {
+		t.Fatalf("want errNoTimes, got %v", err)
 	}
-	if !strings.Contains(strings.Join(warns, "|"), "eslint-validator") {
+	out, warns, err := importWith(t, c, Options{IDs: []string{"MAL-2026-2300"}, Since: importNow.Add(-time.Hour), Until: importNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `{name: "eslint-validator", versions: ["*"]}`) {
+		t.Fatalf("%s", out)
+	}
+	if !strings.Contains(strings.Join(warns, "|"), "eslint-validator: removed from npm, versions unknown") {
 		t.Fatalf("warns %q", warns)
 	}
 }
@@ -313,5 +321,20 @@ func TestRenderNotesStripLineBreaks(t *testing.T) {
 	out := string(render(inc, []string{"a\rb\u2028c\u2029d\ne"}, importNow))
 	if !strings.Contains(out, "# a b c d e\n") {
 		t.Fatalf("%s", out)
+	}
+}
+
+func TestImportWarnsDroppedCluster(t *testing.T) {
+	c, _ := fixtures(t, nil)
+	out, warns, err := importWith(t, c, Options{IDs: []string{"MAL-2025-125", "MAL-2026-2307"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(warns, "\n")
+	if !strings.Contains(all, "dropped 1 version(s) of packages published in earlier clusters") || !strings.Contains(all, "netflixdesign@1.0.1") {
+		t.Fatalf("warns %q", warns)
+	}
+	if !strings.Contains(string(out), "#   netflixdesign@1.0.1 (published") {
+		t.Fatalf("drop must stay in the comments:\n%s", out)
 	}
 }

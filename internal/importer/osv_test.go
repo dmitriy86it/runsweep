@@ -296,3 +296,35 @@ func TestAddVulnDedupesRefsAndChecksID(t *testing.T) {
 		t.Fatal("record with invalid id must be ignored")
 	}
 }
+
+func TestOpenFromLastSegment(t *testing.T) {
+	var a Affected
+	_ = json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.0.0"},{"introduced":"2.0.0"}]}]}`), &a)
+	if from, open, _ := openFrom(a); !open || from != "2.0.0" {
+		t.Fatalf("%q %v", from, open)
+	}
+	_ = json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[{"introduced":"2.0.0"},{"fixed":"3.0.0"}]}]}`), &a)
+	if _, open, _ := openFrom(a); open {
+		t.Fatal("closed range reported open")
+	}
+	_ = json.Unmarshal([]byte(`{"ranges":[{"type":"SEMVER","events":[{"introduced":"2.x"}]}]}`), &a)
+	if from, open, bad := openFrom(a); !open || from != "0" || !bad {
+		t.Fatalf("unparsable introduced: %q %v %v", from, open, bad)
+	}
+}
+
+func TestAddVulnUnparsableIntroducedAndVPrefix(t *testing.T) {
+	var v Vuln
+	_ = json.Unmarshal([]byte(`{"id":"MAL-0000-2","affected":[
+		{"package":{"ecosystem":"npm","name":"a"},"ranges":[{"type":"SEMVER","events":[{"introduced":"2.x"}]}]},
+		{"package":{"ecosystem":"npm","name":"b"},"versions":["v1.2.3"]}]}`), &v)
+	f := newFound()
+	f.addVuln(&v)
+	notes := strings.Join(f.notes, "\n")
+	if f.open["a"] != "0" || !strings.Contains(notes, "a: unparsable introduced in an open range (introduced 2.x)") {
+		t.Fatalf("open %v notes %q", f.open, f.notes)
+	}
+	if !f.npm["b"]["1.2.3"] || f.npm["b"]["v1.2.3"] || !strings.Contains(notes, `b: version "v1.2.3" listed as "1.2.3"`) {
+		t.Fatalf("npm %v notes %q", f.npm, f.notes)
+	}
+}
