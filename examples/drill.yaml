@@ -2,9 +2,9 @@
 # action SHA were compromised. Not a real incident.
 id: drill
 title: "Fire drill: is-number 7.0.0 and actions/setup-node pinned SHA"
-window: {start: 2026-10-01T00:00:00Z, end: 2026-12-31T23:59:59Z}
+window: {start: 2026-10-08T00:00:00Z, end: 2026-10-08T23:59:59Z}
 npm:
   - {name: is-number, versions: ["7.0.0"]}
 actions:
-  - {uses: actions/setup-node, shas: ["0000000000000000000000000000000000000000"]}
+  - {uses: actions/setup-node, shas: ["949feb2413d6458794dcd2491c4babbbce0c15c1"]}
 refs: [https://github.com/dmitriy86it/runsweep-demo]
