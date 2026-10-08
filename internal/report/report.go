@@ -48,7 +48,7 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	} else {
 		b.WriteString("| # | Secret / role | Priority | Why | Seen in |\n|---|---|---|---|---|\n")
 		for i, it := range r.Rotation {
-			fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n", i+1, code(it.Name), tier(it.Tier), cell(it.Reason), seenIn(it.Runs))
+			fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n", i+1, code(it.Name), tier(it.Tier), cell(it.Reason), seenIn(it.Runs, code))
 		}
 		b.WriteString("\n")
 	}
@@ -116,14 +116,15 @@ func JSON(w io.Writer, inc *incident.Incident, r *model.Result) error {
 // c1Re matches C1 control characters, which encoding/json leaves unescaped.
 var c1Re = regexp.MustCompile(`[\x{80}-\x{9f}]`)
 
-func seenIn(runs []model.RunRef) string {
+// seenIn lists up to three runs, each rendered by wrap, then "+N more".
+func seenIn(runs []model.RunRef, wrap func(string) string) string {
 	var parts []string
 	for i, r := range runs {
 		if i == 3 {
 			parts = append(parts, fmt.Sprintf("+%d more", len(runs)-3))
 			break
 		}
-		parts = append(parts, code(fmt.Sprintf("%s#%d %s", r.Repo, r.RunID, r.Job)))
+		parts = append(parts, wrap(fmt.Sprintf("%s#%d %s", r.Repo, r.RunID, r.Job)))
 	}
 	return strings.Join(parts, ", ")
 }

@@ -34,7 +34,8 @@ func sample() (*incident.Incident, *model.Result) {
 			{Name: "OIDC token (id-token: write)", Tier: 1, Reason: "review cloud roles", Runs: []model.RunRef{run}},
 			{Name: "NPM_TOKEN", Tier: 2, Reason: "rotate", Runs: []model.RunRef{run}},
 		},
-		Skipped: []model.Skip{{Repo: "o/private", Reason: "no access (HTTP 403/404)"}},
+		Skipped:  []model.Skip{{Repo: "o/private", Reason: "no access (HTTP 403/404)"}},
+		Lookback: 7 * 24 * time.Hour,
 	}
 	return inc, res
 }

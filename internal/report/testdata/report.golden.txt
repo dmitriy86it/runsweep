@@ -1,0 +1,23 @@
+runsweep · axios malicious release (axios-2026-03) · 2026-03-31 00:21:00 → 2026-03-31 03:21:00 UTC
+3 runs · 5 jobs scanned · lookback 7d
+
+AFFECTED 1   POSSIBLE 0   UNCHECKED 1
+
+Rotate first
+  1  OIDC token (id-token: write)  1 · cloud
+     review cloud roles
+     seen in: o/app#42 build
+  2  NPM_TOKEN                     2 · publish/deploy
+     rotate
+     seen in: o/app#42 build
+
+Findings
+  AFFECTED   o/app  .github/workflows/ci.yml / build  #42 attempt 2
+             axios@1.14.1 in package-lock.json at abcdef1
+  UNCHECKED  o/old  .github/workflows/ci.yml  #9
+             jobs unavailable: deleted by GitHub retention (HTTP 410)
+
+Skipped repositories: o/private (no access (HTTP 403/404))
+
+Limits: see --format md
+Full report: --format md
