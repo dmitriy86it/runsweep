@@ -528,3 +528,51 @@ func TestFile(t *testing.T) {
 		t.Fatalf("want ErrIncomplete, got %v", err)
 	}
 }
+
+// A 200 whose body stalls past the client timeout (or breaks) is retried like a network error,
+// then is soft (ErrIncomplete), never an error that aborts the scan.
+func TestRawBodyStallRetriedThenIncomplete(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Length", "100")
+		_, _ = fmt.Fprint(w, "on: ")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done() // stall until the client gives up
+	}))
+	t.Cleanup(srv.Close)
+	hc := srv.Client()
+	hc.Timeout = 100 * time.Millisecond
+	c, err := New(hc, "tok", srv.URL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sleeps := recordSleeps(c)
+	if _, err := c.File(context.Background(), "o/r", "abc", ".github/workflows/a.yml", 1000); !errors.Is(err, source.ErrIncomplete) {
+		t.Fatalf("want ErrIncomplete, got %v", err)
+	}
+	if hits.Load() != 4 || fmt.Sprint(*sleeps) != "[1s 2s 4s]" {
+		t.Fatalf("hits %d backoff %v", hits.Load(), *sleeps)
+	}
+}
+
+func TestRepoPublic(t *testing.T) {
+	for body, want := range map[string]bool{
+		`{"visibility":"public","private":false}`: true,
+		`{"private":false}`:                       true,
+		`{"visibility":"private","private":true}`: false,
+		`{"visibility":"internal"}`:               false,
+		`{}`:                                      false,
+	} {
+		c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/repos/o/r" {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = fmt.Fprint(w, body)
+		}))
+		if got, err := c.RepoPublic(context.Background(), "o/r"); err != nil || got != want {
+			t.Errorf("%s: got %v %v, want %v", body, got, err, want)
+		}
+	}
+}

@@ -19,13 +19,15 @@ type Fake struct {
 	Truncated map[string]bool               // repo@sha
 	Blobs     map[string][]byte             // blob SHA -> content
 	NoAccess  map[string]bool               // repo -> 403
+	Public    map[string]bool               // repo -> public
 }
 
 // New returns an empty Fake.
 func New() *Fake {
 	return &Fake{Orgs: map[string][]string{}, Runs: map[string][]source.Run{}, Jobs: map[int64][]source.Job{},
 		Logs: map[int64]string{}, GoneLogs: map[int64]bool{}, Trees: map[string][]source.TreeEntry{},
-		Truncated: map[string]bool{}, Blobs: map[string][]byte{}, NoAccess: map[string]bool{}}
+		Truncated: map[string]bool{}, Blobs: map[string][]byte{}, NoAccess: map[string]bool{},
+		Public: map[string]bool{}}
 }
 
 // AddFile puts a file into the tree of repo@sha.
@@ -90,4 +92,12 @@ func (f *Fake) File(ctx context.Context, repo, ref, path string, limit int) ([]b
 		}
 	}
 	return nil, source.ErrNoAccess
+}
+
+// RepoPublic implements source.Source.
+func (f *Fake) RepoPublic(_ context.Context, repo string) (bool, error) {
+	if f.NoAccess[repo] {
+		return false, source.ErrNoAccess
+	}
+	return f.Public[repo], nil
 }

@@ -38,7 +38,7 @@ runsweep scan --incident tj-actions-2025-03 --repo owner/name --format json
 runsweep scan --incident axios-2026-03 --repo owner/name --lookback 30d   # also re-runs of month-old runs
 ```
 
-`--incident` takes a built-in preset id or a file: a value with a `/` or ending in `.yaml`/`.yml` is read as a file (write `./name.yaml`), anything else is only a preset id. `--since` / `--until` (RFC3339) override the incident window. On a terminal the report is a short colored summary (`--format text`); piped or redirected — for example in CI — it is Markdown (`--format md`), and `--format json` gives machine-readable output. Colors are off when `NO_COLOR` is set or `TERM=dumb`. Progress and warnings go to stderr.
+`--incident` takes a built-in preset id or a file: a value with a `/` or ending in `.yaml`/`.yml` is read as a file (write `./name`), anything else is only a preset id. `--since` / `--until` (RFC3339) override the incident window. On a terminal the report is a short colored summary (`--format text`); piped or redirected — for example in CI — it is Markdown (`--format md`), and `--format json` gives machine-readable output. Colors are off when `NO_COLOR` is set or `TERM=dumb`. Progress and warnings go to stderr.
 
 `--lookback` (default `7d`, up to `30d`, the period GitHub allows re-runs) also lists runs created that long before the window, so a re-run started inside the window is scanned. Jobs that started and finished before the window are skipped.
 
@@ -121,8 +121,8 @@ For AFFECTED and POSSIBLE jobs the report lists what the job could read — secr
 - A job whose log was unavailable is reported UNCHECKED: actions used via composite actions (and reusable workflows that are neither local nor pinned to a SHA) can only be seen in the log.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread.
 - Re-runs of runs created more than the lookback period (default 7 days) before the window are not scanned; use --lookback 30d for full coverage.
-- Called workflows are read when local or pinned to a commit SHA, and only from repositories of the scanned repository's owner; others are judged from the caller job and the job is UNCHECKED when a call in another owner is not read.
-- Workflow files over 1 MiB and lockfiles or `package.json` over 32 MB are not read, nor more than 500 lockfiles and `package.json` files per commit; such jobs are UNCHECKED.
+- Called workflows are read when local or pinned to a commit SHA, and in the scanned repository's owner or a public repository; others are judged from the caller job. A call into another owner's private repository is not read; the job is at least UNCHECKED.
+- Workflow files over 1 MiB, lockfiles or `package.json` over 32 MB, and lockfiles and `package.json` files past the first 500 of a commit are not read; the job is at least UNCHECKED.
 - npm and GitHub Actions only; no PyPI yet.
 
 ## Contributing incidents

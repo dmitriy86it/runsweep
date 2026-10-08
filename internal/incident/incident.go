@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -124,10 +125,10 @@ func (i *Incident) Validate() error {
 }
 
 // Load reads a file when ref looks like a path (has a '/' or the OS separator, or ends in
-// .yaml/.yml); anything else is only a built-in preset id, so a stray file in the working directory
+// .yaml/.yml in any case); anything else is only a built-in preset id, so a stray file in the working directory
 // cannot shadow a preset.
 func Load(ref string) (*Incident, error) {
-	if strings.ContainsAny(ref, "/"+string(os.PathSeparator)) || strings.HasSuffix(ref, ".yaml") || strings.HasSuffix(ref, ".yml") {
+	if ext := strings.ToLower(filepath.Ext(ref)); strings.ContainsAny(ref, "/"+string(os.PathSeparator)) || ext == ".yaml" || ext == ".yml" {
 		b, err := os.ReadFile(ref) //nolint:gosec // G304: path is the user-supplied --incident argument
 		if err != nil {
 			return nil, err
@@ -136,7 +137,7 @@ func Load(ref string) (*Incident, error) {
 	}
 	b, err := presetFS.ReadFile("presets/" + ref + ".yaml")
 	if err != nil {
-		return nil, fmt.Errorf("unknown incident %q (see `runsweep incidents`; use ./%s.yaml for a file)", ref, ref)
+		return nil, fmt.Errorf("unknown incident %q (see `runsweep incidents`; use ./%s for a file)", ref, ref)
 	}
 	return Parse(b)
 }

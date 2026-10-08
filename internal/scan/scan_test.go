@@ -1045,3 +1045,53 @@ func TestScanCalledWorkflowOtherOwnerNotRead(t *testing.T) {
 		t.Fatalf("same owner, other case: must be read: %+v", fd.Exposure)
 	}
 }
+
+// A client timeout reading a called workflow in another repository leaves the job UNCHECKED; the scan continues.
+func TestScanRemoteCalleeTimeoutIsSoft(t *testing.T) {
+	f := callFixture(sharedCall, "deploy / release")
+	f.AddFile("o/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+	timeout := fmt.Errorf("Client.Timeout exceeded: %w", context.DeadlineExceeded)
+	src := errSrc{Fake: f, blobErr: map[string]error{"o/shared@" + pinned + ":.github/workflows/deploy.yml": timeout}}
+	res, err := Run(context.Background(), src, npmOnly, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatalf("a client timeout on a remote callee must not abort the scan: %v", err)
+	}
+	if fd := res.Findings[0]; fd.Status != model.Affected || !hasNote(fd, "unavailable (Client.Timeout exceeded") {
+		t.Fatalf("%+v", fd)
+	}
+}
+
+type countPublic struct {
+	*sourcetest.Fake
+	n *int
+}
+
+func (s countPublic) RepoPublic(ctx context.Context, repo string) (bool, error) {
+	*s.n++
+	return s.Fake.RepoPublic(ctx, repo)
+}
+
+// A called workflow in another owner's public repository is read; visibility is asked once per repo.
+func TestScanCalledWorkflowOtherOwnerPublicRead(t *testing.T) {
+	f := callFixture("evil/shared/.github/workflows/deploy.yml@"+pinned, "deploy / release")
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "deploy / release"}, {ID: 11, Name: "deploy / release"}}
+	f.AddFile("evil/shared", pinned, ".github/workflows/deploy.yml", []byte(deployYAML))
+	f.Public["evil/shared"] = true
+	n := 0
+	res, err := Run(context.Background(), countPublic{f, &n}, npmOnly, Options{Repos: []string{"o/a"}})
+	if err != nil || len(res.Findings) != 2 || !hasRole(res.Findings[0]) || !hasRole(res.Findings[1]) || n != 1 {
+		t.Fatalf("RepoPublic called %d times, %v %+v", n, err, res.Findings)
+	}
+}
+
+// An unread call in another owner is still matched by its ref: pinned at a compromised SHA it is AFFECTED.
+func TestScanCalledWorkflowOtherOwnerCompromisedRef(t *testing.T) {
+	f := callFixture("evil/shared/.github/workflows/deploy.yml@"+pinned, "deploy / release")
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1]
+	f.Logs[10] = "2026-03-31T01:00:00Z hello\n"
+	i := &incident.Incident{ID: "t", Window: inc.Window, Actions: []incident.Action{{Uses: "evil/shared", SHAs: []string{pinned}}}}
+	fd := scanOne(t, f, i)
+	if fd.Status != model.Affected || !hasNote(fd, "called workflow in another owner (evil/shared) not read") {
+		t.Fatalf("%+v", fd)
+	}
+}

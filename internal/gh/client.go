@@ -388,10 +388,27 @@ func (c *Client) File(ctx context.Context, repo, ref, path string, limit int) ([
 	return c.raw(ctx, fmt.Sprintf("repos/%v/%v/contents/%v?ref=%v", owner, name, (&url.URL{Path: path}).EscapedPath(), url.QueryEscape(ref)), limit)
 }
 
+// RepoPublic reports whether repo is public: visibility "public", or private explicitly false.
+func (c *Client) RepoPublic(ctx context.Context, repo string) (bool, error) {
+	owner, name := split(repo)
+	var r *github.Repository
+	err := c.do(ctx, func() (*github.Response, error) {
+		var resp *github.Response
+		var err error
+		r, resp, err = c.gh.Repositories.Get(ctx, owner, name)
+		return resp, err
+	})
+	if err != nil {
+		return false, err
+	}
+	return r.GetVisibility() == "public" || r.Visibility == nil && r.Private != nil && !*r.Private, nil
+}
+
 // raw GETs an API URL with the raw media type, streaming the body into a buffer capped at limit
 // bytes instead of reading it whole.
 func (c *Client) raw(ctx context.Context, u string, limit int) ([]byte, error) {
 	buf := capBuf{max: limit}
+	bodyErr := false // the last attempt got a 200 whose body stalled or broke
 	err := c.do(ctx, func() (*github.Response, error) {
 		req, err := c.gh.NewRequest(ctx, http.MethodGet, u, nil)
 		if err != nil {
@@ -399,8 +416,16 @@ func (c *Client) raw(ctx context.Context, u string, limit int) ([]byte, error) {
 		}
 		req.Header.Set("Accept", "application/vnd.github.v3.raw")
 		buf.b.Reset()
-		return c.gh.Do(req, &buf)
+		resp, err := c.gh.Do(req, &buf)
+		bodyErr = err != nil && resp != nil && resp.StatusCode == http.StatusOK && !errors.Is(err, source.ErrIncomplete)
+		if bodyErr {
+			return nil, err // no response: retried like a network error
+		}
+		return resp, err
 	})
+	if err != nil && bodyErr && ctx.Err() == nil {
+		return nil, fmt.Errorf("%w: %v", source.ErrIncomplete, err)
+	}
 	if err != nil {
 		return nil, err
 	}
