@@ -4,7 +4,7 @@ on:
   pull_request:
   schedule: [{cron: '17 4 * * 1'}]
 permissions: {contents: read}
-concurrency: {group: "ci-${{ github.workflow }}-${{ github.ref }}", cancel-in-progress: "${{ github.event_name == 'pull_request' }}"}
+concurrency: {group: "ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}", cancel-in-progress: "${{ github.event_name == 'pull_request' }}"}
 jobs:
   test:
     if: github.event_name != 'schedule' # the weekly run is for fuzzing
