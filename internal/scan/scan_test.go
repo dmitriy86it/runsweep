@@ -340,3 +340,23 @@ func TestScanSkippedJobNeverRan(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 }
+
+func TestScanNoWorkflowNoDownloadsIsUnchecked(t *testing.T) {
+	f := fixture()
+	f.Runs["o/a"][0].Path = ".github/workflows/missing.yml"
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1] // no npm hit
+	f.Logs[10] = "2026-03-31T01:00:00Z log without download records\n"
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	res, err := Run(context.Background(), f, actOnly, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 2 {
+		t.Fatalf("%+v", res.Findings)
+	}
+	for _, fd := range res.Findings {
+		if fd.Status != model.Unchecked || !hasNote(fd, "job log has no action download records and the workflow file is unavailable") {
+			t.Fatalf("%+v", fd)
+		}
+	}
+}

@@ -220,7 +220,11 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 				if wj != nil {
 					uses = wj.Uses
 				}
-				if len(actions.ParseDownloads(log)) == 0 && slices.ContainsFunc(uses, remote) {
+				noDownloads := len(actions.ParseDownloads(log)) == 0
+				if noDownloads && wf == nil {
+					st = model.Worse(st, model.Unchecked)
+					ev = append(ev, note("job log has no action download records and the workflow file is unavailable"))
+				} else if noDownloads && slices.ContainsFunc(uses, remote) {
 					ust, uev := actions.MatchUses(uses, s.inc.Actions)
 					st = model.Worse(model.Worse(st, ust), model.Unchecked)
 					ev = append(append(ev, uev...), note("job log has no action download records"))

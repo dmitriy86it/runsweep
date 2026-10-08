@@ -40,7 +40,7 @@ var (
 	// package-manager binary as a word anywhere in a script; over-reports (e.g. `echo npm`) by design
 	installRe = regexp.MustCompile(`(?:^|[^\w./-])(npm|npx|yarn|pnpm|pnpx|bun|bunx)(?:$|[^\w.-])`)
 	// opaque runners and scripts that may install npm packages without naming npm in the workflow
-	opaqueRe = regexp.MustCompile(`(?:^|[^\w./-])(?:(?:make|task|just|mise|nx|turbo|lerna|rush|corepack|python3?|node)(?:$|[^\w.-])|(?:ba|z)?sh\s+\S)|(?:^|[\s;&|(])\./[\w-]|\.sh\b`)
+	opaqueRe = regexp.MustCompile(`(?:^|[^\w./-])(?:(?:make|task|just|mise|nx|turbo|lerna|rush|corepack|python3?|node|docker(?:-compose)?|podman|buildah|mvnw?|gradlew?|sbt|bazel|dotnet|composer)(?:$|[^\w.-])|(?:ba|z)?sh\s+\S)|(?:^|[\s;&|(])\./[\w-]|\.sh\b`)
 	tplRe    = regexp.MustCompile(`\$\{\{.*?\}\}`)
 	matrixRe = regexp.MustCompile(` \([^)]*\)$`)
 )
