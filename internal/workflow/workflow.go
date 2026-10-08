@@ -4,6 +4,7 @@ package workflow
 import (
 	"bufio"
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"sort"
@@ -18,6 +19,7 @@ type Job struct {
 	ID             string
 	Name           string
 	Uses           []string // step-level `uses:` plus reusable-workflow `uses:`
+	Call           string   // job-level `uses:`: the reusable workflow this job calls
 	Runs           []string // `run:` scripts
 	Secrets        []string
 	InheritSecrets bool
@@ -80,6 +82,7 @@ func Parse(b []byte) (*Workflow, error) {
 		}
 		if u := scalar(get(jn, "uses")); u != "" {
 			j.Uses = append(j.Uses, u)
+			j.Call = u
 		}
 		j.InheritSecrets = dyn || scalar(get(jn, "secrets")) == "inherit"
 		if steps := get(jn, "steps"); steps != nil {
@@ -226,19 +229,85 @@ func (w *Workflow) Exposure(j *Job) model.Exposure {
 
 // ExposureAll is the conservative union over all jobs, used when the job cannot be identified.
 func (w *Workflow) ExposureAll() model.Exposure {
-	e := model.Exposure{Secrets: append([]string{}, w.globalSecrets...), InheritAll: w.globalDynamic}
-	for _, j := range w.Jobs {
-		e.Secrets = append(e.Secrets, j.Secrets...)
-		e.InheritAll = e.InheritAll || j.InheritSecrets
-		e.IDTokenWrite = e.IDTokenWrite || j.IDTokenWrite
+	e := w.Exposure(w.Union())
+	e.JobMatched = false
+	return e
+}
+
+// Union merges every job of w into one, for when the job cannot be identified.
+func (w *Workflow) Union() *Job {
+	ids := make([]string, 0, len(w.Jobs))
+	for id := range w.Jobs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	u := &Job{}
+	for _, id := range ids {
+		j := w.Jobs[id]
+		u.Uses = append(u.Uses, j.Uses...)
+		u.Runs = append(u.Runs, j.Runs...)
+		u.Secrets = append(u.Secrets, j.Secrets...)
+		u.InheritSecrets = u.InheritSecrets || j.InheritSecrets
+		u.IDTokenWrite = u.IDTokenWrite || j.IDTokenWrite
 		for _, r := range j.CloudRoles {
-			if !slices.Contains(e.CloudRoles, r) {
-				e.CloudRoles = append(e.CloudRoles, r)
+			if !slices.Contains(u.CloudRoles, r) {
+				u.CloudRoles = append(u.CloudRoles, r)
 			}
 		}
 	}
-	e.Secrets = uniq(e.Secrets)
-	return e
+	return u
+}
+
+// Call is a reusable workflow named by a job-level `uses:`.
+type Call struct {
+	Repo string // "owner/name"; empty for a local call (same repository and commit as the caller)
+	Path string // ".github/workflows/x.yml"
+	SHA  string // commit of a remote call
+}
+
+var (
+	commitRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	nameRe   = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+)
+
+// ParseCall parses a job-level `uses:`. ok is false unless it is a local call
+// (./.github/workflows/x.yml) or a remote call pinned to a commit SHA
+// (owner/repo/.github/workflows/x.yml@<40 hex>).
+func ParseCall(uses string) (c Call, ok bool) {
+	if p, local := strings.CutPrefix(uses, "./"); local {
+		return Call{Path: p}, workflowPath(p)
+	}
+	ref, sha, _ := strings.Cut(uses, "@")
+	parts := strings.SplitN(ref, "/", 3)
+	if len(parts) != 3 || !commitRe.MatchString(sha) || !workflowPath(parts[2]) {
+		return Call{}, false
+	}
+	for _, n := range parts[:2] {
+		if !nameRe.MatchString(n) || n == "." || n == ".." {
+			return Call{}, false
+		}
+	}
+	return Call{Repo: parts[0] + "/" + parts[1], Path: parts[2], SHA: sha}, true
+}
+
+func workflowPath(p string) bool {
+	return strings.HasPrefix(p, ".github/workflows/") && path.Clean(p) == p &&
+		(strings.HasSuffix(p, ".yml") || strings.HasSuffix(p, ".yaml"))
+}
+
+// Through returns the job that ran when job j of w called workflow cw and the API job is cw's
+// job c, plus a one-job workflow for its Exposure. Uses, Runs, CloudRoles and Call come from c;
+// IDTokenWrite is j's or c's; secrets are those j passes, plus the names cw and c reference
+// when j uses `secrets: inherit` (only then are those the caller's secret names).
+func (w *Workflow) Through(j *Job, cw *Workflow, c *Job) (*Workflow, *Job) {
+	e := &Job{ID: j.ID, Name: j.Name, Uses: c.Uses, Runs: c.Runs, Call: c.Call,
+		Secrets: append([]string{}, j.Secrets...), InheritSecrets: j.InheritSecrets,
+		IDTokenWrite: j.IDTokenWrite || c.IDTokenWrite,
+		CloudRoles:   append(append([]model.CloudRole{}, j.CloudRoles...), c.CloudRoles...)}
+	if j.InheritSecrets {
+		e.Secrets = append(append(e.Secrets, cw.globalSecrets...), c.Secrets...)
+	}
+	return &Workflow{Jobs: map[string]*Job{e.ID: e}, globalSecrets: w.globalSecrets, globalDynamic: w.globalDynamic}, e
 }
 
 // ParseTokenPerms reads the "GITHUB_TOKEN Permissions" group from a job log.

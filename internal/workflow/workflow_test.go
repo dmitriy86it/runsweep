@@ -334,3 +334,103 @@ func TestMayInstallNPM(t *testing.T) {
 		}
 	}
 }
+
+func TestParseCall(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	for uses, want := range map[string]Call{
+		"./.github/workflows/build.yml":                    {Path: ".github/workflows/build.yml"},
+		"org/shared/.github/workflows/release.yaml@" + sha: {Repo: "org/shared", Path: ".github/workflows/release.yaml", SHA: sha},
+	} {
+		if got, ok := ParseCall(uses); !ok || got != want {
+			t.Errorf("%q -> %+v %v, want %+v", uses, got, ok, want)
+		}
+	}
+	for _, uses := range []string{
+		"org/shared/.github/workflows/release.yml@main",
+		"org/shared/.github/workflows/release.yml@v1",
+		"org/shared/.github/workflows/release.yml",
+		"org/shared/.github/workflows/release.yml@" + sha[:7],
+		"../x/.github/workflows/a.yml@" + sha,
+		"org/shared/.github/workflows/../../a.yml@" + sha,
+		"./.github/workflows/../secrets.yml",
+		"./scripts/x.yml",
+		"actions/checkout@" + sha,
+	} {
+		if c, ok := ParseCall(uses); ok {
+			t.Errorf("%q must not be readable: %+v", uses, c)
+		}
+	}
+}
+
+const callerYAML = `
+on: push
+env: {G: "${{ secrets.CALLER_GLOBAL }}"}
+jobs:
+  inherit:
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
+  explicit:
+    uses: ./.github/workflows/deploy.yml
+    permissions: {id-token: write}
+    secrets: {TOKEN: "${{ secrets.NPM_TOKEN }}"}
+`
+
+const calleeYAML = `
+on: workflow_call
+env: {C: "${{ secrets.CALLEE_GLOBAL }}"}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions: {id-token: write}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: {role-to-assume: "arn:aws:iam::1:role/deploy"}
+      - run: npm ci
+        env: {T: "${{ secrets.TOKEN }}", D: "${{ secrets.DEPLOY_KEY }}"}
+`
+
+func TestThrough(t *testing.T) {
+	w, err := Parse([]byte(callerYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cw, err := Parse([]byte(calleeYAML))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Jobs["inherit"].Call != "./.github/workflows/deploy.yml" {
+		t.Fatalf("Call: %q", w.Jobs["inherit"].Call)
+	}
+	c := cw.Jobs["deploy"]
+
+	ew, ej := w.Through(w.Jobs["inherit"], cw, c)
+	e := ew.Exposure(ej)
+	if !e.InheritAll || !e.IDTokenWrite || len(e.CloudRoles) != 1 || e.CloudRoles[0].Role != "arn:aws:iam::1:role/deploy" ||
+		!slices.Equal(e.Secrets, []string{"CALLEE_GLOBAL", "CALLER_GLOBAL", "DEPLOY_KEY", "TOKEN"}) {
+		t.Fatalf("inherit: %+v", e)
+	}
+	if !ej.InstallsNPM() || slices.Contains(ej.Uses, "./.github/workflows/deploy.yml") {
+		t.Fatalf("uses/runs must come from the callee: %+v", ej)
+	}
+
+	ew, ej = w.Through(w.Jobs["explicit"], cw, c)
+	e = ew.Exposure(ej)
+	// callee names (TOKEN, DEPLOY_KEY) are mapping keys or unset here, not the caller's secrets
+	if e.InheritAll || !e.IDTokenWrite || !slices.Equal(e.Secrets, []string{"CALLER_GLOBAL", "NPM_TOKEN"}) {
+		t.Fatalf("explicit: %+v", e)
+	}
+	if !slices.Equal(c.Secrets, []string{"DEPLOY_KEY", "TOKEN"}) || len(w.Jobs["explicit"].Secrets) != 1 {
+		t.Fatal("Through must not modify its inputs")
+	}
+}
+
+func TestUnionIsDeterministic(t *testing.T) {
+	w, _ := Parse([]byte("on: push\njobs:\n" +
+		"  b: {runs-on: x, steps: [{uses: 'azure/login@v2', with: {client-id: b}}]}\n" +
+		"  a: {runs-on: x, steps: [{uses: 'azure/login@v2', with: {client-id: a}}]}\n"))
+	for i := 0; i < 20; i++ {
+		if r := w.ExposureAll().CloudRoles; len(r) != 2 || r[0].Role != "a" {
+			t.Fatalf("%v", r)
+		}
+	}
+}
