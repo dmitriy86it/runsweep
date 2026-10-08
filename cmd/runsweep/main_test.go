@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,8 @@ import (
 
 	"errors"
 
+	"github.com/dmitriy86it/runsweep/internal/importer"
+	"github.com/dmitriy86it/runsweep/internal/incident"
 	"github.com/dmitriy86it/runsweep/internal/source"
 	"github.com/dmitriy86it/runsweep/internal/source/sourcetest"
 )
@@ -390,5 +394,140 @@ func TestIsTerminal(t *testing.T) {
 	defer func() { _ = f.Close() }()
 	if isTerminal(f) || isTerminal(&bytes.Buffer{}) {
 		t.Fatal("a regular file or a buffer is not a terminal")
+	}
+}
+
+// fixtureImporter serves the importer's recorded OSV and npm registry responses.
+func fixtureImporter(t *testing.T) func() *importer.Client {
+	t.Helper()
+	dir := filepath.Join("..", "..", "internal", "importer", "testdata")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.EscapedPath()
+		file := ""
+		if id, ok := strings.CutPrefix(p, "/osv/v1/vulns/"); ok {
+			file = filepath.Join(dir, "osv", id+".json")
+		} else if name, ok := strings.CutPrefix(p, "/npm/"); ok {
+			file = filepath.Join(dir, "npm", name+".json")
+		}
+		b, err := os.ReadFile(file) //nolint:gosec // G304: test fixture path
+		if file == "" || err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write(b) //nolint:gosec // G705: test server replays fixture files
+	}))
+	t.Cleanup(srv.Close)
+	return func() *importer.Client {
+		c := importer.New()
+		c.HTTP, c.OSVBase, c.NPMBase = srv.Client(), srv.URL+"/osv", srv.URL+"/npm"
+		return c
+	}
+}
+
+// noNetImporter fails the test on any HTTP request.
+func noNetImporter(t *testing.T) func() *importer.Client {
+	return func() *importer.Client {
+		c := importer.New()
+		c.HTTP = &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+			t.Errorf("unexpected request %s", r.URL)
+			return nil, errors.New("no network in this test")
+		})}
+		return c
+	}
+}
+
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestImportFromStdin(t *testing.T) {
+	d := deps{newImporter: fixtureImporter(t), stdin: strings.NewReader("# axios and a 2024 package\n\nMAL-2026-2307\n  MAL-2025-125  # netflixdesign\n")}
+	var out, errb bytes.Buffer
+	if code := run([]string{"incidents", "import"}, &out, &errb, d); code != 0 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	inc, err := incident.Parse(out.Bytes())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(inc.NPM) != 2 || len(inc.Refs) != 2 || inc.Refs[1] != "https://osv.dev/vulnerability/MAL-2025-125" {
+		t.Fatalf("%+v", inc)
+	}
+	if strings.Contains(out.String(), "npm registry 1/2") || !strings.Contains(errb.String(), "npm registry 1/2: axios") {
+		t.Fatalf("progress must go to stderr only\nstdout:\n%s\nstderr:\n%s", out.String(), errb.String())
+	}
+}
+
+func TestImportStdinRejectsGarbage(t *testing.T) {
+	d := deps{newImporter: noNetImporter(t), stdin: strings.NewReader("MAL-2026-2307\nhttps://evil/\n")}
+	var out, errb bytes.Buffer
+	if code := run([]string{"incidents", "import"}, &out, &errb, d); code != 2 || !strings.Contains(errb.String(), "stdin line 2") {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+}
+
+func TestImportOutputFileIsAtomic(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "incident.yaml")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := deps{newImporter: fixtureImporter(t)}
+	var out, errb bytes.Buffer
+	if code := run([]string{"incidents", "import", "MAL-2026-2300", "-o", path}, &out, &errb, d); code != 2 ||
+		!strings.Contains(errb.String(), "nothing to import") {
+		t.Fatalf("range-only record: code %d: %s", code, errb.String())
+	}
+	if b, _ := os.ReadFile(path); string(b) != "old\n" { //nolint:gosec // G304: test temp path
+		t.Fatalf("failed import must leave the file alone, got %q", b)
+	}
+	if code := run([]string{"incidents", "import", "MAL-2026-2307", "-o", path}, &out, &errb, d); code != 0 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("with -o stdout must stay empty: %q", out.String())
+	}
+	if _, err := incident.Load(path); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("temp file left behind: %v", entries)
+	}
+}
+
+func TestImportActionOnly(t *testing.T) {
+	d := deps{newImporter: noNetImporter(t)}
+	act := "tj-actions/changed-files@0e58ed8671d6b60d0890c21b07f8835ace038e67"
+	var out, errb bytes.Buffer
+	if code := run([]string{"incidents", "import", "--action", act}, &out, &errb, d); code != 2 ||
+		!strings.Contains(errb.String(), "pass --since and --until for action-only incidents") {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	out.Reset()
+	if code := run([]string{"incidents", "import", "--action", act, "--since", "2025-03-14T16:00:00Z", "--until", "2025-03-15T14:00:00Z", "--id", "tj"}, &out, &errb, d); code != 0 {
+		t.Fatalf("code %d: %s", code, errb.String())
+	}
+	if inc, err := incident.Parse(out.Bytes()); err != nil || inc.Actions[0].Uses != "tj-actions/changed-files" {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+}
+
+func TestImportUsageErrorsNeverTouchNetwork(t *testing.T) {
+	for _, args := range [][]string{
+		{"incidents", "import"}, // nothing at all (stdin nil)
+		{"incidents", "import", "../x"},
+		{"incidents", "import", "--package", "axios"},
+		{"incidents", "import", "--package", "npm:../x"},
+		{"incidents", "import", "--action", "o/r@abc"},
+		{"incidents", "import", "--action", "o/r/x@0e58ed8671d6b60d0890c21b07f8835ace038e67", "--since", "2025-03-14T16:00:00Z", "--until", "2025-03-15T14:00:00Z"},
+		{"incidents", "import", "MAL-2026-2307", "--since", "yesterday"},
+		{"incidents", "import", "MAL-2026-2307", "--id", "../x"},
+		{"incidents", "import", "MAL-2026-2307", "--bogus"},
+	} {
+		var out, errb bytes.Buffer
+		if code := run(args, &out, &errb, deps{newImporter: noNetImporter(t)}); code != 2 {
+			t.Errorf("%v: want 2, got %d", args, code)
+		}
 	}
 }

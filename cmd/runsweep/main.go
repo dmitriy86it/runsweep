@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -9,12 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dmitriy86it/runsweep/internal/gh"
+	"github.com/dmitriy86it/runsweep/internal/importer"
 	"github.com/dmitriy86it/runsweep/internal/incident"
 	"github.com/dmitriy86it/runsweep/internal/model"
 	"github.com/dmitriy86it/runsweep/internal/report"
@@ -28,13 +31,16 @@ var version, commit, date = "dev", "none", "unknown"
 var errFindings = errors.New("affected or possibly affected jobs found")
 
 type deps struct {
-	newSource  func(token string) (source.Source, error)
-	token      func() (string, error)
-	isTerminal func(w io.Writer) bool // nil: never a terminal
+	newSource   func(token string) (source.Source, error)
+	token       func() (string, error)
+	isTerminal  func(w io.Writer) bool // nil: never a terminal
+	stdin       io.Reader              // nil: empty
+	newImporter func() *importer.Client
 }
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, deps{newSource: newGitHub, token: githubToken, isTerminal: isTerminal}))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, deps{newSource: newGitHub, token: githubToken, isTerminal: isTerminal,
+		stdin: os.Stdin, newImporter: importer.New}))
 }
 
 // isTerminal reports whether w is a character device (a terminal), not a pipe or a file.
@@ -113,7 +119,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 	root.AddCommand(&cobra.Command{Use: "version", Short: "Print version", Run: func(c *cobra.Command, _ []string) {
 		_, _ = fmt.Fprintf(c.OutOrStdout(), "runsweep %s (%s, %s)\n", version, commit, date)
 	}})
-	root.AddCommand(&cobra.Command{Use: "incidents", Short: "List built-in incident presets", RunE: func(c *cobra.Command, _ []string) error {
+	incidents := &cobra.Command{Use: "incidents", Short: "List built-in incident presets", RunE: func(c *cobra.Command, _ []string) error {
 		ps, err := incident.Presets()
 		if err != nil {
 			return err
@@ -122,7 +128,9 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 			_, _ = fmt.Fprintf(c.OutOrStdout(), "%-24s %s\n", p.ID, p.Title)
 		}
 		return nil
-	}})
+	}}
+	incidents.AddCommand(importCmd(d))
+	root.AddCommand(incidents)
 	root.AddCommand(scanCmd(d))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -259,4 +267,113 @@ func scanCmd(d deps) *cobra.Command {
 	c.Flags().StringVar(&lookback, "lookback", "7d", "also check re-runs of runs created this long before the window (max 30d)")
 	_ = c.MarkFlagRequired("incident")
 	return c
+}
+
+func importCmd(d deps) *cobra.Command {
+	var o importer.Options
+	var packages []string
+	var since, until, out string
+	c := &cobra.Command{
+		Use:   "import [OSV-ID...]",
+		Short: "Build an incident file from OSV advisories and npm registry publish times",
+		Example: `  runsweep incidents import MAL-2026-2307 -o axios.yaml
+  runsweep incidents import --package npm:axios
+  grep -o 'MAL-[0-9-]*' advisory.txt | runsweep incidents import -o incident.yaml
+  runsweep incidents import --action owner/repo@<sha> --since 2026-03-19T17:43:00Z --until 2026-03-20T06:00:00Z`,
+		RunE: func(c *cobra.Command, args []string) error {
+			o.IDs = args
+			if len(args) == 0 && d.stdin != nil {
+				f, isFile := d.stdin.(*os.File)
+				if !isFile || !isTerminal(f) {
+					ids, err := readIDs(d.stdin)
+					if err != nil {
+						return err
+					}
+					o.IDs = ids
+				}
+			}
+			for _, p := range packages {
+				name, ok := strings.CutPrefix(p, "npm:")
+				if !ok {
+					return fmt.Errorf("--package %q: want npm:NAME", p)
+				}
+				o.Packages = append(o.Packages, name)
+			}
+			if len(o.IDs) == 0 && len(o.Packages) == 0 && len(o.Actions) == 0 {
+				return errors.New("nothing to import: pass OSV ids (as arguments or on stdin), --package npm:NAME or --action owner/repo@SHA")
+			}
+			for _, f := range []struct {
+				val string
+				dst *time.Time
+			}{{since, &o.Since}, {until, &o.Until}} {
+				if f.val == "" {
+					continue
+				}
+				t, err := time.Parse(time.RFC3339, f.val)
+				if err != nil {
+					return fmt.Errorf("--since/--until must be RFC3339 (2026-03-31T00:00:00Z): %w", err)
+				}
+				*f.dst = t
+			}
+			stderr := c.ErrOrStderr()
+			o.Now = time.Now().UTC()
+			o.Warnf = func(f string, a ...any) { _, _ = fmt.Fprintln(stderr, "warning:", report.Clean(fmt.Sprintf(f, a...))) }
+			o.Logf = func(f string, a ...any) { _, _ = fmt.Fprintln(stderr, report.Clean(fmt.Sprintf(f, a...))) }
+			cl := d.newImporter()
+			cl.Logf = o.Logf
+			b, err := cl.Import(c.Context(), o)
+			if err != nil {
+				return err
+			}
+			if out == "" {
+				_, err = c.OutOrStdout().Write(b)
+				return err
+			}
+			return writeAtomic(out, b)
+		},
+	}
+	c.Flags().StringArrayVar(&packages, "package", nil, "npm:NAME — import every MAL-* record OSV has for the package (repeatable)")
+	c.Flags().StringArrayVar(&o.Actions, "action", nil, "compromised action commit owner/repo@<40-hex sha> (repeatable)")
+	c.Flags().StringVar(&o.ID, "id", "", "incident id (default import-<window start date>)")
+	c.Flags().StringVar(&o.Title, "title", "", "incident title (default: the first OSV ids)")
+	c.Flags().BoolVar(&o.KeepAll, "keep-all", false, "keep versions published more than 7 days before the wave start")
+	c.Flags().StringVar(&since, "since", "", "window start (RFC3339); overrides the computed start")
+	c.Flags().StringVar(&until, "until", "", "window end (RFC3339); overrides the computed end")
+	c.Flags().StringVarP(&out, "output", "o", "", "write to FILE atomically instead of stdout")
+	return c
+}
+
+// readIDs reads one OSV id per line; '#' starts a comment.
+func readIDs(r io.Reader) ([]string, error) {
+	var ids []string
+	sc := bufio.NewScanner(r)
+	for n := 1; sc.Scan(); n++ {
+		line, _, _ := strings.Cut(sc.Text(), "#")
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !importer.ValidID(line) {
+			return nil, fmt.Errorf("stdin line %d: %q is not an OSV id", n, line)
+		}
+		ids = append(ids, line)
+	}
+	return ids, sc.Err()
+}
+
+// writeAtomic writes b to a temp file next to path and renames it over path.
+func writeAtomic(path string, b []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".runsweep-import-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op after a successful rename
+	if _, err := tmp.Write(b); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }
