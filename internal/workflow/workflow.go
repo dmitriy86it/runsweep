@@ -88,8 +88,10 @@ var (
 	opaqueRe = regexp.MustCompile(`(?:^|[^\w./-])(?:(?:make|task|just|mise|nx|turbo|lerna|rush|corepack|python3?|node|docker(?:-compose)?|podman|buildah|mvnw?|gradlew?|sbt|bazel|dotnet|composer)(?:$|[^\w.-])|(?:ba|z)?sh\s+\S)|(?:^|[\s;&|(])\./[\w-]|\.sh\b`)
 	// a package manager command, up to a newline or shell separator; runInstalls reads its arguments
 	runtimeRe = regexp.MustCompile(`(?:^|[^\w./-])(npx|pnpx|bunx|npm|pnpm|yarn|bun)(?:$|[ \t]+([^\n;&|)]*))`)
-	tplRe     = regexp.MustCompile(`\$\{\{.*?\}\}`)
-	matrixRe  = regexp.MustCompile(` \([^)]*\)$`)
+	// a github-script that runs a process, which may be a package manager named in a variable
+	scriptExecRe = regexp.MustCompile("exec\\.exec|execSync|execFileSync|spawn|spawnSync|child_process|\\$`")
+	tplRe        = regexp.MustCompile(`\$\{\{.*?\}\}`)
+	matrixRe     = regexp.MustCompile(` \([^)]*\)$`)
 )
 
 // Parse parses a workflow YAML file.
@@ -237,10 +239,8 @@ func (j *Job) InstallsNPM() bool {
 			return true
 		}
 	}
-	for _, r := range j.Runs {
-		if installRe.MatchString(r) {
-			return true
-		}
+	if slices.ContainsFunc(slices.Concat(j.Runs, j.Scripts), installRe.MatchString) {
+		return true
 	}
 	return len(j.RunInstalls()) > 0
 }
@@ -339,7 +339,7 @@ func runInstalls(script string) []RunInstall {
 				continue
 			}
 			for _, n := range pkgNames(a) {
-				if strings.ContainsAny(n, "$`") { // $VAR, $(…), `…`, ${{ … }}: named at run time
+				if strings.ContainsAny(n, "$`%") { // $VAR, $(…), `…`, ${{ … }}, %VAR%: named at run time
 					dynamic = true
 				} else {
 					pkgs = append(pkgs, n)
@@ -381,7 +381,7 @@ func pkgNames(spec string) []string {
 
 // MayInstallNPM is false only on positive evidence that the job cannot install npm packages:
 // every `uses:` is a known non-installing action and no `run:` calls a package manager or an opaque
-// script/runner. Local and third-party actions and reusable workflows may install.
+// script/runner, and no github-script runs a process. Local and third-party actions and reusable workflows may install.
 func (j *Job) MayInstallNPM() bool {
 	if j.InstallsNPM() {
 		return true
@@ -396,7 +396,7 @@ func (j *Job) MayInstallNPM() bool {
 			return true
 		}
 	}
-	return slices.ContainsFunc(j.Runs, opaqueRe.MatchString)
+	return slices.ContainsFunc(j.Runs, opaqueRe.MatchString) || slices.ContainsFunc(j.Scripts, scriptExecRe.MatchString)
 }
 
 // Exposure returns everything job j could read. Workflow-level env secrets are included.

@@ -62,8 +62,9 @@ func TestScanExitCodes(t *testing.T) {
 	}
 
 	out.Reset()
-	if code := run([]string{"scan", "--incident", inc, "--repo", "o/clean"}, &out, &errb, fakeDeps(f)); code != 0 {
-		t.Fatalf("clean must exit 0, got %d", code)
+	// no runs in a window over 90 days old: not everything was checked (a recent one exits 0, TestScanWarnings)
+	if code := run([]string{"scan", "--incident", inc, "--repo", "o/clean"}, &out, &errb, fakeDeps(f)); code != 3 {
+		t.Fatalf("no runs in an old window must exit 3, got %d", code)
 	}
 	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a", "--format", "json"}, &out, &errb, fakeDeps(f)); code != 1 {
 		t.Fatal("json format")
@@ -152,7 +153,7 @@ func TestPossibleOnlyExitsOne(t *testing.T) {
 func TestJSONStdoutIsPureJSON(t *testing.T) {
 	var out, errb bytes.Buffer
 	f := sourcetest.New()
-	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a", "--format", "json"}, &out, &errb, fakeDeps(f)); code != 0 {
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a", "--format", "json"}, &out, &errb, fakeDeps(f)); code != 3 { // no runs, old window
 		t.Fatalf("got %d: %s", code, errb.String())
 	}
 	var v any
@@ -356,7 +357,8 @@ func TestRetentionByWindowStart(t *testing.T) {
 	body := fmt.Sprintf("id: x\nwindow: {start: %s, end: %s}\nnpm: [{name: axios, versions: [\"1.14.1\"]}]\n",
 		now.Add(-100*24*time.Hour).Format(time.RFC3339), now.Add(-24*time.Hour).Format(time.RFC3339))
 	var out, errb bytes.Buffer
-	if code := run([]string{"scan", "--incident", writeInc(t, body), "--repo", "o/a"}, &out, &errb, fakeDeps(sourcetest.New())); code != 0 {
+	// no runs in a window GitHub may have deleted: not everything was checked
+	if code := run([]string{"scan", "--incident", writeInc(t, body), "--repo", "o/a"}, &out, &errb, fakeDeps(sourcetest.New())); code != 3 {
 		t.Fatalf("code %d: %s", code, errb.String())
 	}
 	if !strings.Contains(errb.String(), "incident window starts more than 90 days ago") {
@@ -403,7 +405,7 @@ func TestLookbackFindsReRun(t *testing.T) {
 		t.Fatalf("default lookback must find the re-run: code %d\n%s%s", code, out.String(), errb.String())
 	}
 	out.Reset()
-	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a", "--lookback", "0"}, &out, &errb, fakeDeps(f)); code != 0 {
+	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a", "--lookback", "0"}, &out, &errb, fakeDeps(f)); code != 3 { // no runs, old window
 		t.Fatalf("--lookback 0: code %d\n%s", code, out.String())
 	}
 }
@@ -761,5 +763,19 @@ func TestIncidentFlagHelpHasNoBackquotes(t *testing.T) {
 	run([]string{"scan", "--help"}, &out, &errb, deps{})
 	if !strings.Contains(out.String(), "--incident string") {
 		t.Fatal(out.String())
+	}
+}
+
+// Workflow file unavailable, clean lockfile, an install only the log shows: UNCHECKED, exit 3.
+func TestScanWorkflowUnavailableExits3(t *testing.T) {
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/gone.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
+	f.Jobs[1] = []source.Job{{ID: 2, Name: "build"}}
+	f.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{}}`))
+	f.Logs[2] = "2026-03-31T01:00:00Z ##[group]Run npx -y axios@latest\n"
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 3 ||
+		!strings.Contains(out.String(), "run-time installs not checked") {
+		t.Fatalf("code %d\n%s%s", code, out.String(), errb.String())
 	}
 }

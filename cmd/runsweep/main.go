@@ -208,7 +208,8 @@ Exit codes:
   2  error (bad flags or incident, no token, token rejected, organization not listed,
      nothing could be scanned)
   3  nothing AFFECTED or POSSIBLE, but not everything was checked: UNCHECKED jobs,
-     skipped repositories, or the scan was interrupted (Ctrl-C, API error)
+     skipped repositories, the scan was interrupted (Ctrl-C, API error), or no runs
+     were found in a window that starts more than 90 days ago
 1 wins over 2 and 3: findings are reported even if the scan then stops on an error.`,
 		Example: `  runsweep scan --incident axios-2026-03 --repo owner/name
   runsweep scan --incident ./incident.yaml --org my-org --format json`,
@@ -316,7 +317,7 @@ Exit codes:
 			if findings {
 				return exitFindings
 			}
-			if res.Count(model.Unchecked) > 0 || len(res.Skipped) > 0 {
+			if res.Count(model.Unchecked) > 0 || len(res.Skipped) > 0 || res.RetentionWarning && res.RunsScanned == 0 {
 				return exitIncomplete
 			}
 			return nil
