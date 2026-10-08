@@ -88,6 +88,11 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 	var stopErr error
 	for i, repo := range repos {
 		runs, err := src.ListRuns(ctx, repo, inc.Window.Start.Add(-opt.Lookback), inc.Window.End)
+		if errors.Is(err, source.ErrRunsCapped) { // scan the runs listed; the rest are UNCHECKED
+			res.Findings = append(res.Findings, model.Finding{Run: model.RunRef{Repo: repo}, Status: model.Unchecked,
+				Evidence: []model.Evidence{note("%v", err)}})
+			err = nil
+		}
 		if soft(err) {
 			res.Skipped = append(res.Skipped, model.Skip{Repo: repo, Reason: err.Error()})
 			continue
@@ -312,9 +317,18 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			call.status = model.Unchecked
 			call.notes = append(call.notes, note("job could not be identified; called workflows were not read"))
 		}
+		// packages the workflow itself installs at run time; an unidentified job is judged by every job
+		rj := wj
+		if rj == nil && wf != nil {
+			rj = wf.Union()
+		}
+		var installs []workflow.RunInstall
+		if rj != nil {
+			installs = rj.RunInstalls()
+		}
 		var log string
 		var logErr = source.ErrGone
-		if len(s.inc.Actions) > 0 || npmRes.Status > model.Clean {
+		if len(s.inc.Actions) > 0 || npmRes.Status > model.Clean || len(installs) > 0 {
 			log, logErr = s.src.JobLog(ctx, repo, job.ID)
 			if logErr != nil && !soft(logErr) {
 				return out, len(jobs), logErr
@@ -324,6 +338,14 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		if npmRes.Status > model.Clean && (wj == nil || wj.MayInstallNPM() || logErr == nil && installLogRe.MatchString(log)) {
 			f.Status = model.Worse(f.Status, npmRes.Status)
 			f.Evidence = append(f.Evidence, npmRes.Evidence...)
+		}
+		for _, in := range installs {
+			if slices.ContainsFunc(in.Pkgs, func(p string) bool {
+				return slices.ContainsFunc(s.inc.NPM, func(b incident.NPMPackage) bool { return b.Name == p })
+			}) {
+				f.Status = model.Worse(f.Status, model.Possible)
+				f.Evidence = append(f.Evidence, model.Evidence{Kind: "npm", Detail: fmt.Sprintf("runs `%s` at run time", in.Cmd)})
+			}
 		}
 		if len(s.inc.Actions) > 0 {
 			var st model.Status
@@ -514,6 +536,7 @@ func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workfl
 func mergeInto(dst, src *workflow.Job) {
 	dst.Uses = append(dst.Uses, src.Uses...)
 	dst.Runs = append(dst.Runs, src.Runs...)
+	dst.Scripts = append(dst.Scripts, src.Scripts...)
 	dst.Secrets = append(dst.Secrets, src.Secrets...)
 	dst.InheritSecrets = dst.InheritSecrets || src.InheritSecrets
 	dst.IDTokenWrite = dst.IDTokenWrite || src.IDTokenWrite

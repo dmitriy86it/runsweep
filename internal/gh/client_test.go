@@ -216,11 +216,23 @@ func TestRunsCapInUnsplittableWindow(t *testing.T) {
 		}
 	}
 	start := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
-	if _, err := c.ListRuns(context.Background(), "o/r", start, start.Add(30*time.Second)); err != nil {
-		t.Fatal(err)
+	if _, err := c.ListRuns(context.Background(), "o/r", start, start.Add(30*time.Second)); !errors.Is(err, source.ErrRunsCapped) {
+		t.Fatalf("want ErrRunsCapped, got %v", err)
 	}
 	if !logged {
 		t.Fatal("want cap warning")
+	}
+}
+
+func TestRunsCapAfterSplitKeepsRuns(t *testing.T) {
+	var id atomic.Int64
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"total_count":1500,"workflow_runs":[{"id":%d}]}`, id.Add(1))
+	}))
+	start := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
+	runs, err := c.ListRuns(context.Background(), "o/r", start, start.Add(2*time.Minute))
+	if !errors.Is(err, source.ErrRunsCapped) || len(runs) != 2 {
+		t.Fatalf("want both capped halves' runs and ErrRunsCapped, got %d runs, %v", len(runs), err)
 	}
 }
 

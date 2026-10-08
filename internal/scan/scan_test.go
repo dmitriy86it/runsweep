@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -879,5 +880,66 @@ func TestScanUnreadCallNoDownloadsIsUnchecked(t *testing.T) {
 	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
 	if fd := scanOne(t, f, actOnly); fd.Status != model.Unchecked || !hasNote(fd, "job log has no action download records") {
 		t.Fatalf("%+v", fd)
+	}
+}
+
+type cappedSrc struct{ *sourcetest.Fake }
+
+func (s cappedSrc) ListRuns(ctx context.Context, repo string, start, end time.Time) ([]source.Run, error) {
+	runs, _ := s.Fake.ListRuns(ctx, repo, start, end)
+	return runs, source.ErrRunsCapped
+}
+
+func TestScanRunsCapIsUnchecked(t *testing.T) {
+	res, err := Run(context.Background(), cappedSrc{fixture()}, inc, Options{Repos: []string{"o/a"}})
+	if err != nil || res.Count(model.Affected) != 1 || res.Count(model.Unchecked) != 1 {
+		t.Fatalf("%v %+v", err, res)
+	}
+	if fd := res.Findings[1]; fd.Run.Repo != "o/a" || !hasNote(fd, "runs not scanned: API cap of 1000 runs in a window ≤1 min") {
+		t.Fatalf("%+v", fd)
+	}
+}
+
+type logCount struct {
+	*sourcetest.Fake
+	n *atomic.Int32
+}
+
+func (s logCount) JobLog(ctx context.Context, repo string, id int64) (string, error) {
+	s.n.Add(1)
+	return s.Fake.JobLog(ctx, repo, id)
+}
+
+func TestScanRuntimeInstall(t *testing.T) {
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "x"}, {ID: 11, Name: "gs"}}
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(`on: push
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - run: npx -y axios@latest
+  gs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: require('child_process').execSync('npx left-pad')
+`))
+	f.Logs[10] = "2026-03-31T01:00:00Z ##[group]GITHUB_TOKEN Permissions\n2026-03-31T01:00:00Z Contents: write\n2026-03-31T01:00:00Z ##[endgroup]\n"
+	npmOnly := &incident.Incident{ID: "t", Window: inc.Window, NPM: inc.NPM}
+	src := logCount{f, &atomic.Int32{}}
+	res, err := Run(context.Background(), src, npmOnly, Options{Repos: []string{"o/a"}})
+	if err != nil || len(res.Findings) != 1 {
+		t.Fatalf("%v %+v", err, res)
+	}
+	fd := res.Findings[0]
+	if fd.Run.Job != "x" || fd.Status != model.Possible || fd.Evidence[0].Detail != "runs `npx -y axios@latest` at run time" ||
+		fd.Exposure == nil || fd.Exposure.TokenPerms["contents"] != "write" {
+		t.Fatalf("%+v", fd)
+	}
+	if src.n.Load() != 2 {
+		t.Fatalf("a job that installs at run time needs its log: %d logs read", src.n.Load())
 	}
 }

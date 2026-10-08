@@ -22,6 +22,7 @@ type Job struct {
 	Environment    bool     // job declares `environment:`, so it reads that environment's secrets directly
 	Call           string   // job-level `uses:`: the reusable workflow this job calls
 	Runs           []string // `run:` scripts
+	Scripts        []string // actions/github-script `script:` inputs
 	Secrets        []string
 	InheritSecrets bool
 	IDTokenWrite   bool
@@ -85,8 +86,11 @@ var (
 	installRe = regexp.MustCompile(`(?:^|[^\w./-])(npm|npx|yarn|pnpm|pnpx|bun|bunx)(?:$|[^\w.-])`)
 	// opaque runners and scripts that may install npm packages without naming npm in the workflow
 	opaqueRe = regexp.MustCompile(`(?:^|[^\w./-])(?:(?:make|task|just|mise|nx|turbo|lerna|rush|corepack|python3?|node|docker(?:-compose)?|podman|buildah|mvnw?|gradlew?|sbt|bazel|dotnet|composer)(?:$|[^\w.-])|(?:ba|z)?sh\s+\S)|(?:^|[\s;&|(])\./[\w-]|\.sh\b`)
-	tplRe    = regexp.MustCompile(`\$\{\{.*?\}\}`)
-	matrixRe = regexp.MustCompile(` \([^)]*\)$`)
+	// a package named at run time: npx, bunx, npm i/install/add, pnpm/yarn add/dlx, and the rest of
+	// the command up to a newline, shell separator or quote
+	runtimeRe = regexp.MustCompile(`(?:^|[^\w./-])(npx|bunx|npm[ \t]+(?:install|add|i)|(?:pnpm|yarn)[ \t]+(?:add|dlx))(?:$|[ \t]+([^\n;&|'"` + "`" + `)]*))`)
+	tplRe     = regexp.MustCompile(`\$\{\{.*?\}\}`)
+	matrixRe  = regexp.MustCompile(` \([^)]*\)$`)
 )
 
 // Parse parses a workflow YAML file.
@@ -135,6 +139,11 @@ func Parse(b []byte) (*Workflow, error) {
 				if u := scalar(get(st, "uses")); u != "" {
 					j.Uses = append(j.Uses, u)
 					j.CloudRoles = append(j.CloudRoles, cloudRoles(u, get(st, "with"))...)
+					if name, _, _ := strings.Cut(strings.ToLower(u), "@"); name == "actions/github-script" {
+						if sc := scalar(get(get(st, "with"), "script")); sc != "" {
+							j.Scripts = append(j.Scripts, sc)
+						}
+					}
 				}
 				if r := scalar(get(st, "run")); r != "" {
 					j.Runs = append(j.Runs, r)
@@ -234,7 +243,69 @@ func (j *Job) InstallsNPM() bool {
 			return true
 		}
 	}
-	return false
+	return len(j.RunInstalls()) > 0
+}
+
+// RunInstall is a command that installs or runs npm packages named in the workflow itself.
+type RunInstall struct {
+	Cmd  string
+	Pkgs []string // package names, version stripped; an npm: alias gives both names
+}
+
+// RunInstalls returns the run-time package installs in the job's `run:` and github-script scripts.
+func (j *Job) RunInstalls() []RunInstall {
+	var out []RunInstall
+	for _, s := range slices.Concat(j.Runs, j.Scripts) {
+		out = append(out, runInstalls(s)...)
+	}
+	return out
+}
+
+// runInstalls finds the commands of runtimeRe that name at least one package.
+func runInstalls(script string) []RunInstall {
+	var out []RunInstall
+	for _, m := range runtimeRe.FindAllStringSubmatchIndex(script, -1) {
+		tool := script[m[2]:m[3]]
+		one := tool == "npx" || tool == "bunx" || strings.HasSuffix(tool, "dlx") // runs a single package
+		var args []string
+		if m[4] >= 0 {
+			args = strings.Fields(script[m[4]:m[5]])
+		}
+		var pkgs []string
+		for i := 0; i < len(args); i++ {
+			a := args[i]
+			switch v, isPkg := strings.CutPrefix(a, "--package="); {
+			case (a == "-p" || a == "--package") && i+1 < len(args):
+				i++
+				a = args[i]
+			case isPkg:
+				a = v
+			case strings.HasPrefix(a, "-"):
+				continue
+			}
+			pkgs = append(pkgs, pkgNames(a)...)
+			if one {
+				break
+			}
+		}
+		if len(pkgs) > 0 {
+			out = append(out, RunInstall{Cmd: strings.TrimSpace(script[m[2]:m[1]]), Pkgs: pkgs})
+		}
+	}
+	return out
+}
+
+// pkgNames strips the version from a package spec ("@s/p@1" -> "@s/p"); "x@npm:real@1" gives x and real.
+func pkgNames(spec string) []string {
+	at := strings.Index(spec[1:], "@")
+	if at < 0 {
+		return []string{spec}
+	}
+	name, ver := spec[:at+1], spec[at+2:]
+	if target, ok := strings.CutPrefix(ver, "npm:"); ok && target != "" {
+		return append([]string{name}, pkgNames(target)...)
+	}
+	return []string{name}
 }
 
 // MayInstallNPM is false only on positive evidence that the job cannot install npm packages:
@@ -287,6 +358,7 @@ func (w *Workflow) Union() *Job {
 		j := w.Jobs[id]
 		u.Uses = append(u.Uses, j.Uses...)
 		u.Runs = append(u.Runs, j.Runs...)
+		u.Scripts = append(u.Scripts, j.Scripts...)
 		u.Secrets = append(u.Secrets, j.Secrets...)
 		u.InheritSecrets = u.InheritSecrets || j.InheritSecrets
 		u.Environment = u.Environment || j.Environment
@@ -343,7 +415,7 @@ func workflowPath(p string) bool {
 // IDTokenWrite is j's or c's; secrets are those j passes, plus the names cw and c reference
 // when j uses `secrets: inherit` or c declares `environment:` (only then are those the caller's secret names).
 func (w *Workflow) Through(j *Job, cw *Workflow, c *Job) (*Workflow, *Job) {
-	e := &Job{ID: j.ID, Name: j.Name, Uses: slices.Clone(c.Uses), Runs: slices.Clone(c.Runs), Call: c.Call,
+	e := &Job{ID: j.ID, Name: j.Name, Uses: slices.Clone(c.Uses), Runs: slices.Clone(c.Runs), Scripts: slices.Clone(c.Scripts), Call: c.Call,
 		Secrets: slices.Clone(j.Secrets), InheritSecrets: j.InheritSecrets,
 		IDTokenWrite: j.IDTokenWrite || c.IDTokenWrite, CloudRoles: slices.Clone(j.CloudRoles)}
 	for _, r := range c.CloudRoles {
@@ -358,10 +430,12 @@ func (w *Workflow) Through(j *Job, cw *Workflow, c *Job) (*Workflow, *Job) {
 	return &Workflow{Jobs: map[string]*Job{e.ID: e}, globalSecrets: w.globalSecrets, globalDynamic: w.globalDynamic}, e
 }
 
-// ParseTokenPerms reads the "GITHUB_TOKEN Permissions" group from a job log.
+// ParseTokenPerms reads the "GITHUB_TOKEN Permissions" group from a job log. Only the "Set up job"
+// section is read: from the first step ("##[group]Run ") on, the log is the job's own output.
 func ParseTokenPerms(log string) map[string]string {
 	out := map[string]string{}
 	in := false
+	log, _, _ = strings.Cut(log, "##[group]Run ")
 	sc := bufio.NewScanner(strings.NewReader(log))
 	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
 	for sc.Scan() {

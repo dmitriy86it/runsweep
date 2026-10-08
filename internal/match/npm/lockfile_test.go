@@ -290,3 +290,30 @@ func TestIsLockfileNodeModulesSegment(t *testing.T) {
 		}
 	}
 }
+
+func TestLockfileFailClosed(t *testing.T) {
+	for name, c := range map[string]struct{ path, body string }{
+		"package-lock without packages or dependencies": {"package-lock.json", `{"lockfileVersion":3}`},
+		"package-lock null":                             {"package-lock.json", `null`},
+		"pnpm without packages":                         {"pnpm-lock.yaml", "lockfileVersion: '9.0'\n"},
+		"pnpm packages garbage":                         {"pnpm-lock.yaml", "packages: hello\n"},
+		"pnpm unknown key":                              {"pnpm-lock.yaml", "packages:\n  github.com/a/b/abc:\n    resolution: {}\n"},
+		"berry locator too deep": {"yarn.lock", "__metadata:\n  version: 8\n\"x@npm:1\":\n  version: 1.0.0\n  resolution: \"" +
+			strings.Repeat("x@patch:", 17) + "x@npm:1.0.0\"\n"},
+	} {
+		if _, err := ParseLockfile(c.path, []byte(c.body)); err == nil {
+			t.Errorf("%s: want a parse error", name)
+		}
+	}
+	for name, c := range map[string]struct{ path, body string }{
+		"package-lock v1 empty deps": {"package-lock.json", `{"lockfileVersion":1,"dependencies":{}}`},
+		"pnpm empty file":            {"pnpm-lock.yaml", ""},
+		"pnpm local keys":            {"pnpm-lock.yaml", "packages:\n  file:../x:\n    resolution: {}\n  /y@link:../y:\n    resolution: {}\n"},
+		"berry locator 16 deep": {"yarn.lock", "__metadata:\n  version: 8\n\"x@npm:1\":\n  version: 1.0.0\n  resolution: \"" +
+			strings.Repeat("x@patch:", 15) + "x@npm:1.0.0\"\n"},
+	} {
+		if _, err := ParseLockfile(c.path, []byte(c.body)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
