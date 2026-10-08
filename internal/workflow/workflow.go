@@ -260,9 +260,11 @@ func (j *Job) RunInstalls() []RunInstall {
 	return out
 }
 
-// installSubs maps "tool subcommand" to whether it takes a single package (runs it) or several.
+// installSubs are the "tool subcommand" pairs that install or run named packages. Every positional
+// argument is read as a package, also for runners (npx, dlx) whose later arguments belong to the
+// command: an unknown value flag must not hide the name, and over-matching is only noise.
 var installSubs = map[string]bool{
-	"npm i": false, "npm install": false, "npm add": false, "pnpm add": false, "yarn add": false, "bun add": false,
+	"npm i": true, "npm install": true, "npm add": true, "pnpm add": true, "yarn add": true, "bun add": true,
 	"npm exec": true, "npm x": true, "pnpm dlx": true, "yarn dlx": true, "bun x": true,
 	"npx": true, "pnpx": true, "bunx": true,
 }
@@ -295,8 +297,7 @@ func runInstalls(script string) []RunInstall {
 			}
 			key += " " + sub
 		}
-		one, ok := installSubs[key]
-		if !ok {
+		if !installSubs[key] {
 			continue
 		}
 		var pkgs []string
@@ -315,9 +316,6 @@ func runInstalls(script string) []RunInstall {
 				continue
 			}
 			pkgs = append(pkgs, pkgNames(a)...)
-			if one {
-				break
-			}
 		}
 		if len(pkgs) > 0 {
 			out = append(out, RunInstall{Cmd: cmd, Pkgs: pkgs})
