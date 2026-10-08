@@ -1,0 +1,43 @@
+name: Bug report
+description: runsweep crashed, misjudged a job or printed something wrong
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Redact secrets, tokens and private repository names before posting. Security issues go to the Security tab, not here.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `runsweep --version`
+      placeholder: "runsweep v0.2.1 (abc1234, 2026-10-08T00:00:00Z)"
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      placeholder: "runsweep scan --incident axios-2026-03 --repo owner/name"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+      description: What happened instead, with the exit code
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report excerpt
+      description: The relevant part of the report or stderr. Redact secrets.
+      render: text
