@@ -80,7 +80,8 @@ func TestMatchDeclared(t *testing.T) {
 		f := sourcetest.New()
 		f.AddFile("o/r", "s1", "app/package.json", []byte(c.pkgJSON))
 		r, err := new(Cache).Match(context.Background(), f, "o/r", "s1", badPkgs)
-		if err != nil || r.Status != c.want || (c.detail != "" && !strings.Contains(r.Evidence[0].Detail, c.detail)) {
+		r = r.Resolve(installedAll)
+		if err != nil || r.Status != c.want || (c.detail != "" && !hasDetail(r, c.detail)) {
 			t.Errorf("%s: %+v %v", name, r, err)
 		}
 	}
@@ -118,8 +119,9 @@ func TestMatchNodeModulesSegment(t *testing.T) {
 	f.AddFile("o/r", "s1", "x_node_modules/app/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
 	f.AddFile("o/r", "s1", "a/node_modules/b/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
 	r, _ := new(Cache).Match(context.Background(), f, "o/r", "s1", bad)
-	if r.Status != model.Possible || len(r.Evidence) != 2 || !strings.Contains(r.Evidence[0].Detail, "x_node_modules/app/package.json") ||
-		r.Evidence[1].Detail != "no lockfile for x_node_modules/app/package.json — transitive dependencies unknown" {
+	r = r.Resolve(installedAll)
+	if r.Status != model.Possible || len(r.Evidence) != 2 || !hasDetail(r, "axios declared in x_node_modules/app/package.json") ||
+		!hasDetail(r, "no lockfile for x_node_modules/app/package.json — transitive dependencies unknown") {
 		t.Fatalf("%+v", r)
 	}
 }
@@ -155,6 +157,7 @@ func TestMatchWorkspaceRootLockfile(t *testing.T) {
 			f.AddFile("o/r", "s1", p, b)
 		}
 		r, err := new(Cache).Match(context.Background(), f, "o/r", "s1", bad)
+		r = r.Resolve(installedAll)
 		ok := err == nil && r.Status == c.want
 		if ok && c.detail != "" {
 			ok = slices.ContainsFunc(r.Evidence, func(e model.Evidence) bool { return e.Kind == "npm" && strings.Contains(e.Detail, c.detail) })
@@ -232,6 +235,7 @@ func TestMatchNoLockfile(t *testing.T) {
 			f.AddFile("o/r", "s1", p, []byte(b))
 		}
 		r, err := new(Cache).Match(context.Background(), f, "o/r", "s1", bad)
+		r = r.Resolve(installedAll)
 		if err != nil || r.Status != c.want || hasDetail(r, noLock) != c.note {
 			t.Errorf("%s: %+v %v", name, r, err)
 		}
@@ -362,3 +366,62 @@ func TestMatchWorkspacePackageNotMissing(t *testing.T) {
 		t.Fatalf("with packages/b: %+v %v", r, err)
 	}
 }
+
+// A lockfile covers a package.json below it only as a workspace member when its directory
+// declares workspaces; an uncovered package.json outside the root is left to the job (Unlocked).
+func TestMatchWorkspaceCoverage(t *testing.T) {
+	root := func(ws string) string { return `{"private":true,"workspaces":` + ws + `}` }
+	yarnLock := "# yarn lockfile v1\n\n\nleft-pad@^1.0.0:\n  version \"1.0.0\"\n"
+	dep := `{"dependencies":{"axios":"latest"}}`
+	for name, c := range map[string]struct {
+		files    map[string]string
+		possible string // detail kept as POSSIBLE at match level, or ""
+		unlocked string // Dir left to the job, or ""
+	}{
+		"not a member":      {map[string]string{"package.json": root(`["packages/*"]`), "yarn.lock": yarnLock, "examples/x/package.json": dep}, "", "examples/x"},
+		"member":            {map[string]string{"package.json": root(`["packages/*"]`), "yarn.lock": yarnLock, "packages/web/package.json": dep}, "not in lockfile yarn.lock", ""},
+		"object form":       {map[string]string{"package.json": root(`{"packages":["apps/*"]}`), "yarn.lock": yarnLock, "apps/web/package.json": dep}, "not in lockfile yarn.lock", ""},
+		"double star":       {map[string]string{"package.json": root(`["apps/**"]`), "yarn.lock": yarnLock, "apps/a/b/package.json": dep}, "not in lockfile yarn.lock", ""},
+		"negated":           {map[string]string{"package.json": root(`["apps/*","!apps/old"]`), "yarn.lock": yarnLock, "apps/old/package.json": dep}, "", "apps/old"},
+		"no workspaces":     {map[string]string{"package.json": `{"name":"r"}`, "yarn.lock": yarnLock, "examples/x/package.json": dep}, "not in lockfile yarn.lock", ""},
+		"pnpm workspace":    {map[string]string{"pnpm-lock.yaml": "lockfileVersion: '9.0'\npackages:\n  left-pad@1.0.0:\n    resolution: {integrity: x}\n", "pnpm-workspace.yaml": "packages:\n  - 'libs/*'\n", "tools/package.json": dep}, "", "tools"},
+		"pnpm member":       {map[string]string{"pnpm-lock.yaml": "lockfileVersion: '9.0'\npackages:\n  left-pad@1.0.0:\n    resolution: {integrity: x}\n", "pnpm-workspace.yaml": "packages:\n  - 'libs/*'\n", "libs/a/package.json": dep}, "not in lockfile pnpm-lock.yaml", ""},
+		"root without lock": {map[string]string{"package.json": dep}, "without a lockfile", ""},
+	} {
+		f := sourcetest.New()
+		for p, b := range c.files {
+			f.AddFile("o/r", "s1", p, []byte(b))
+		}
+		r, err := new(Cache).Match(context.Background(), f, "o/r", "s1", bad)
+		ok := err == nil && (c.possible == "") == (r.Status != model.Possible)
+		if c.possible != "" {
+			ok = ok && hasDetail(r, c.possible)
+		}
+		dirs := []string{}
+		for _, u := range r.Unlocked {
+			dirs = append(dirs, u.Dir)
+		}
+		if c.unlocked != "" {
+			ok = ok && slices.Equal(dirs, []string{c.unlocked})
+		} else {
+			ok = ok && len(dirs) == 0
+		}
+		if !ok {
+			t.Errorf("%s: %+v %v", name, r, err)
+		}
+	}
+}
+
+func TestResolveUnlocked(t *testing.T) {
+	r := Result{Status: model.Unchecked, Unlocked: []Unlocked{{Dir: "examples/x", Pkg: "axios", Detail: "axios declared in examples/x/package.json without a lockfile — installed version unknown"}}}
+	if got := r.Resolve(func(string) bool { return true }); got.Status != model.Possible || !hasDetail(got, "declared in examples/x/package.json without a lockfile") {
+		t.Fatalf("installed: %+v", got)
+	}
+	got := r.Resolve(func(string) bool { return false })
+	if got.Status != model.Unchecked || !hasDetail(got, "examples/x/package.json is not installed by this job as far as the workflow and log show; declared axios") {
+		t.Fatalf("not installed: %+v", got)
+	}
+}
+
+// installedAll resolves Unlocked as if every job installed every package.json: the pre-job view.
+func installedAll(string) bool { return true }

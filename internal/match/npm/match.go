@@ -14,6 +14,7 @@ import (
 	"github.com/dmitriy86it/runsweep/internal/incident"
 	"github.com/dmitriy86it/runsweep/internal/model"
 	"github.com/dmitriy86it/runsweep/internal/source"
+	"go.yaml.in/yaml/v3"
 )
 
 // Fetcher is the part of source.Source the matcher needs.
@@ -26,6 +27,30 @@ type Fetcher interface {
 type Result struct {
 	Status   model.Status
 	Evidence []model.Evidence
+	// Unlocked: bad packages declared in a package.json below the root that no lockfile covers;
+	// whether that is POSSIBLE depends on the job installing it (Resolve).
+	Unlocked []Unlocked
+}
+
+// Unlocked is a bad package declared in Dir/package.json with no covering lockfile.
+type Unlocked struct {
+	Dir, Pkg, Detail string
+}
+
+// Resolve folds r.Unlocked into the status: POSSIBLE where installed(Dir), otherwise UNCHECKED
+// with a note that the job does not seem to install it.
+func (r Result) Resolve(installed func(dir string) bool) Result {
+	out := Result{Status: r.Status, Evidence: slices.Clone(r.Evidence)}
+	for _, u := range r.Unlocked {
+		if installed(u.Dir) {
+			out.Status = model.Worse(out.Status, model.Possible)
+			out.Evidence = append(out.Evidence, model.Evidence{Kind: "npm", Detail: u.Detail})
+		} else {
+			out.Status = model.Worse(out.Status, model.Unchecked)
+			out.Evidence = append(out.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("%s/package.json is not installed by this job as far as the workflow and log show; declared %s", u.Dir, u.Pkg)})
+		}
+	}
+	return out
 }
 
 // maxManifests caps the lockfiles and package.json files read per commit tree.
@@ -35,13 +60,20 @@ const maxManifests = 500
 // so a file shared by many commits is fetched and parsed once. The zero value is ready to use.
 type Cache struct{ m sync.Map }
 
-// parsed is a cached parse: pkgs of a lockfile or own name and dependency names of a package.json,
+// parsed is a cached parse: pkgs of a lockfile, a package.json or pnpm-workspace.yaml manifest,
 // or why it is unreadable.
 type parsed struct {
-	pkgs  []Pkg
-	name  string
-	names []string
-	err   error
+	pkgs []Pkg
+	m    manifest
+	err  error
+}
+
+// manifest is what a package.json (or pnpm-workspace.yaml: ws only) tells about its directory.
+type manifest struct {
+	name  string   // own package name
+	deps  []string // sorted, distinct dependency names
+	ws    []string // workspace globs
+	hasWS bool     // workspaces declared: the directory's lockfile covers only its members
 }
 
 // load returns the parse of tree entry e; a file over the size cap is unreadable, like a parse error.
@@ -148,7 +180,24 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			names []string
 		}
 		var read []pkgJSON
-		local := map[string]bool{} // names of the tree's own packages (workspaces); yarn v1 does not lock them
+		local := map[string]bool{}  // names of the tree's own packages (workspaces); yarn v1 does not lock them
+		ws := map[string][]string{} // dir -> workspace globs; absent: its lockfile covers everything below
+		for _, e := range entries {
+			if path.Base(e.Path) != "pnpm-workspace.yaml" || InNodeModules(e.Path) {
+				continue
+			}
+			p, err := c.load(ctx, f, repo, e, func(b []byte) parsed {
+				var y struct{ Packages []string }
+				err := yaml.Unmarshal(b, &y)
+				return parsed{m: manifest{ws: y.Packages, hasWS: true}, err: err}
+			})
+			if err != nil {
+				return r, err
+			}
+			if p.err == nil { // unreadable: keep the ancestor rule
+				ws[path.Dir(e.Path)] = p.m.ws
+			}
+		}
 		for _, e := range entries {
 			if !isPkgJSON(e.Path) {
 				continue
@@ -157,8 +206,8 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 				continue
 			}
 			p, err := c.load(ctx, f, repo, e, func(b []byte) parsed {
-				name, names, err := declared(b)
-				return parsed{name: name, names: names, err: err}
+				m, err := declared(b)
+				return parsed{m: m, err: err}
 			})
 			if err != nil {
 				return r, err
@@ -168,19 +217,29 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("cannot parse %s: %v", e.Path, p.err)})
 				continue
 			}
-			read = append(read, pkgJSON{e.Path, p.names})
-			if p.name != "" && manifests <= maxManifests { // past the cap not every local name is known
-				local[p.name] = true
+			read = append(read, pkgJSON{e.Path, p.m.deps})
+			if p.m.name != "" && manifests <= maxManifests { // past the cap not every local name is known
+				local[p.m.name] = true
+			}
+			if p.m.hasWS {
+				d := path.Dir(e.Path)
+				ws[d] = append(ws[d], p.m.ws...)
 			}
 		}
 		for _, pj := range read {
 			names := pj.names
-			// Covering lockfile: nearest ancestor dir with one (workspaces lock at the root).
+			// Covering lockfile: nearest ancestor dir with one (workspaces lock at the root), if that
+			// dir declares no workspaces or pj is a member; else none ("" is no dir).
 			// If the nearest one failed to parse, treat the package.json as unlocked.
-			dir := path.Dir(pj.path)
+			pdir := path.Dir(pj.path)
+			dir := pdir
 			for lockNames[dir] == nil && !failedDirs[dir] && dir != "." && dir != "/" {
 				dir = path.Dir(dir)
 			}
+			if globs, ok := ws[dir]; ok && dir != pdir && !member(globs, strings.TrimPrefix(pdir, dir+"/")) {
+				dir = ""
+			}
+			unlocked := lockNames[dir] == nil && !failedDirs[dir] && pdir != "."
 			for _, name := range names {
 				if _, ok := badVer[name]; !ok {
 					continue
@@ -192,6 +251,10 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 				case !lockNames[dir][name] && !local[name]:
 					detail = fmt.Sprintf("%s declared in %s but not in lockfile %s — install would resolve it fresh", name, pj.path, lockPaths[dir])
 				default:
+					continue
+				}
+				if unlocked {
+					r.Unlocked = append(r.Unlocked, Unlocked{Dir: pdir, Pkg: name, Detail: detail})
 					continue
 				}
 				r.Status = model.Worse(r.Status, model.Possible)
@@ -214,18 +277,60 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 	return r, nil
 }
 
-// declared returns the own name of a package.json and its sorted, distinct dependency names,
-// including the real package behind an "npm:<real>@<range>" alias.
-func declared(pkgJSON []byte) (string, []string, error) {
+// member reports whether rel (a dir relative to the workspace root) matches the workspace globs:
+// `*` within a segment, `**` across segments, a leading `!` excludes.
+func member(globs []string, rel string) bool {
+	in := false
+	for _, g := range globs {
+		neg := strings.HasPrefix(g, "!")
+		g = strings.Trim(strings.TrimPrefix(strings.TrimPrefix(g, "!"), "./"), "/")
+		if globMatch(strings.Split(g, "/"), strings.Split(rel, "/")) {
+			if neg {
+				return false
+			}
+			in = true
+		}
+	}
+	return in
+}
+
+func globMatch(pat, segs []string) bool {
+	if len(pat) == 0 {
+		return len(segs) == 0
+	}
+	if pat[0] == "**" {
+		for i := 0; i <= len(segs); i++ {
+			if globMatch(pat[1:], segs[i:]) {
+				return true
+			}
+		}
+		return false
+	}
+	if len(segs) == 0 {
+		return false
+	}
+	ok, _ := path.Match(pat[0], segs[0])
+	return ok && globMatch(pat[1:], segs[1:])
+}
+
+// declared returns what a package.json declares: its own name, its sorted, distinct dependency
+// names (including the real package behind an "npm:<real>@<range>" alias) and its workspaces.
+func declared(pkgJSON []byte) (manifest, error) {
 	var p struct {
-		Name                                                                  json.RawMessage
+		Name, Workspaces                                                      json.RawMessage
 		Dependencies, DevDependencies, OptionalDependencies, PeerDependencies map[string]json.RawMessage
 	}
 	if err := json.Unmarshal(bytes.TrimPrefix(pkgJSON, []byte("\uFEFF")), &p); err != nil {
-		return "", nil, err
+		return manifest{}, err
 	}
-	var name string
-	_ = json.Unmarshal(p.Name, &name) // a non-string name is no local package
+	var m manifest
+	_ = json.Unmarshal(p.Name, &m.name) // a non-string name is no local package
+	var obj struct{ Packages []string }
+	if json.Unmarshal(p.Workspaces, &m.ws) == nil {
+		m.hasWS = m.ws != nil
+	} else if json.Unmarshal(p.Workspaces, &obj) == nil && obj.Packages != nil {
+		m.ws, m.hasWS = obj.Packages, true
+	}
 	var out []string
 	for _, m := range []map[string]json.RawMessage{p.Dependencies, p.DevDependencies, p.OptionalDependencies, p.PeerDependencies} {
 		for name, raw := range m {
@@ -243,7 +348,8 @@ func declared(pkgJSON []byte) (string, []string, error) {
 		}
 	}
 	slices.Sort(out)
-	return name, slices.Compact(out), nil
+	m.deps = slices.Compact(out)
+	return m, nil
 }
 
 func short(sha string) string {

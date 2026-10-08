@@ -371,21 +371,26 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		}
 		var log string
 		var logErr = source.ErrGone
-		if len(s.inc.Actions) > 0 || npmRes.Status > model.Clean || len(installs) > 0 {
+		if len(s.inc.Actions) > 0 || npmRes.Status > model.Clean || len(npmRes.Unlocked) > 0 || len(installs) > 0 {
 			log, logErr = s.src.JobLog(ctx, repo, job.ID)
 			if logErr != nil && !soft(logErr) {
 				return out, len(jobs), logErr
 			}
 		}
-		// Drop npm evidence only on positive evidence the job cannot install packages.
+		// A package.json no lockfile covers is POSSIBLE only for a job that names its directory
+		// (or whose workflow is unavailable); else UNCHECKED.
+		npmJob := npmRes.Resolve(func(dir string) bool {
+			return rj == nil || rj.Mentions(dir) || logErr == nil && strings.Contains(log, dir)
+		})
 		// A missing or unreadable lockfile matters only to a job that installed: an UNCHECKED-only
 		// result is dropped when the log was read, shows no install and no package-manager call
 		// (output may be silenced), and the job (every job when unidentified) names no install.
-		noInstall := npmRes.Status == model.Unchecked && logErr == nil && !installLogRe.MatchString(log) &&
+		noInstall := npmJob.Status == model.Unchecked && logErr == nil && !installLogRe.MatchString(log) &&
 			!workflow.CallsPackageManager(log) && len(installs) == 0 && (rj == nil || !rj.InstallsNPM())
-		if npmRes.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logErr == nil && installLogRe.MatchString(log)) {
-			f.Status = model.Worse(f.Status, npmRes.Status)
-			f.Evidence = append(f.Evidence, npmRes.Evidence...)
+		// Otherwise drop npm evidence only on positive evidence the job cannot install packages.
+		if npmJob.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logErr == nil && installLogRe.MatchString(log)) {
+			f.Status = model.Worse(f.Status, npmJob.Status)
+			f.Evidence = append(f.Evidence, npmJob.Evidence...)
 		}
 		for _, in := range installs {
 			if in.Dynamic && len(s.inc.NPM) > 0 {

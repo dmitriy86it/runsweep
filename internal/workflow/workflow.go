@@ -23,6 +23,7 @@ type Job struct {
 	Call           string   // job-level `uses:`: the reusable workflow this job calls
 	Runs           []string // `run:` scripts
 	Scripts        []string // actions/github-script `script:` inputs
+	Inputs         []string // working-directory (step, job and workflow defaults) and step `with:` values
 	Secrets        []string
 	InheritSecrets bool
 	IDTokenWrite   bool
@@ -113,6 +114,7 @@ func Parse(b []byte) (*Workflow, error) {
 	w := &Workflow{Jobs: map[string]*Job{}}
 	w.globalSecrets, w.globalDynamic = secretsIn(get(doc, "env"))
 	wfIDToken := idToken(get(doc, "permissions"))
+	wfDir := scalar(get(get(get(doc, "defaults"), "run"), "working-directory"))
 	jobs := get(doc, "jobs")
 	if jobs == nil || jobs.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("workflow yaml: no jobs")
@@ -135,6 +137,11 @@ func Parse(b []byte) (*Workflow, error) {
 			j.Environment = env.Value != "" || len(env.Content) > 0
 		}
 		j.InheritSecrets = dyn || scalar(get(jn, "secrets")) == "inherit"
+		for _, d := range []string{wfDir, scalar(get(get(get(jn, "defaults"), "run"), "working-directory"))} {
+			if d != "" {
+				j.Inputs = append(j.Inputs, d)
+			}
+		}
 		if steps := get(jn, "steps"); steps != nil {
 			for _, st := range steps.Content {
 				if u := scalar(get(st, "uses")); u != "" {
@@ -148,6 +155,16 @@ func Parse(b []byte) (*Workflow, error) {
 				}
 				if r := scalar(get(st, "run")); r != "" {
 					j.Runs = append(j.Runs, r)
+				}
+				if d := scalar(get(st, "working-directory")); d != "" {
+					j.Inputs = append(j.Inputs, d)
+				}
+				if with := get(st, "with"); with != nil && with.Kind == yaml.MappingNode {
+					for i := 1; i < len(with.Content); i += 2 {
+						if v := scalar(with.Content[i]); v != "" {
+							j.Inputs = append(j.Inputs, v)
+						}
+					}
 				}
 			}
 		}
@@ -243,6 +260,11 @@ func (j *Job) InstallsNPM() bool {
 		return true
 	}
 	return len(j.RunInstalls()) > 0
+}
+
+// Mentions reports whether the job's `run:` scripts, working directories or `with:` inputs name dir.
+func (j *Job) Mentions(dir string) bool {
+	return slices.ContainsFunc(slices.Concat(j.Runs, j.Inputs), func(s string) bool { return strings.Contains(s, dir) })
 }
 
 // CallsPackageManager reports whether s calls npm, npx, yarn, pnpm, pnpx, bun or bunx as a command
@@ -434,6 +456,7 @@ func (w *Workflow) Union() *Job {
 		u.Uses = append(u.Uses, j.Uses...)
 		u.Runs = append(u.Runs, j.Runs...)
 		u.Scripts = append(u.Scripts, j.Scripts...)
+		u.Inputs = append(u.Inputs, j.Inputs...)
 		u.Secrets = append(u.Secrets, j.Secrets...)
 		u.InheritSecrets = u.InheritSecrets || j.InheritSecrets
 		u.Environment = u.Environment || j.Environment
