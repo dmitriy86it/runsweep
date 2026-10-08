@@ -248,7 +248,7 @@ func TestScanWarnings(t *testing.T) {
 	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 0 {
 		t.Fatalf("code %d: %s", code, errb.String())
 	}
-	for _, want := range []string{retention, "warning: 1 jobs could not be checked (UNCHECKED)", "o/a: 1 run to check\n"} {
+	for _, want := range []string{retention, "warning: 1 job could not be checked (UNCHECKED)", "o/a: 1 run to check\n"} {
 		if !strings.Contains(errb.String(), want) {
 			t.Errorf("stderr lacks %q:\n%s", want, errb.String())
 		}

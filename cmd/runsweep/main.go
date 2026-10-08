@@ -219,7 +219,11 @@ func scanCmd(d deps) *cobra.Command {
 			}
 			warn := func(f string, a ...any) { _, _ = fmt.Fprintf(c.ErrOrStderr(), "warning: "+f+"\n", a...) }
 			if n := res.Count(model.Unchecked); n > 0 {
-				warn("%d jobs could not be checked (UNCHECKED)", n)
+				noun := "jobs"
+				if n == 1 {
+					noun = "job"
+				}
+				warn("%d %s could not be checked (UNCHECKED)", n, noun)
 			}
 			if res.RunsScanned == 0 {
 				warn("no workflow runs in the window")

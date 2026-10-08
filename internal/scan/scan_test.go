@@ -738,7 +738,9 @@ func TestScanMutuallyRecursiveUnionStopsAtBudget(t *testing.T) {
 			budget++
 		}
 	}
-	if fd.Status != model.Unchecked || len(fd.Evidence) >= 60 || budget != 1 {
+	if fd.Status != model.Unchecked || len(fd.Evidence) >= 60 || budget != 1 || slices.ContainsFunc(fd.Evidence, func(e model.Evidence) bool {
+		return strings.Contains(e.Detail, `job ""`)
+	}) {
 		t.Fatalf("status %v, %d evidence entries, budget note %d times: %+v", fd.Status, len(fd.Evidence), budget, fd.Evidence)
 	}
 }
@@ -793,5 +795,16 @@ func TestScanRemoteCalleeHardErrorCached(t *testing.T) {
 	res, err := Run(context.Background(), countTree{f, &n}, npmOnly, Options{Repos: []string{"o/a"}})
 	if err != nil || len(res.Findings) != 2 || !hasNote(res.Findings[1], "unavailable (boom)") || n != 1 {
 		t.Fatalf("Tree called %d times, %v %+v", n, err, res.Findings)
+	}
+}
+
+// A cycle cut by the depth cap leaves the exposure incomplete: never CLEAN.
+func TestScanDepthCapIsUnchecked(t *testing.T) {
+	f := callFixture("./.github/workflows/ci.yml", "deploy / deploy / deploy / deploy / deploy / deploy")
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1] // workflow only: no npm hit
+	f.Logs[10] = "2026-03-31T01:00:00Z Download action repository 'actions/checkout@v4' (SHA:1111111111111111111111111111111111111111)\n"
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: inc.Actions}
+	if fd := scanOne(t, f, actOnly); fd.Status != model.Unchecked || !hasNote(fd, "nested more than 10 levels deep") {
+		t.Fatalf("%+v", fd)
 	}
 }

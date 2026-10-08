@@ -393,6 +393,7 @@ func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workfl
 		uses := c.job.Call
 		c.calls = append(c.calls, uses)
 		if depth >= maxCallDepth {
+			c.status = model.Unchecked
 			c.notes = append(c.notes, note("called workflow %s is nested more than %d levels deep — not read", uses, maxCallDepth))
 			return c, nil
 		}
@@ -426,7 +427,11 @@ func (s *scanner) follow(ctx context.Context, home, repo, sha string, wf *workfl
 		union := cj == nil
 		if union {
 			cj, c.matched = cw.Union(), false
-			c.notes = append(c.notes, note("job %q not identified in called workflow %s — exposure covers all its jobs", name, uses))
+			if name == "" { // a union member's call: no API job name to match
+				c.notes = append(c.notes, note("called workflow %s: job not identified — exposure covers all its jobs", uses))
+			} else {
+				c.notes = append(c.notes, note("job %q not identified in called workflow %s — exposure covers all its jobs", name, uses))
+			}
 		}
 		c.wf, c.job = c.wf.Through(c.job, cw, cj)
 		if union { // the union's members that call workflows are followed too
