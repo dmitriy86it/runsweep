@@ -86,6 +86,18 @@ func TestFindJob(t *testing.T) {
 	}
 }
 
+// A name the regexp engine rejects (invalid UTF-8) or an overlong one never panics or matches.
+func TestFindJobBadTemplateName(t *testing.T) {
+	long := strings.Repeat("x", 1025) + " ${{ matrix.n }}"
+	w := &Workflow{Jobs: map[string]*Job{"bad": {ID: "bad", Name: "a\xff ${{ matrix.n }}"}, "long": {ID: "long", Name: long}}}
+	if j, ok := w.FindJob("a\xff 1"); ok {
+		t.Fatalf("matched %v", j)
+	}
+	if j, ok := w.FindJob(strings.Repeat("x", 1025) + " 1"); ok {
+		t.Fatalf("matched %v", j)
+	}
+}
+
 func TestWriteAllGivesIDToken(t *testing.T) {
 	w, _ := Parse([]byte("on: push\npermissions: write-all\njobs:\n  a:\n    runs-on: x\n    steps: [{run: echo}]\n"))
 	if !w.Exposure(w.Jobs["a"]).IDTokenWrite {

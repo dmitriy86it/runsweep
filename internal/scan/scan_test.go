@@ -247,8 +247,56 @@ func TestScanNPMKeepsEvidenceBeforeSoftError(t *testing.T) {
 
 func TestScanHardTreeErrorPropagates(t *testing.T) {
 	src := errSrc{Fake: fixture(), treeErr: errors.New("boom")}
-	if _, err := Run(context.Background(), src, inc, Options{Repos: []string{"o/a"}}); err == nil {
+	res, err := Run(context.Background(), src, inc, Options{Repos: []string{"o/a"}})
+	if err == nil {
 		t.Fatal("want error")
+	}
+	// the partial result keeps the run, UNCHECKED with the error, never dropped
+	if res == nil || len(res.Findings) != 1 || res.Findings[0].Status != model.Unchecked || !hasNote(res.Findings[0], "boom") {
+		t.Fatalf("%+v", res)
+	}
+}
+
+type runsErrSrc struct {
+	*sourcetest.Fake
+	err map[string]error // repo -> ListRuns error
+}
+
+func (s runsErrSrc) ListRuns(ctx context.Context, repo string, start, end time.Time) ([]source.Run, error) {
+	if err := s.err[repo]; err != nil {
+		return nil, err
+	}
+	return s.Fake.ListRuns(ctx, repo, start, end)
+}
+
+func TestScanHardErrorKeepsPartialResult(t *testing.T) {
+	for _, tc := range []struct {
+		err      error
+		failNote string
+	}{{errors.New("boom"), "boom"}, {context.Canceled, "interrupted: not scanned"}} {
+		src := runsErrSrc{fixture(), map[string]error{"o/b": tc.err}}
+		res, err := Run(context.Background(), src, inc, Options{Repos: []string{"o/c", "o/b", "o/a"}})
+		if !errors.Is(err, tc.err) || res == nil {
+			t.Fatalf("%v %+v", err, res)
+		}
+		want := []model.Skip{{Repo: "o/b", Reason: tc.failNote}, {Repo: "o/c", Reason: "interrupted: not scanned"}}
+		if res.Count(model.Affected) != 1 || res.ReposTargeted != 3 || !reflect.DeepEqual(res.Skipped, want) {
+			t.Fatalf("%+v", res)
+		}
+	}
+}
+
+type panicSrc struct{ *sourcetest.Fake }
+
+func (panicSrc) ListJobs(context.Context, string, int64) ([]source.Job, error) {
+	panic("kaboom\x1b[2J")
+}
+
+func TestScanPanicIsUnchecked(t *testing.T) {
+	res, err := Run(context.Background(), panicSrc{fixture()}, inc, Options{Repos: []string{"o/a"}})
+	if err != nil || len(res.Findings) != 1 || res.Findings[0].Status != model.Unchecked ||
+		!hasNote(res.Findings[0], "internal error: kaboom[2J") {
+		t.Fatalf("%v %+v", err, res)
 	}
 }
 

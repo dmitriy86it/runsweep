@@ -28,7 +28,15 @@ import (
 
 var version, commit, date = "dev", "none", "unknown"
 
-var errFindings = errors.New("affected or possibly affected jobs found")
+// exitCode ends the command with that code; its message has already been printed.
+type exitCode int
+
+func (e exitCode) Error() string { return fmt.Sprintf("exit %d", int(e)) }
+
+const (
+	exitFindings   exitCode = 1 // AFFECTED or POSSIBLE jobs
+	exitIncomplete exitCode = 3 // UNCHECKED jobs, skipped repositories or an interrupted scan
+)
 
 type deps struct {
 	newSource   func(token string) (source.Source, error)
@@ -140,12 +148,17 @@ func run(args []string, stdout, stderr io.Writer, d deps) int {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	go func() {
+		<-ctx.Done()
+		stop() // a second Ctrl-C kills the process instead of waiting for the partial report
+	}()
 	err := root.ExecuteContext(ctx)
+	var code exitCode
 	switch {
 	case err == nil:
 		return 0
-	case errors.Is(err, errFindings):
-		return 1
+	case errors.As(err, &code):
+		return int(code)
 	case errors.Is(err, context.Canceled):
 		_, _ = fmt.Fprintln(stderr, "error: interrupted")
 		return 2
@@ -161,6 +174,14 @@ func scanCmd(d deps) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "scan",
 		Short: "Scan workflow runs in the incident window",
+		Long: `Scan workflow runs in the incident window.
+
+Exit codes:
+  0  every job checked, nothing AFFECTED or POSSIBLE
+  1  at least one job AFFECTED or POSSIBLE
+  2  error (bad flags or incident, no token, token rejected, nothing could be scanned)
+  3  nothing AFFECTED or POSSIBLE, but not everything was checked: UNCHECKED jobs,
+     skipped repositories, or the scan was interrupted (Ctrl-C, API error)`,
 		Example: `  runsweep scan --incident axios-2026-03 --repo owner/name
   runsweep scan --incident ./incident.yaml --org my-org --format json`,
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -213,9 +234,9 @@ func scanCmd(d deps) *cobra.Command {
 				return err
 			}
 			logf := func(f string, a ...any) { _, _ = fmt.Fprintln(c.ErrOrStderr(), report.Clean(fmt.Sprintf(f, a...))) }
-			res, err := scan.Run(c.Context(), src, inc, scan.Options{Repos: repos, Org: org, Lookback: back, Logf: logf})
-			if err != nil {
-				return err
+			res, scanErr := scan.Run(c.Context(), src, inc, scan.Options{Repos: repos, Org: org, Lookback: back, Logf: logf})
+			if res == nil { // nothing scanned: listing the organization failed
+				return stopped(c.ErrOrStderr(), scanErr, false)
 			}
 			res.RetentionWarning = inc.Window.Start.Before(time.Now().Add(-90 * 24 * time.Hour))
 			switch format {
@@ -238,11 +259,15 @@ func scanCmd(d deps) *cobra.Command {
 				}
 				warn("%d %s could not be checked (UNCHECKED)", n, noun)
 			}
-			if res.RunsScanned == 0 {
+			if res.RunsScanned == 0 && scanErr == nil {
 				warn("no workflow runs in the window")
 			}
 			if res.RetentionWarning {
 				warn("%s", report.RetentionNote)
+			}
+			findings := res.Count(model.Affected)+res.Count(model.Possible) > 0
+			if scanErr != nil {
+				return stopped(c.ErrOrStderr(), scanErr, findings)
 			}
 			if res.ReposTargeted == 0 {
 				return errors.New("no repositories to scan (does the token have access to the organization?)")
@@ -257,8 +282,11 @@ func scanCmd(d deps) *cobra.Command {
 					return errors.New("no repository could be scanned (missing access?)")
 				}
 			}
-			if res.Count(model.Affected)+res.Count(model.Possible) > 0 {
-				return errFindings
+			if findings {
+				return exitFindings
+			}
+			if res.Count(model.Unchecked) > 0 || len(res.Skipped) > 0 {
+				return exitIncomplete
 			}
 			return nil
 		},
@@ -272,6 +300,23 @@ func scanCmd(d deps) *cobra.Command {
 	c.Flags().StringVar(&lookback, "lookback", "7d", "also check re-runs of runs created this long before the window (max 30d)")
 	_ = c.MarkFlagRequired("incident")
 	return c
+}
+
+// stopped reports the error that ended a scan early, after its partial report. Findings still
+// exit 1; a rejected token exits 2 (the error is returned for run to print); otherwise 3.
+func stopped(stderr io.Writer, err error, findings bool) error {
+	if errors.Is(err, source.ErrAuth) && !findings {
+		return err
+	}
+	msg := "interrupted"
+	if !errors.Is(err, context.Canceled) {
+		msg = report.Clean(err.Error())
+	}
+	_, _ = fmt.Fprintln(stderr, "error:", msg)
+	if findings {
+		return exitFindings
+	}
+	return exitIncomplete
 }
 
 func importCmd(d deps) *cobra.Command {

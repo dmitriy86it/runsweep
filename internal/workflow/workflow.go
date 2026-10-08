@@ -118,6 +118,9 @@ func (w *Workflow) FindJob(apiName string) (*Job, bool) {
 	return nil, false
 }
 
+// maxTemplateName caps the length of a templated job name matched as a pattern.
+const maxTemplateName = 1024
+
 // findStaged: exact, then templated names. found=true with nil job means ambiguous.
 func (w *Workflow) findStaged(name string) (*Job, bool) {
 	names := []string{name}
@@ -147,8 +150,8 @@ func (w *Workflow) findStaged(name string) (*Job, bool) {
 	bestLen, tie := -1, false
 	for _, id := range ids {
 		j := w.Jobs[id]
-		if !strings.Contains(j.Name, "${{") {
-			continue
+		if !strings.Contains(j.Name, "${{") || len(j.Name) > maxTemplateName {
+			continue // an overlong name is not matched by template: it would build a huge regexp
 		}
 		lit := tplRe.ReplaceAllString(j.Name, "")
 		if strings.TrimSpace(lit) == "" {
@@ -161,7 +164,10 @@ func (w *Workflow) findStaged(name string) (*Job, bool) {
 			}
 			pat += regexp.QuoteMeta(part)
 		}
-		re := regexp.MustCompile(pat + "$")
+		re, err := regexp.Compile(pat + "$")
+		if err != nil {
+			continue // e.g. invalid UTF-8 from the workflow file: no match
+		}
 		for _, n := range names {
 			if re.MatchString(n) {
 				if len(lit) > bestLen {
