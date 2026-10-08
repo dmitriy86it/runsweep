@@ -110,12 +110,13 @@ func TestMalformedDownloadRecords(t *testing.T) {
 		log  string
 		want model.Status
 	}{
-		"empty immutable SHA":    {imm + "2025-03-14T18:01:02.5Z Source commit SHA: \n2025-03-14T18:01:02.6Z ##[endgroup]\n", model.Unchecked},
-		"unknown line between":   {imm + "2025-03-14T18:01:02.3Z Something new: x\n2025-03-14T18:01:02.5Z Source commit SHA: " + sha + "\n", model.Affected},
-		"no SHA line at all":     {imm + "2025-03-14T18:01:02.6Z ##[endgroup]\n", model.Unchecked},
-		"empty repository SHA":   {"2025-03-14T18:01:02Z Download action repository 'tj-actions/changed-files@v45' (SHA:)\n", model.Unchecked},
-		"invalid repository SHA": {"2025-03-14T18:01:02Z Download action repository 'tj-actions/changed-files@v45' (SHA:XYZ)\n", model.Unchecked},
-		"other repo without SHA": {"2025-03-14T18:01:02Z Download action repository 'actions/checkout@v4' (SHA:)\n", model.Clean},
+		"empty immutable SHA":                   {imm + "2025-03-14T18:01:02.5Z Source commit SHA: \n2025-03-14T18:01:02.6Z ##[endgroup]\n", model.Unchecked},
+		"unknown line between":                  {imm + "2025-03-14T18:01:02.3Z Something new: x\n2025-03-14T18:01:02.5Z Source commit SHA: " + sha + "\n", model.Affected},
+		"SHA past the 3 lines after the header": {imm + "2025-03-14T18:01:02.3Z a\n2025-03-14T18:01:02.3Z b\n2025-03-14T18:01:02.3Z c\n2025-03-14T18:01:02.5Z Source commit SHA: " + sha + "\n", model.Unchecked},
+		"no SHA line at all":                    {imm + "2025-03-14T18:01:02.6Z ##[endgroup]\n", model.Unchecked},
+		"empty repository SHA":                  {"2025-03-14T18:01:02Z Download action repository 'tj-actions/changed-files@v45' (SHA:)\n", model.Unchecked},
+		"invalid repository SHA":                {"2025-03-14T18:01:02Z Download action repository 'tj-actions/changed-files@v45' (SHA:XYZ)\n", model.Unchecked},
+		"other repo without SHA":                {"2025-03-14T18:01:02Z Download action repository 'actions/checkout@v4' (SHA:)\n", model.Clean},
 	} {
 		ds := ParseDownloads(c.log)
 		st, ev := MatchLog(c.log, bad)
