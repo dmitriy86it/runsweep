@@ -177,8 +177,8 @@ func note(format string, args ...any) model.Evidence {
 
 func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]model.Finding, int, error) {
 	start := s.inc.Window.Start
-	// Listed through the lookback and every attempt ended before the window: nothing ran in it.
-	if before(run.StartedAt, start) && before(run.UpdatedAt, start) {
+	// Listed through the lookback and finished before the window: nothing ran in it.
+	if run.Status == "completed" && before(run.StartedAt, start) && before(run.UpdatedAt, start) {
 		return nil, 0, nil
 	}
 	jobs, err := s.src.ListJobs(ctx, repo, run.ID)
@@ -189,8 +189,9 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 	if err != nil {
 		return nil, 0, err
 	}
-	// Jobs of earlier attempts that started before the window did not run in it.
-	jobs = slices.DeleteFunc(jobs, func(j source.Job) bool { return before(j.StartedAt, start) })
+	// Jobs that started and ended before the window did not run in it; a zero CompletedAt
+	// (still running or unknown) keeps the job.
+	jobs = slices.DeleteFunc(jobs, func(j source.Job) bool { return before(j.StartedAt, start) && before(j.CompletedAt, start) })
 	if len(jobs) == 0 {
 		return nil, 0, nil
 	}

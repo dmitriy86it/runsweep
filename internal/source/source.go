@@ -26,7 +26,8 @@ type Run struct {
 	CreatedAt time.Time
 	StartedAt time.Time // start of the latest attempt (run_started_at); zero if unknown
 	UpdatedAt time.Time
-	Attempt   int // latest attempt (run_attempt); 0 means the API omitted it
+	Attempt   int    // latest attempt (run_attempt); 0 means the API omitted it
+	Status    string // "completed" once finished; empty if the API omitted it
 }
 
 // Job is a job of a workflow run.
@@ -35,9 +36,10 @@ type Job struct {
 	Name string // display name from the API
 	URL  string
 	// Conclusion from the API ("success", "skipped", ...); empty while running.
-	Conclusion string
-	StartedAt  time.Time // zero if the job never started
-	Attempt    int       // run attempt this job belongs to
+	Conclusion  string
+	StartedAt   time.Time // zero if the job never started
+	CompletedAt time.Time // zero while running or if unknown
+	Attempt     int       // run attempt this job belongs to
 }
 
 // TreeEntry is one entry of a git tree.

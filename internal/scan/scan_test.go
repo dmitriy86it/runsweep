@@ -367,7 +367,7 @@ func rerun() *sourcetest.Fake {
 	r := &f.Runs["o/a"][0]
 	r.CreatedAt, r.StartedAt, r.UpdatedAt, r.Attempt = t0.Add(-48*time.Hour), t0, t0.Add(10*time.Minute), 2
 	f.Jobs[1] = []source.Job{
-		{ID: 20, Name: "build", Attempt: 1, StartedAt: t0.Add(-48 * time.Hour)},
+		{ID: 20, Name: "build", Attempt: 1, StartedAt: t0.Add(-48 * time.Hour), CompletedAt: t0.Add(-47 * time.Hour)},
 		{ID: 10, Name: "build", Attempt: 2, StartedAt: t0},
 		{ID: 11, Name: "lint", Attempt: 2, StartedAt: t0},
 	}
@@ -408,7 +408,7 @@ func (s noJobs) ListJobs(_ context.Context, _ string, id int64) ([]source.Job, e
 func TestScanRunBeforeWindowSkipsJobs(t *testing.T) {
 	f := fixture()
 	r := &f.Runs["o/a"][0]
-	r.CreatedAt, r.StartedAt, r.UpdatedAt, r.Attempt = t0.Add(-72*time.Hour), t0.Add(-72*time.Hour), t0.Add(-71*time.Hour), 1
+	r.CreatedAt, r.StartedAt, r.UpdatedAt, r.Attempt, r.Status = t0.Add(-72*time.Hour), t0.Add(-72*time.Hour), t0.Add(-71*time.Hour), 1, "completed"
 	res, err := Run(context.Background(), noJobs{f, t}, inc, Options{Repos: []string{"o/a"}, Lookback: 7 * 24 * time.Hour})
 	if err != nil || res.RunsScanned != 0 || res.JobsScanned != 0 || len(res.Findings) != 0 {
 		t.Fatalf("%+v %v", res, err)
@@ -426,5 +426,64 @@ func TestScanZeroStartTimesAreChecked(t *testing.T) {
 	}
 	if res.RunsScanned != 1 || res.JobsScanned != 2 || res.Count(model.Affected) != 1 {
 		t.Fatalf("unknown start time must be checked, never dropped: %+v", res)
+	}
+}
+
+func TestScanJobRunningIntoWindowIsChecked(t *testing.T) {
+	f := fixture()
+	f.Jobs[1] = []source.Job{
+		{ID: 10, Name: "build", StartedAt: inc.Window.Start.Add(-5 * time.Minute), CompletedAt: inc.Window.Start.Add(5 * time.Minute)},
+		{ID: 11, Name: "lint", StartedAt: inc.Window.Start.Add(-5 * time.Minute)}, // still running: no completion time
+		{ID: 12, Name: "lint", StartedAt: inc.Window.Start.Add(-5 * time.Minute), CompletedAt: inc.Window.Start.Add(-time.Minute)},
+		{ID: 13, Name: "lint", StartedAt: inc.Window.Start}, // boundary: kept
+	}
+	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}})
+	if err != nil || res.JobsScanned != 3 {
+		t.Fatalf("jobs 10, 11 and 13 must be checked, 12 ended before the window: %+v %v", res, err)
+	}
+}
+
+type listedJobs struct {
+	*sourcetest.Fake
+	calls *int
+}
+
+func (s listedJobs) ListJobs(ctx context.Context, repo string, id int64) ([]source.Job, error) {
+	*s.calls++
+	return s.Fake.ListJobs(ctx, repo, id)
+}
+
+func TestScanInProgressRunBeforeWindowStillListsJobs(t *testing.T) {
+	f := fixture()
+	r := &f.Runs["o/a"][0]
+	r.CreatedAt, r.StartedAt, r.UpdatedAt, r.Status = t0.Add(-72*time.Hour), t0.Add(-72*time.Hour), t0.Add(-71*time.Hour), "in_progress"
+	calls := 0
+	_, err := Run(context.Background(), listedJobs{f, &calls}, inc, Options{Repos: []string{"o/a"}, Lookback: 7 * 24 * time.Hour})
+	if err != nil || calls != 1 {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+}
+
+type goneJobs struct{ *sourcetest.Fake }
+
+func (goneJobs) ListJobs(context.Context, string, int64) ([]source.Job, error) {
+	return nil, source.ErrGone
+}
+
+func TestScanRunLevelFindingKeepsRunAttempt(t *testing.T) {
+	f := fixture()
+	f.Runs["o/a"][0].Attempt = 2
+	res, err := Run(context.Background(), goneJobs{f}, inc, Options{Repos: []string{"o/a"}})
+	if err != nil || len(res.Findings) != 1 || res.Findings[0].Run.Attempt != 2 {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+func TestScanFullyFilteredRunNotCounted(t *testing.T) {
+	f := fixture()
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "build", StartedAt: t0.Add(-48 * time.Hour), CompletedAt: t0.Add(-47 * time.Hour)}}
+	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}})
+	if err != nil || res.RunsScanned != 0 || res.JobsScanned != 0 {
+		t.Fatalf("%+v %v", res, err)
 	}
 }
