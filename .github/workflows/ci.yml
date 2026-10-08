@@ -4,9 +4,15 @@ on:
   pull_request:
   schedule: [{cron: '17 4 * * 1'}]
 permissions: {contents: read}
+concurrency: {group: "ci-${{ github.workflow }}-${{ github.ref }}", cancel-in-progress: "${{ github.event_name == 'pull_request' }}"}
 jobs:
   test:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' # the weekly run is for fuzzing
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix: {os: [ubuntu-latest, macos-latest, windows-latest]}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
@@ -14,10 +20,16 @@ jobs:
         with: {go-version-file: go.mod}
       - run: go mod verify
       - run: go vet ./...
-      - run: go test -race ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - if: runner.os == 'Linux'
+        run: go test -race ./...
+      - if: runner.os != 'Linux'
+        run: go test ./...
+      - if: runner.os == 'Linux'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
   lint:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
@@ -27,8 +39,11 @@ jobs:
         with: {version: v2.14.0}
   zizmor:
     # fork PRs get a read-only token: SARIF upload would fail
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: >-
+      github.event_name != 'schedule' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions: {contents: read, security-events: write}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,5 +73,5 @@ jobs:
         with: {persist-credentials: false}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: {go-version-file: go.mod}
-      - run: go test -run='^$' -fuzz="^${TARGET}\$" -fuzztime=30s "$PKG"
+      - run: go test -run='^$' -fuzz="^${TARGET}\$" -fuzztime=30s -fuzzminimizetime=5s "$PKG"
         env: {PKG: '${{ matrix.pkg }}', TARGET: '${{ matrix.target }}'}

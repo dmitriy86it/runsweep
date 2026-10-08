@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -649,6 +650,9 @@ func TestWriteAtomicCleansUpAndReplaces(t *testing.T) {
 	}
 	if m, _ := filepath.Glob(filepath.Join(dir, ".runsweep-import-*")); len(m) != 0 {
 		t.Fatalf("temp left behind: %v", m)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes: Windows has only a read-only attribute and does not rename over a read-only file")
 	}
 	ro := filepath.Join(dir, "ro.yaml")
 	if err := os.WriteFile(ro, []byte("old"), 0o400); err != nil {
