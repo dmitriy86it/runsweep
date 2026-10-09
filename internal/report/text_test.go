@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/model"
 )
 
 func TestText(t *testing.T) {

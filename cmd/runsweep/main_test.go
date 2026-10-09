@@ -18,10 +18,10 @@ import (
 
 	"errors"
 
-	"github.com/dmitriy86it/runsweep/internal/importer"
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/source"
-	"github.com/dmitriy86it/runsweep/internal/source/sourcetest"
+	"github.com/runsweep/runsweep/internal/importer"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/source"
+	"github.com/runsweep/runsweep/internal/source/sourcetest"
 )
 
 func fakeDeps(f *sourcetest.Fake) deps {

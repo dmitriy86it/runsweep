@@ -7,8 +7,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/model"
 )
 
 var statusColors = map[model.Status]string{model.Affected: "\x1b[31m", model.Possible: "\x1b[33m", model.Unchecked: "\x1b[34m"}

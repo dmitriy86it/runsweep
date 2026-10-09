@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/model"
-	"github.com/dmitriy86it/runsweep/internal/source"
-	"github.com/dmitriy86it/runsweep/internal/source/sourcetest"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/source"
+	"github.com/runsweep/runsweep/internal/source/sourcetest"
 )
 
 const actionSHA = "0e58ed8671d6b60d0890c21b07f8835ace038e67"

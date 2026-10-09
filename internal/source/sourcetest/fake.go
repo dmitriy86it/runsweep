@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/source"
+	"github.com/runsweep/runsweep/internal/source"
 )
 
 // Fake is an in-memory source.Source for tests.

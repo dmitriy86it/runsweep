@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/model"
-	"github.com/dmitriy86it/runsweep/internal/source"
-	"github.com/dmitriy86it/runsweep/internal/source/sourcetest"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/source"
+	"github.com/runsweep/runsweep/internal/source/sourcetest"
 )
 
 var bad = []incident.NPMPackage{{Name: "axios", Versions: []string{"1.14.1"}}}

@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/model"
 )
 
 // Download is an action download recorded in a job log.

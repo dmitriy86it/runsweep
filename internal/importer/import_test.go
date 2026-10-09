@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/incident"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")

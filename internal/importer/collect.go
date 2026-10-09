@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dmitriy86it/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/model"
 )
 
 // found accumulates what the importer extracted from OSV records and flags.

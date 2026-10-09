@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/source"
 	"github.com/google/go-github/v92/github"
+	"github.com/runsweep/runsweep/internal/source"
 )
 
 const (

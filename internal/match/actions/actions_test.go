@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/model"
 )
 
 const sha = "0e58ed8671d6b60d0890c21b07f8835ace038e67"

@@ -19,13 +19,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/gh"
-	"github.com/dmitriy86it/runsweep/internal/importer"
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/model"
-	"github.com/dmitriy86it/runsweep/internal/report"
-	"github.com/dmitriy86it/runsweep/internal/scan"
-	"github.com/dmitriy86it/runsweep/internal/source"
+	"github.com/runsweep/runsweep/internal/gh"
+	"github.com/runsweep/runsweep/internal/importer"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/report"
+	"github.com/runsweep/runsweep/internal/scan"
+	"github.com/runsweep/runsweep/internal/source"
 	"github.com/spf13/cobra"
 )
 

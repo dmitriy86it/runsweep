@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/source"
+	"github.com/runsweep/runsweep/internal/source"
 )
 
 func newTest(t *testing.T, h http.Handler) *Client {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/incident"
 )
 
 // ErrNothing means no npm version and no action was found.

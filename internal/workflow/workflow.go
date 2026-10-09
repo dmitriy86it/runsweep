@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dmitriy86it/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/model"
 	"go.yaml.in/yaml/v3"
 )
 
