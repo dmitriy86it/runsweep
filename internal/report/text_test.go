@@ -123,6 +123,21 @@ func TestTextSeenInAttempt(t *testing.T) {
 	}
 }
 
+func TestTextSeenInOneRepoDropsRepo(t *testing.T) {
+	inc, res := sample()
+	res.ReposTargeted = 1
+	var b bytes.Buffer
+	if err := Text(&b, inc, res, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "seen in: #42 build attempt 2\n") || !strings.Contains(b.String(), "AFFECTED   o/app") {
+		t.Fatal(b.String())
+	}
+	if res.Rotation[0].Runs[0].Repo != "o/app" {
+		t.Fatal("Text modified the result")
+	}
+}
+
 func TestRepoLevelFindingHasNoRunNumber(t *testing.T) {
 	inc, res := sample()
 	res.Findings = []model.Finding{{Run: model.RunRef{Repo: "o/big"}, Status: model.Unchecked,

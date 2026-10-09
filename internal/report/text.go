@@ -46,9 +46,18 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 	for _, it := range r.Rotation {
 		width = max(width, utf8.RuneCountInString(Clean(it.Name)))
 	}
+	oneRepo := r.ReposTargeted == 1
 	for i, it := range r.Rotation {
+		runs := it.Runs
+		if oneRepo { // Findings name the repository; "seen in" fits one terminal line
+			runs = make([]model.RunRef, len(it.Runs))
+			for j, ref := range it.Runs {
+				ref.Repo = ""
+				runs[j] = ref
+			}
+		}
 		fmt.Fprintf(&b, "  %-3d%-*s  %s\n", i+1, width, Clean(it.Name), tier(it.Tier))
-		fmt.Fprintf(&b, "     %s\n     seen in: %s\n", Clean(it.Reason), seenIn(it.Runs, Clean))
+		fmt.Fprintf(&b, "     %s\n     seen in: %s\n", Clean(it.Reason), seenIn(runs, Clean))
 	}
 
 	b.WriteString("\nFindings\n")
@@ -85,7 +94,7 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		}
 		b.WriteString("\nSkipped repositories: " + strings.Join(parts, ", ") + "\n")
 	}
-	b.WriteString("\nLimits: see --format md\nFull report: --format md\n")
+	b.WriteString("\nLimits and the full report: --format md\n")
 	_, err := io.WriteString(w, b.String())
 	return err
 }

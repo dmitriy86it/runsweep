@@ -19,5 +19,4 @@ Findings
 
 Skipped repositories: o/private (no access (HTTP 403/404))
 
-Limits: see --format md
-Full report: --format md
+Limits and the full report: --format md
