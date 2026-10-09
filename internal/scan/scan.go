@@ -13,14 +13,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/match/actions"
-	"github.com/dmitriy86it/runsweep/internal/match/npm"
-	"github.com/dmitriy86it/runsweep/internal/model"
-	"github.com/dmitriy86it/runsweep/internal/report"
-	"github.com/dmitriy86it/runsweep/internal/rotate"
-	"github.com/dmitriy86it/runsweep/internal/source"
-	"github.com/dmitriy86it/runsweep/internal/workflow"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/match/actions"
+	"github.com/runsweep/runsweep/internal/match/npm"
+	"github.com/runsweep/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/report"
+	"github.com/runsweep/runsweep/internal/rotate"
+	"github.com/runsweep/runsweep/internal/source"
+	"github.com/runsweep/runsweep/internal/workflow"
 )
 
 // installLogRe matches a job log line of a package install by npm, pnpm, yarn v1, yarn berry or bun.

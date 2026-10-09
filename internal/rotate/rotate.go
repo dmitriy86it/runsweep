@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dmitriy86it/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/model"
 )
 
 // Name-based tiers are a heuristic; the report says so.

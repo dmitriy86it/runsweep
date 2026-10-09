@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmitriy86it/runsweep/internal/gh"
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/gh"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/model"
 	"gopkg.in/dnaeon/go-vcr.v4/pkg/cassette"
 	"gopkg.in/dnaeon/go-vcr.v4/pkg/recorder"
 )
 
-// TestDemoCassette replays a real scan of dmitriy86it/runsweep-demo against examples/drill.yaml.
+// TestDemoCassette replays a real scan of runsweep-demo (recorded under its old owner dmitriy86it) against examples/drill.yaml.
 // Record with: RUNSWEEP_RECORD=1 GITHUB_TOKEN=$(gh auth token) go test ./internal/scan -run Demo
 func TestDemoCassette(t *testing.T) {
 	mode := recorder.ModeReplayOnly

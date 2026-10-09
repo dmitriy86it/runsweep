@@ -11,9 +11,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dmitriy86it/runsweep/internal/incident"
-	"github.com/dmitriy86it/runsweep/internal/model"
-	"github.com/dmitriy86it/runsweep/internal/source"
+	"github.com/runsweep/runsweep/internal/incident"
+	"github.com/runsweep/runsweep/internal/model"
+	"github.com/runsweep/runsweep/internal/source"
 	"go.yaml.in/yaml/v3"
 )
 

@@ -1,25 +1,25 @@
 # runsweep
 
-[![ci](https://github.com/dmitriy86it/runsweep/actions/workflows/ci.yml/badge.svg)](https://github.com/dmitriy86it/runsweep/actions/workflows/ci.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dmitriy86it/runsweep/badge)](https://scorecard.dev/viewer/?uri=github.com/dmitriy86it/runsweep)
+[![ci](https://github.com/runsweep/runsweep/actions/workflows/ci.yml/badge.svg)](https://github.com/runsweep/runsweep/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/runsweep/runsweep/badge)](https://scorecard.dev/viewer/?uri=github.com/runsweep/runsweep)
 
 Did the worm touch my CI? Retroactive blast radius for GitHub Actions — which runs pulled the bad package or action, what secrets they could see, what to rotate first.
 
 ![runsweep scanning the demo repository](docs/demo.gif)
 
-The recording scans [runsweep-demo](https://github.com/dmitriy86it/runsweep-demo) with [`examples/drill.yaml`](examples/drill.yaml), a fire drill that pretends `is-number@7.0.0` and a pinned `actions/setup-node` SHA were compromised.
+The recording scans [runsweep-demo](https://github.com/runsweep/runsweep-demo) with [`examples/drill.yaml`](examples/drill.yaml), a fire drill that pretends `is-number@7.0.0` and a pinned `actions/setup-node` SHA were compromised.
 
 ## Install
 
-Download the latest release from [Releases](https://github.com/dmitriy86it/runsweep/releases) and verify it before running it: the signature of the checksum file, the archive's checksum, and its build provenance. Run it in an empty directory, so the globs match only the downloaded files.
+Download the latest release from [Releases](https://github.com/runsweep/runsweep/releases) and verify it before running it: the signature of the checksum file, the archive's checksum, and its build provenance. Run it in an empty directory, so the globs match only the downloaded files.
 
 ```bash
-gh release download -R dmitriy86it/runsweep -p '*_linux_amd64.tar.gz' -p checksums.txt -p checksums.txt.sigstore.json
+gh release download -R runsweep/runsweep -p '*_linux_amd64.tar.gz' -p checksums.txt -p checksums.txt.sigstore.json
 cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
-  --certificate-identity-regexp '^https://github\.com/dmitriy86it/runsweep/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-identity-regexp '^https://github\.com/runsweep/runsweep/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 sha256sum --ignore-missing -c checksums.txt     # macOS: shasum -a 256 --ignore-missing -c checksums.txt
-gh attestation verify runsweep_*_linux_amd64.tar.gz -R dmitriy86it/runsweep
+gh attestation verify runsweep_*_linux_amd64.tar.gz -R runsweep/runsweep
 tar xzf runsweep_*_linux_amd64.tar.gz runsweep
 ```
 
@@ -28,7 +28,7 @@ Archives are named `runsweep_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows) f
 Or build from source (Go 1.27+):
 
 ```bash
-go install github.com/dmitriy86it/runsweep/cmd/runsweep@latest
+go install github.com/runsweep/runsweep/cmd/runsweep@latest
 ```
 
 ## Usage
@@ -138,7 +138,7 @@ For AFFECTED and POSSIBLE jobs the report lists what the job could read — secr
 
 ## Contributing incidents
 
-See [CONTRIBUTING.md](CONTRIBUTING.md): start with `runsweep incidents import`, confirm every version or SHA with two independent sources, and explain the window in comments. If you cannot open a pull request, use the [new incident](https://github.com/dmitriy86it/runsweep/issues/new?template=new-incident.yml) issue form.
+See [CONTRIBUTING.md](CONTRIBUTING.md): start with `runsweep incidents import`, confirm every version or SHA with two independent sources, and explain the window in comments. If you cannot open a pull request, use the [new incident](https://github.com/runsweep/runsweep/issues/new?template=new-incident.yml) issue form.
 
 ## License
 

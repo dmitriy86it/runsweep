@@ -28,7 +28,7 @@ Rules:
 - No links to attacker infrastructure, payload downloads or lookalike domains. Write domains as plain text under `iocs`.
 - No private data from your own incident response.
 
-If you cannot open a pull request, use the [new incident](https://github.com/dmitriy86it/runsweep/issues/new?template=new-incident.yml) issue form.
+If you cannot open a pull request, use the [new incident](https://github.com/runsweep/runsweep/issues/new?template=new-incident.yml) issue form.
 
 ## Code
 

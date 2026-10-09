@@ -1,4 +1,4 @@
-module github.com/dmitriy86it/runsweep
+module github.com/runsweep/runsweep
 
 go 1.27.2
 
