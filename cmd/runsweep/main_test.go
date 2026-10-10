@@ -824,6 +824,7 @@ func TestFatalScanReportsIncomplete(t *testing.T) {
 func TestEnterpriseHostRefused(t *testing.T) {
 	for _, env := range [][2]string{
 		{"GITHUB_API_URL", "https://ghe.example.com/api/v3"}, {"GH_HOST", "ghe.example.com"}, {"GITHUB_API_URL", "http://api.github.com"},
+		{"GITHUB_API_URL", "https://user:sekret@ghe.example.com/api/v3"}, {"GH_HOST", "https://ghe.example.com/"},
 	} {
 		t.Setenv(env[0], env[1])
 		called := false
@@ -831,12 +832,13 @@ func TestEnterpriseHostRefused(t *testing.T) {
 		d.token = func(context.Context) (string, error) { called = true; return "tok", nil }
 		var out, errb bytes.Buffer
 		if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, d); code != 2 ||
-			!strings.Contains(errb.String(), "GitHub Enterprise is not supported yet") || called || out.Len() != 0 {
+			!strings.Contains(errb.String(), "GitHub Enterprise is not supported yet") || strings.Contains(errb.String(), "sekret") || called || out.Len() != 0 {
 			t.Errorf("%v: code %d called=%v stderr=%q", env, code, called, errb.String())
 		}
 		t.Setenv(env[0], "")
 	}
-	for _, env := range [][2]string{{"GITHUB_API_URL", "https://api.github.com"}, {"GITHUB_API_URL", "https://API.github.com/"}, {"GH_HOST", "github.com"}} {
+	for _, env := range [][2]string{{"GITHUB_API_URL", "https://api.github.com"}, {"GITHUB_API_URL", "https://API.github.com/"}, {"GITHUB_API_URL", "https://api.github.com:443"},
+		{"GH_HOST", "github.com"}, {"GH_HOST", "https://github.com/"}} {
 		t.Setenv(env[0], env[1])
 		var out, errb bytes.Buffer
 		if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, fakeDeps(sourcetest.New())); strings.Contains(errb.String(), "Enterprise") {
