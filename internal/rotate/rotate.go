@@ -40,14 +40,21 @@ func Plan(findings []model.Finding) []model.RotationItem {
 	return plan(findings, func(s model.Status) bool { return s >= model.Possible })
 }
 
-// Unverified is the plan for UNCHECKED findings, in the same order, without the items of Plan.
+// Unverified is the plan for UNCHECKED findings, in the same order, without what Plan covers:
+// runs in a repository where Plan already lists the name (a secret is per repository or shared),
+// and items left without runs.
 func Unverified(findings []model.Finding) []model.RotationItem {
-	confirmed := map[string]bool{}
+	confirmed := map[string]bool{} // name + "\x00" + repo
 	for _, it := range Plan(findings) {
-		confirmed[it.Name] = true
+		for _, r := range it.Runs {
+			confirmed[it.Name+"\x00"+r.Repo] = true
+		}
 	}
-	return slices.DeleteFunc(plan(findings, func(s model.Status) bool { return s == model.Unchecked }),
-		func(it model.RotationItem) bool { return confirmed[it.Name] })
+	items := plan(findings, func(s model.Status) bool { return s == model.Unchecked })
+	for i := range items {
+		items[i].Runs = slices.DeleteFunc(items[i].Runs, func(r model.RunRef) bool { return confirmed[items[i].Name+"\x00"+r.Repo] })
+	}
+	return slices.DeleteFunc(items, func(it model.RotationItem) bool { return len(it.Runs) == 0 })
 }
 
 func plan(findings []model.Finding, keep func(model.Status) bool) []model.RotationItem {

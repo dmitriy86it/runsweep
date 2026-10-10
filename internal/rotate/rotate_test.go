@@ -174,3 +174,15 @@ func TestUnverified(t *testing.T) {
 		t.Fatalf("unverified must hold only what the plan lacks, by tier: %+v", u)
 	}
 }
+
+func TestUnverifiedPerRepo(t *testing.T) {
+	a := model.RunRef{Repo: "o/a", RunID: 1, Job: "build"}
+	b := model.RunRef{Repo: "o/b", RunID: 2, Job: "publish"}
+	fs := []model.Finding{
+		{Run: a, Status: model.Affected, Exposure: &model.Exposure{Secrets: []string{"NPM_TOKEN"}}},
+		{Run: b, Status: model.Unchecked, Exposure: &model.Exposure{Secrets: []string{"NPM_TOKEN"}}},
+	}
+	if u := Unverified(fs); len(u) != 1 || u[0].Name != "NPM_TOKEN" || len(u[0].Runs) != 1 || u[0].Runs[0] != b {
+		t.Fatalf("o/b's NPM_TOKEN is another secret: %+v", u)
+	}
+}
