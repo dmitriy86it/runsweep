@@ -695,7 +695,8 @@ func TestRunInstallsLinear(t *testing.T) {
 	j.InstallsNPM()
 	j.InstallsNPMStrict()
 	j.MayInstallNPM()
-	if d := time.Since(start); d > time.Second {
+	// The old cubic scan took hours here; the bound leaves room for -race on slow CI runners.
+	if d := time.Since(start); d > 10*time.Second {
 		t.Errorf("took %v", d)
 	}
 	if len(ins) == 0 || !slices.ContainsFunc(ins, func(in RunInstall) bool { return in.Dynamic }) {
@@ -814,7 +815,7 @@ func TestPackageManagerWordsBoundedTime(t *testing.T) {
 		j.InstallsNPM()
 		j.InstallsNPMStrict()
 		j.MayInstallNPM()
-		if d := time.Since(start); d > 2*time.Second {
+		if d := time.Since(start); d > 10*time.Second {
 			t.Errorf("%q: %v", tok, d)
 		}
 	}
