@@ -25,18 +25,19 @@ const limits = `## Limits
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
 - A job whose log was unavailable is reported UNCHECKED: actions used via composite actions (and reusable workflows that are neither local nor pinned to a SHA) can only be seen in the log. Job logs over 64 MB count as unavailable.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread. bun.lock, bun.lockb, deno.lock and .pnp.cjs are not read: their directory is at least UNCHECKED, even next to a lockfile that is read (it may be stale).
-- A lockfile that pins a bad version, or a missing, unread or unsupported lockfile, does not mark a job whose log shows no package install and whose workflow installs none. A pin is AFFECTED only for a job that installed from that lockfile (the root one or one in a directory its steps or log name); a job that may have installed it is POSSIBLE. A dependency on a package of the same repository (a workspace) is not reported as missing from the lockfile.
+- A missing, unread, unsupported or stale lockfile does not mark a job whose log shows no package install and whose workflow installs none. A lockfile that pins a bad version does not mark an identified job whose log was read and shows no package install or package manager call, whose workflow installs nothing and runs no opaque script, and whose only actions are actions/checkout, actions/setup-*, actions/cache, actions/upload-artifact, actions/download-artifact and actions/github-script; this never applies to pull_request_target or workflow_run runs. A pin is AFFECTED only for a job that installed from that lockfile (the root one or one in a directory its steps or log name); a job that may have installed it is POSSIBLE. A dependency on a package of the same repository (a workspace) is not reported as missing from the lockfile.
 - An install whose output is fully suppressed inside a JS action or a called script is not seen.
 - A lockfile in a directory that declares workspaces covers only its members. A package.json that no lockfile covers, below the root, is POSSIBLE only for a job whose steps or log name its directory; otherwise UNCHECKED.
 - Packages named on the command line (npm i axios) are found only in the workflow's own run: steps, not in scripts it calls or in local composite actions.
 - Only repositories the token can see are scanned.
 - Pull request runs are checked at the pull request's head commit, not the merge commit.
+- Jobs that check out another ref (e.g. actions/checkout with: ref:, issue_comment) are judged by the run's commit.
 - Container images are not checked.
 - Re-runs of runs created more than the lookback period (default 7 days) before the window are not scanned; use --lookback 30d for full coverage.
 - Called workflows are read when local or pinned to a commit SHA, and in the scanned repository's owner or a public repository; others are judged from the caller job, at least UNCHECKED for another owner's private repository.
 - Workflow files over 1 MiB, lockfiles or package.json over 32 MB, and those past the first 500 of a commit are not read; the job is at least UNCHECKED.
 - Lateral movement is not traced: caches, artifacts and needs outputs, dispatch and workflow_run chains, and self-hosted runners (runs-on is not read) can carry malicious code beyond the job that ran it. node_modules restored from a cache or artifact is not seen.
-- pull_request_target and workflow_run run the base-branch workflow, but files are read at head_sha: secrets and lockfile may differ from what ran, and a fork can control them. Such runs are capped at POSSIBLE or UNCHECKED.
+- pull_request_target and workflow_run run the base-branch workflow, but files are read at head_sha: secrets and lockfile may differ from what ran, and a fork can control them. Such runs are at least UNCHECKED; lockfile and uses: evidence is capped at POSSIBLE; a bad action download in the log is still AFFECTED.
 - A job name made only of an expression, or equal to another job's id, leaves the job unidentified; its exposure is taken from the whole workflow, so more jobs are POSSIBLE or UNCHECKED.
 - Runs that start after the window end are not scanned.
 - GitHub Enterprise is not supported; OIDC trust in nested reusable workflows is not resolved.
@@ -54,16 +55,36 @@ func spreadNote(r *model.Result) string {
 // unverifiedTitle heads what UNCHECKED jobs could read.
 const unverifiedTitle = "Not verified — could not rule out exposure"
 
-// nothingToRotate is the line for an empty Rotate first list, or "" when it has items: with
-// unverified items it says nothing is confirmed instead of nothing to rotate.
-func nothingToRotate(r *model.Result, indent, end string) string {
+// nothingToRotate is the line under Rotate first besides its items: jobs whose secrets are unknown
+// (runs rendered by wrap), then for an empty list "Nothing confirmed to rotate" with unverified
+// items or "Nothing to rotate." without either. An incomplete scan never says "Nothing".
+func nothingToRotate(r *model.Result, indent, end string, wrap func(string) string) string {
+	s := ""
+	if unknown := secretsUnknown(r); len(unknown) > 0 {
+		s = fmt.Sprintf("%sSecrets unknown for %s (workflow or job list unavailable); review them manually: %s.%s",
+			indent, count(len(unknown), "job"), seenIn(unknown, wrap), end)
+	}
 	switch {
-	case len(r.Rotation) > 0:
-		return ""
+	case r.Incomplete || len(r.Rotation) > 0:
+		return s
 	case len(r.Unverified) > 0:
-		return fmt.Sprintf("%sNothing confirmed to rotate; %s in jobs that could not be checked.%s", indent, count(len(r.Unverified), "secret"), end)
+		return s + fmt.Sprintf("%sNothing confirmed to rotate; %s in jobs that could not be checked.%s", indent, count(len(r.Unverified), "secret"), end)
+	case s != "":
+		return s
 	}
 	return indent + "Nothing to rotate." + end
+}
+
+// secretsUnknown lists the non-CLEAN jobs whose secrets are unknown: no exposure (a run-level
+// finding) or a workflow file that was unavailable.
+func secretsUnknown(r *model.Result) []model.RunRef {
+	var out []model.RunRef
+	for _, f := range r.Findings {
+		if f.Status != model.Clean && (f.Exposure == nil || f.Exposure.SecretsUnknown) {
+			out = append(out, f.Run)
+		}
+	}
+	return out
 }
 
 // RetentionNote explains why an old window can look clean.
@@ -81,7 +102,7 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	if r.RetentionWarning {
 		b.WriteString("Warning: " + RetentionNote + ".\n\n")
 	}
-	if !r.Incomplete { // an empty list would read as "all clear"
+	if !r.Incomplete || len(r.Findings) > 0 { // an empty list would read as "all clear"
 		mdFindings(&b, r)
 	}
 	if len(r.Skipped) > 0 {
@@ -98,10 +119,8 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 		}
 		b.WriteString("\n")
 	}
-	if !r.Incomplete {
-		if n := spreadNote(r); n != "" {
-			b.WriteString(n + "\n")
-		}
+	if n := spreadNote(r); n != "" {
+		b.WriteString(n + "\n")
 	}
 	b.WriteString(limits)
 	_, err := io.WriteString(w, b.String())
@@ -114,7 +133,7 @@ func mdFindings(b *strings.Builder, r *model.Result) {
 		r.Count(model.Affected), r.Count(model.Possible), r.Count(model.Unchecked))
 
 	b.WriteString("## Rotate first\n\n")
-	b.WriteString(nothingToRotate(r, "", "\n\n"))
+	b.WriteString(nothingToRotate(r, "", "\n\n", code))
 	items := func(list []model.RotationItem) {
 		if len(list) == 0 {
 			return
@@ -170,7 +189,8 @@ func JSON(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	if err := enc.Encode(struct {
 		Incident *incident.Incident `json:"incident"`
 		*model.Result
-	}{inc, r}); err != nil {
+		SecretsUnknown int `json:"secrets_unknown_jobs"`
+	}{inc, r, len(secretsUnknown(r))}); err != nil {
 		return err
 	}
 	_, err := w.Write(escapeRe.ReplaceAllFunc(b.Bytes(), func(m []byte) []byte {
@@ -195,7 +215,11 @@ func seenIn(runs []model.RunRef, wrap func(string) string) string {
 			parts = append(parts, fmt.Sprintf("+%d more", len(runs)-3))
 			break
 		}
-		s := strings.TrimSpace(fmt.Sprintf("%s#%d %s", r.Repo, r.RunID, r.Job))
+		s := r.Repo
+		if r.RunID != 0 { // 0: a repository-level finding (runs cap)
+			s += fmt.Sprintf("#%d", r.RunID)
+		}
+		s = strings.TrimSpace(s + " " + r.Job)
 		if r.Attempt > 1 {
 			s += fmt.Sprintf(" attempt %d", r.Attempt)
 		}

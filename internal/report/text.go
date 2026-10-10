@@ -38,7 +38,7 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 	if r.RetentionWarning {
 		b.WriteString("Warning: " + RetentionNote + "\n")
 	}
-	if r.Incomplete { // an empty list would read as "all clear"
+	if r.Incomplete && len(r.Findings) == 0 { // an empty list would read as "all clear"
 		textTail(&b, r)
 		_, err := io.WriteString(w, b.String())
 		return err
@@ -47,7 +47,7 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		paint(model.Possible), r.Count(model.Possible), paint(model.Unchecked), r.Count(model.Unchecked))
 
 	b.WriteString("Rotate first\n")
-	b.WriteString(nothingToRotate(r, "  ", "\n"))
+	b.WriteString(nothingToRotate(r, "  ", "\n", Clean))
 	oneRepo := r.ReposTargeted == 1
 	items := func(list []model.RotationItem) {
 		width := 0
@@ -115,9 +115,7 @@ func textTail(b *strings.Builder, r *model.Result) {
 		b.WriteString("\nSkipped repositories: " + strings.Join(parts, ", ") + "\n")
 	}
 	b.WriteString("\nLimits and the full report: --format md\n")
-	if !r.Incomplete {
-		b.WriteString(spreadNote(r))
-	}
+	b.WriteString(spreadNote(r))
 }
 
 // count renders "1 run", "2 runs".

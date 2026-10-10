@@ -324,7 +324,7 @@ func TestFormatCharsAndTags(t *testing.T) {
 
 func TestMarkdownOnlyUnverified(t *testing.T) {
 	inc, res := sample()
-	res.Rotation = nil
+	res.Rotation, res.Findings = nil, res.Findings[:1] // no job with unknown secrets
 	var b bytes.Buffer
 	if err := Markdown(&b, inc, res); err != nil {
 		t.Fatal(err)
@@ -332,5 +332,58 @@ func TestMarkdownOnlyUnverified(t *testing.T) {
 	if !strings.Contains(b.String(), "## Rotate first\n\nNothing confirmed to rotate; 1 secret in jobs that could not be checked.\n\n"+
 		"## Not verified — could not rule out exposure\n\n| # |") || strings.Contains(b.String(), "Nothing to rotate") {
 		t.Fatal(b.String())
+	}
+}
+
+// An incomplete scan with findings still shows them and what could not be verified; only the
+// lines that read as "all clear" are dropped.
+func TestIncompleteKeepsFindings(t *testing.T) {
+	inc, res := sample()
+	res.Incomplete, res.Error, res.Rotation = true, "o/b: HTTP 401", nil
+	for name, render := range map[string]func(*bytes.Buffer) error{
+		"text": func(b *bytes.Buffer) error { return Text(b, inc, res, false) },
+		"md":   func(b *bytes.Buffer) error { return Markdown(b, inc, res) },
+	} {
+		var b bytes.Buffer
+		if err := render(&b); err != nil {
+			t.Fatal(err)
+		}
+		s := b.String()
+		if !strings.HasPrefix(s, "Scan incomplete: o/b: HTTP 401\n") || !strings.Contains(s, unverifiedTitle) ||
+			!strings.Contains(s, "DEPLOY_KEY") || !strings.Contains(s, "axios@1.14.1 in package-lock.json") || strings.Contains(s, "Nothing") {
+			t.Errorf("%s:\n%s", name, s)
+		}
+	}
+}
+
+// Jobs whose secrets are unknown are never summed up as "Nothing to rotate.".
+func TestSecretsUnknownReplacesNothingToRotate(t *testing.T) {
+	inc, res := sample() // o/old#9: jobs unavailable, no exposure
+	res.Rotation, res.Unverified = nil, nil
+	const line = "Secrets unknown for 1 job (workflow or job list unavailable); review them manually: "
+	var txt, md, js bytes.Buffer
+	if err := Text(&txt, inc, res, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Markdown(&md, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if err := JSON(&js, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(txt.String(), "  "+line+"o/old#9.\n") || strings.Contains(txt.String(), "Nothing to rotate") {
+		t.Errorf("text:\n%s", txt.String())
+	}
+	if !strings.Contains(md.String(), line+"`o/old#9`.\n") || strings.Contains(md.String(), "Nothing to rotate") {
+		t.Errorf("md:\n%s", md.String())
+	}
+	if !strings.Contains(js.String(), `"secrets_unknown_jobs": 1`) {
+		t.Errorf("json:\n%s", js.String())
+	}
+	// an exposure whose secrets are unknown counts too; a known one does not
+	res.Findings[1].Exposure = &model.Exposure{SecretsUnknown: true}
+	res.Findings = append(res.Findings, model.Finding{Status: model.Unchecked, Exposure: &model.Exposure{}})
+	if n := len(secretsUnknown(res)); n != 1 {
+		t.Errorf("got %d", n)
 	}
 }

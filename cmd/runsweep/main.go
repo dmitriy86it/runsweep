@@ -235,12 +235,13 @@ Exit codes:
   0  every job checked, nothing AFFECTED or POSSIBLE
   1  at least one job AFFECTED or POSSIBLE
   2  error (bad flags or incident, no token, token rejected, GitHub Enterprise host,
-     organization not listed, nothing could be scanned); the report then starts
-     "Scan incomplete:" and the JSON has incomplete and error
+     organization not listed, nothing could be scanned)
   3  nothing AFFECTED or POSSIBLE, but not everything was checked: UNCHECKED jobs,
-     skipped repositories, the scan was interrupted (Ctrl-C, API error), or no runs
-     were found in a window that starts more than 90 days ago
-1 wins over 2 and 3: findings are reported even if the scan then stops on an error.`,
+     skipped repositories, the scan stopped early (Ctrl-C, API or network error), or
+     no runs were found in a window that starts more than 90 days ago
+1 wins over 2 and 3: findings are reported even if the scan then stops on an error.
+A scan that stops early prints a report that starts "Scan incomplete:"; the JSON
+has incomplete and error.`,
 		Example: `  runsweep scan --incident chaindrop-2026-08 --repo owner/name
   runsweep scan --incident ./incident.yaml --org my-org --format json`,
 		RunE: func(c *cobra.Command, _ []string) error {
@@ -316,8 +317,13 @@ Exit codes:
 			case len(res.Skipped) == res.ReposTargeted:
 				fatal = errors.New("no repository could be scanned (missing access?)")
 			}
-			if fatal != nil {
+			switch { // any early stop: the report must not look complete
+			case fatal != nil:
 				res.Incomplete, res.Error = true, fatal.Error()
+			case errors.Is(scanErr, context.Canceled):
+				res.Incomplete, res.Error = true, "interrupted"
+			case scanErr != nil:
+				res.Incomplete, res.Error = true, scanErr.Error()
 			}
 			switch format {
 			case "json":
