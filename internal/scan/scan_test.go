@@ -1301,7 +1301,7 @@ func TestScanLockfileNeedsInstall(t *testing.T) {
 		return f
 	}
 	action := "      - uses: contributor-assistant/github-action@v2.6.1\n        env: {T: \"${{ secrets.CLA_TOKEN }}\"}\n"
-	install := "2026-03-31T01:00:00Z ##[group]Run npm ci\n2026-03-31T01:00:00Z added 12 packages in 1s\n"
+	install := "2026-03-31T01:00:00Z ##[group]Run npm ci\n2026-03-31T01:00:00Z ##[endgroup]\n2026-03-31T01:00:00Z added 12 packages in 1s\n"
 
 	// third-party action only, log read and shows no install: npm hit does not count
 	res, err := Run(context.Background(), fx(action, "package-lock.json", "2026-03-31T01:00:00Z CLA ok\n", false), npmOnly, Options{Repos: []string{"o/a"}})

@@ -40,20 +40,21 @@ func TestPackageLockResolvedTarball(t *testing.T) {
 	  "node_modules/@babel/core":{"version":"7.0.0","resolved":"https://registry.npmjs.org/@babel/core/-/core-7.0.0.tgz"},
 	  "node_modules/gitdep":{"version":"1.0.0","resolved":"git+ssh://git@github.com/o/gitdep.git#abc"},
 	  "node_modules/filedep":{"version":"1.0.0","resolved":"file:../filedep"}}}`))
-	if err != nil {
-		t.Fatal(err)
+	// a mismatch is reported as the tarball npm installs, and the file counts as not fully read
+	if err == nil || !strings.Contains(err.Error(), "resolved") {
+		t.Errorf("mismatch must be noted: %v", err)
 	}
-	for _, p := range []Pkg{{"axios", "1.14.0"}, {"axios", "1.14.1"}, {"notaxios", "1.14.1"}, {"@babel/core", "7.0.0"}} {
+	for _, p := range []Pkg{{"axios", "1.14.1"}, {"@babel/core", "7.0.0"}, {"gitdep", "1.0.0"}, {"filedep", "1.0.0"}} {
 		if !hasPkg(pkgs, p.Name, p.Version) {
 			t.Errorf("missing %v in %v", p, pkgs)
 		}
 	}
-	if len(pkgSet(pkgs)) != 6 { // axios twice, notaxios, core, gitdep, filedep: tarballs of git and file entries give nothing
+	if hasPkg(pkgs, "axios", "1.14.0") || len(pkgSet(pkgs)) != 4 {
 		t.Errorf("%v", pkgs)
 	}
 	// lockfileVersion 1
 	pkgs, err = ParsePackageLock([]byte(`{"lockfileVersion":1,"dependencies":{"axios":{"version":"1.14.0","resolved":"https://registry.npmjs.org/axios/-/axios-1.14.1.tgz"}}}`))
-	if err != nil || !hasPkg(pkgs, "axios", "1.14.1") || !hasPkg(pkgs, "axios", "1.14.0") {
+	if err == nil || !hasPkg(pkgs, "axios", "1.14.1") || hasPkg(pkgs, "axios", "1.14.0") {
 		t.Errorf("v1: %v %v", pkgs, err)
 	}
 	// a registry tarball URL that names no readable package@version: unreadable
@@ -79,7 +80,7 @@ func TestPackageLockV2ReadsBothSections(t *testing.T) {
 func TestPnpmTarballAndEmptyLock(t *testing.T) {
 	pkgs, err := ParsePnpmLock([]byte("lockfileVersion: '9.0'\npackages:\n  axios@1.14.0:\n    resolution: {tarball: https://registry.npmjs.org/axios/-/axios-1.14.1.tgz}\n" +
 		"  gh@1.0.0:\n    resolution: {tarball: 'https://codeload.github.com/o/gh/tar.gz/abc'}\n"))
-	if err != nil || !hasPkg(pkgs, "axios", "1.14.1") || !hasPkg(pkgs, "axios", "1.14.0") {
+	if err == nil || !hasPkg(pkgs, "axios", "1.14.1") || hasPkg(pkgs, "axios", "1.14.0") || !hasPkg(pkgs, "gh", "1.0.0") {
 		t.Errorf("%v %v", pkgs, err)
 	}
 	if _, err = ParsePnpmLock([]byte("lockfileVersion: '9.0'\npackages:\n  axios@1.14.0:\n    resolution: {tarball: https://registry.npmjs.org/axios/-/other.tgz}\n")); err == nil {
@@ -131,7 +132,8 @@ func TestFixtureNameDoesNotHideMissingFromLock(t *testing.T) {
 	}
 }
 
-func TestStaleLockfileIsUnchecked(t *testing.T) {
+// A stale lockfile that pins a bad version keeps the pin (npm ci installs it) and gains a note.
+func TestStaleLockfileKeepsPin(t *testing.T) {
 	for name, files := range map[string]map[string]string{
 		"package-lock=false": {"package.json": `{"dependencies":{"axios":"^1.14.0"}}`, "package-lock.json": badRootLock, ".npmrc": "registry=https://r.example\n; c\n package-lock = false # no lock\n"},
 		"range differs":      {"package.json": `{"dependencies":{"axios":"^1.14.1"}}`, "package-lock.json": badRootLock},
@@ -139,13 +141,25 @@ func TestStaleLockfileIsUnchecked(t *testing.T) {
 		"dev dependency":     {"package.json": `{"dependencies":{"axios":"^1.14.0"},"devDependencies":{"jest":"^29"}}`, "package-lock.json": badRootLock},
 	} {
 		r := matchFiles(t, files)
-		if r.Status != model.Unchecked || len(r.Pins) != 0 || len(r.Pinned) != 0 ||
+		if r.Status != model.Affected || len(r.Pins) != 1 || len(r.Pinned) != 1 ||
 			!slices.ContainsFunc(r.Evidence, func(e model.Evidence) bool {
 				return strings.Contains(e.Detail, "lockfile may not be what npm installed")
 			}) {
 			t.Errorf("%s: %v %+v", name, r.Status, r.Evidence)
 		}
 	}
+	// nothing bad is pinned: npm may resolve the declared package fresh
+	r := matchFiles(t, map[string]string{
+		"package.json":      `{"dependencies":{"axios":"^1.14.0"}}`,
+		"package-lock.json": `{"lockfileVersion":3,"packages":{"":{"dependencies":{"axios":"^1.14.0"}},"node_modules/axios":{"version":"1.14.0"}}}`,
+		".npmrc":            "package-lock=false\n",
+	})
+	if r.Status != model.Unchecked || len(r.Pins) != 0 {
+		t.Errorf("%v %+v", r.Status, r.Evidence)
+	}
+}
+
+func TestLockfileNpmUsesIsAffected(t *testing.T) {
 	for name, files := range map[string]map[string]string{
 		"consistent":              {"package.json": `{"name":"app","dependencies":{"axios":"^1.14.0"}}`, "package-lock.json": badRootLock},
 		"no package.json":         {"package-lock.json": badRootLock},

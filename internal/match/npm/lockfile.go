@@ -94,15 +94,17 @@ func parsePackageLock(b []byte) (out []Pkg, root []string, err error) {
 	// URL that cannot be read): the file is not fully read
 	unnamed, unreadable := 0, 0
 	add := func(name, version, resolved string) {
-		out = append(out, Pkg{name, version})
-		if !tarballLike.MatchString(resolved) {
-			return
+		pkg := Pkg{name, version}
+		if tarballLike.MatchString(resolved) {
+			// npm installs the tarball: what it names is the package, and a mismatch is noted as unreadable
+			if t, ok := registryTarball(resolved); !ok || t != pkg {
+				unreadable++
+				if ok {
+					pkg = t
+				}
+			}
 		}
-		if t, ok := registryTarball(resolved); !ok {
-			unreadable++
-		} else if t != (Pkg{name, version}) {
-			out = append(out, t)
-		}
+		out = append(out, pkg)
 	}
 	for key, v := range packages { // lockfileVersion 2 and 3
 		if key == "" {
@@ -199,11 +201,11 @@ func validName(name string) bool {
 func lockErr(unnamed, unreadable int) error {
 	switch {
 	case unnamed > 0 && unreadable > 0:
-		return fmt.Errorf("package-lock: %d entries without a package name or version, %d with a resolved URL that names no package@version", unnamed, unreadable)
+		return fmt.Errorf("package-lock: %d entries without a package name or version, %d with a resolved URL that names no or another package@version", unnamed, unreadable)
 	case unnamed > 0:
 		return fmt.Errorf("package-lock: %d entries without a package name or version", unnamed)
 	case unreadable > 0:
-		return fmt.Errorf("package-lock: %d entries with a resolved URL that names no package@version", unreadable)
+		return fmt.Errorf("package-lock: %d entries with a resolved URL that names no or another package@version", unreadable)
 	}
 	return nil
 }
@@ -248,10 +250,11 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 			out = append(out, pkg)
 			// pnpm installs the tarball of `resolution`, whatever the key says
 			if tb := res.Resolution.Tarball; tarballLike.MatchString(tb) {
-				if t, ok := registryTarball(tb); !ok {
+				if t, ok := registryTarball(tb); !ok || t != pkg {
 					unknown = append(unknown, key)
-				} else if t != pkg {
-					out = append(out, t)
+					if ok {
+						out[len(out)-1] = t // pnpm installs the tarball
+					}
 				}
 			}
 		} else if !pnpmLocal.MatchString(k) || pnpmTarball.MatchString(k) {

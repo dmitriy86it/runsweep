@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/runsweep/runsweep/internal/model"
 	"go.yaml.in/yaml/v3"
@@ -29,6 +30,9 @@ type Job struct {
 	InheritSecrets bool
 	IDTokenWrite   bool
 	CloudRoles     []model.CloudRole
+
+	installsOnce sync.Once
+	installs     []RunInstall
 }
 
 // namePattern is a templated job name ("Build ${{ matrix.node }}") compiled once. re is nil
@@ -294,7 +298,8 @@ var lockSubs = map[string]bool{"ci": true, "cit": true, "clean-install": true, "
 
 var (
 	envAssignRe = regexp.MustCompile(`^[A-Za-z_]\w*=`)
-	quotedRe    = regexp.MustCompile(`"[^"\n]*"|'[^'\n]*'`)
+	// a quoted string; an apostrophe after a word character ("don't") opens none
+	quotedRe = regexp.MustCompile(`"[^"\n]*"|(?:^|\W)'[^'\n]*'`)
 	// words that run the next word as a command
 	cmdPrefix = []string{"then", "do", "else", "elif", "if", "!", "time", "sudo", "exec", "env", "nohup", "xargs", "corepack"}
 )
@@ -303,12 +308,20 @@ var (
 // script a quoted string is not a command; in a github-script (js) each string literal is one.
 func installsFromLock(script string, js bool) bool {
 	script = continuation.Replace(script)
-	seps, quote := "\n;&|()`", quotedRe.ReplaceAllString
+	seps, quote := "\n;&|()`", func(s string) string {
+		return quotedRe.ReplaceAllStringFunc(s, func(m string) string {
+			if m[0] == '"' || m[0] == '\'' {
+				return `""`
+			}
+			r, _ := utf8.DecodeRuneInString(m)
+			return string(r) + `""`
+		})
+	}
 	if js {
 		seps = "\n;&|()`'\",[]{}"
-		quote = func(s, _ string) string { return s }
+		quote = func(s string) string { return s }
 	}
-	for _, seg := range strings.FieldsFunc(quote(script, `""`), func(r rune) bool { return strings.ContainsRune(seps, r) }) {
+	for _, seg := range strings.FieldsFunc(quote(script), func(r rune) bool { return strings.ContainsRune(seps, r) }) {
 		fields, skipped := strings.Fields(seg), false
 		for len(fields) > 0 && (envAssignRe.MatchString(fields[0]) || slices.Contains(cmdPrefix, fields[0]) ||
 			skipped && strings.HasPrefix(fields[0], "-")) {
@@ -329,8 +342,10 @@ func installsFromLock(script string, js bool) bool {
 }
 
 func lockInstall(tool string, args []string) bool {
-	if slices.ContainsFunc(args, func(a string) bool { return a == "-g" || a == "--global" || a == "--location=global" }) {
-		return false
+	for i, a := range args {
+		if a == "-g" || a == "--global" || a == "--global=true" || a == "--location=global" || a == "--location" && i+1 < len(args) && args[i+1] == "global" {
+			return false
+		}
 	}
 	sub, _ := subcommand(tool, args)
 	if sub == "" { // bare yarn installs
@@ -382,12 +397,14 @@ type RunInstall struct {
 }
 
 // RunInstalls returns the run-time package installs in the job's `run:` and github-script scripts.
+// The result is computed once; callers must not change it.
 func (j *Job) RunInstalls() []RunInstall {
-	var out []RunInstall
-	for _, s := range slices.Concat(j.Runs, j.Scripts) {
-		out = append(out, runInstalls(s)...)
-	}
-	return out
+	j.installsOnce.Do(func() {
+		for _, s := range slices.Concat(j.Runs, j.Scripts) {
+			j.installs = append(j.installs, runInstalls(s)...)
+		}
+	})
+	return j.installs
 }
 
 // installSubs are the "tool subcommand" pairs that install or run named packages. Every positional
@@ -415,8 +432,9 @@ var createSubs = map[string]bool{"npm create": true, "npm init": true, "npm inni
 	"yarn create": true, "bun create": true}
 
 const (
-	maxArgs     = 64  // arguments read per command; more are named at run time
-	maxInstalls = 256 // commands read per script; more are named at run time
+	maxArgs     = 64   // arguments read per command; more are named at run time
+	maxInstalls = 256  // install commands read per script; more are named at run time
+	maxMatches  = 4096 // package manager words read per script, installs or not
 )
 
 var argSep = func() (t [256]bool) {
@@ -476,22 +494,19 @@ var continuation = strings.NewReplacer("\\\r\n", " ", "\\\n", " ", "`\r\n", " ",
 func runInstalls(script string) []RunInstall {
 	script = continuation.Replace(script)
 	var out []RunInstall
-	for pos := 0; pos < len(script); {
+	for pos, matches := 0, 0; pos < len(script); {
 		m := runtimeRe.FindStringSubmatchIndex(script[pos:])
 		if m == nil {
 			break
 		}
-		if len(out) == maxInstalls {
+		if matches++; len(out) == maxInstalls || matches > maxMatches {
 			out = append(out, RunInstall{Cmd: "more than " + strconv.Itoa(maxInstalls) + " package manager commands", Dynamic: true})
 			break
 		}
 		tool, written := script[pos+m[2]:pos+m[3]], script[pos+m[2]:pos+m[5]]
 		args, capped := commandArgs(script[pos+m[5]:])
 		pos += m[5] // resume after the tool name: `…` and $(…) in its arguments are commands too
-		cmd := written
-		for _, a := range args {
-			cmd += " " + strings.Trim(a, "`")
-		}
+		cmdArgs := args
 		key := tool
 		if tool == "npm" || tool == "pnpm" || tool == "yarn" || tool == "bun" {
 			var sub string
@@ -506,6 +521,10 @@ func runInstalls(script string) []RunInstall {
 		}
 		if !installSubs[key] {
 			continue
+		}
+		cmd := written
+		for _, a := range cmdArgs {
+			cmd += " " + strings.Trim(a, "`")
 		}
 		var pkgs []string
 		dynamic := false
