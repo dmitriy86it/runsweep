@@ -428,6 +428,11 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 				}
 			}
 		}
+		// The lockfile was read at head_sha but the run used the base branch: no proof of an install.
+		if baseEvent && npmJob.Status == model.Affected {
+			npmJob.Status = model.Possible
+			npmJob.Evidence = append(npmJob.Evidence, note("lockfile read at head_sha; the run used the base branch"))
+		}
 		// A missing or unreadable lockfile matters only to a job that installed: dropped when quiet.
 		noInstall := quiet && npmJob.Status == model.Unchecked
 		// Otherwise drop npm evidence only on positive evidence the job cannot install packages.

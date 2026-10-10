@@ -576,3 +576,14 @@ func TestRepoPublic(t *testing.T) {
 		}
 	}
 }
+
+func TestListRunsMapsEvent(t *testing.T) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"total_count":1,"workflow_runs":[{"id":1,"event":"pull_request_target","head_sha":"a"}]}`)
+	}))
+	start := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
+	runs, err := c.ListRuns(context.Background(), "o/r", start, start.Add(time.Hour))
+	if err != nil || len(runs) != 1 || runs[0].Event != "pull_request_target" {
+		t.Fatalf("%+v %v", runs, err)
+	}
+}
