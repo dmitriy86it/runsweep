@@ -3,6 +3,8 @@ package importer
 import (
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -122,6 +124,17 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 	for _, name := range sortedKeys(npm) {
 		pt := times[name]
 		for _, v := range sortedVersions(npm[name]) {
+			if v == "*" { // every version: the registry has no entry under "*"
+				if len(pt.Published) > 0 {
+					live = append(live, name+"@*")
+				}
+				for _, pv := range slices.Sorted(maps.Keys(pt.Times)) {
+					if t := pt.Times[pv]; start.IsZero() || t.Before(start) {
+						start, startRef = t, name+"@"+pv
+					}
+				}
+				continue
+			}
 			if t, ok := pt.Times[v]; ok && (start.IsZero() || t.Before(start)) {
 				start, startRef = t, name+"@"+v
 			}

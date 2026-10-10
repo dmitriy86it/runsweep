@@ -242,3 +242,23 @@ func TestWindowSkipsWildcard(t *testing.T) {
 		t.Fatalf("%v %v %q", err, npm, notes)
 	}
 }
+
+// A "*" package has no time or published entry under "*": it is live when any version is listed,
+// and its earliest version starts the window.
+func TestComputeWindowWildcardLive(t *testing.T) {
+	p := func(s string) time.Time { x, _ := time.Parse(time.RFC3339, s); return x }
+	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	npm := map[string]map[string]bool{"a": {"1.0.0": true}, "b": {"*": true}}
+	times := map[string]PkgTimes{
+		"a": {Found: true, Times: map[string]time.Time{"1.0.0": p("2026-10-01T00:00:00Z")}, Unpublished: p("2026-10-02T00:00:00Z")},
+		"b": {Found: true, Times: map[string]time.Time{"0.1.0": p("2026-10-01T12:00:00Z"), "0.2.0": p("2026-10-01T13:00:00Z")},
+			Published: map[string]bool{"0.1.0": true, "0.2.0": true}, Modified: p("2026-10-01T13:00:00Z")},
+	}
+	_, end, _, _, err := computeWindow(npm, times, false, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !end.Equal(now) {
+		t.Errorf("end = %s, want import time %s (b is still published)", end, now)
+	}
+}
