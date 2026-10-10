@@ -785,3 +785,63 @@ func TestScanWorkflowUnavailableExits3(t *testing.T) {
 		t.Fatalf("code %d\n%s%s", code, out.String(), errb.String())
 	}
 }
+
+// A scan that ends in exit 2 must not read like a clean result.
+func TestFatalScanReportsIncomplete(t *testing.T) {
+	bad := failDeps(sourcetest.New(), map[string]error{"o/a": fmt.Errorf("%w: 401 Bad credentials", source.ErrAuth)})
+	for _, format := range []string{"text", "md"} {
+		var out, errb bytes.Buffer
+		if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a", "--format", format}, &out, &errb, bad); code != 2 {
+			t.Fatalf("%s: got %d: %s", format, code, errb.String())
+		}
+		if !strings.HasPrefix(out.String(), "Scan incomplete: ") || strings.Contains(out.String(), "No affected jobs found") || strings.Contains(out.String(), "Nothing to rotate") {
+			t.Errorf("%s:\n%s", format, out.String())
+		}
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a", "--format", "json"}, &out, &errb, bad); code != 2 {
+		t.Fatalf("json: got %d", code)
+	}
+	var v struct {
+		Incomplete bool   `json:"incomplete"`
+		Error      string `json:"error"`
+		Findings   []any  `json:"findings"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &v); err != nil || !v.Incomplete || !strings.Contains(v.Error, "Bad credentials") || v.Findings == nil {
+		t.Fatalf("%v %+v\n%s", err, v, out.String())
+	}
+
+	f := sourcetest.New()
+	f.NoAccess["o/a"] = true
+	out.Reset()
+	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a", "--format", "md"}, &out, &errb, fakeDeps(f)); code != 2 ||
+		!strings.HasPrefix(out.String(), "Scan incomplete: no repository could be scanned") {
+		t.Fatalf("all skipped: %d\n%s", code, out.String())
+	}
+}
+
+// GitHub Enterprise is refused before a token is looked up or sent anywhere.
+func TestEnterpriseHostRefused(t *testing.T) {
+	for _, env := range [][2]string{
+		{"GITHUB_API_URL", "https://ghe.example.com/api/v3"}, {"GH_HOST", "ghe.example.com"}, {"GITHUB_API_URL", "http://api.github.com"},
+	} {
+		t.Setenv(env[0], env[1])
+		called := false
+		d := fakeDeps(sourcetest.New())
+		d.token = func(context.Context) (string, error) { called = true; return "tok", nil }
+		var out, errb bytes.Buffer
+		if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, d); code != 2 ||
+			!strings.Contains(errb.String(), "GitHub Enterprise is not supported yet") || called || out.Len() != 0 {
+			t.Errorf("%v: code %d called=%v stderr=%q", env, code, called, errb.String())
+		}
+		t.Setenv(env[0], "")
+	}
+	for _, env := range [][2]string{{"GITHUB_API_URL", "https://api.github.com"}, {"GITHUB_API_URL", "https://API.github.com/"}, {"GH_HOST", "github.com"}} {
+		t.Setenv(env[0], env[1])
+		var out, errb bytes.Buffer
+		if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, fakeDeps(sourcetest.New())); strings.Contains(errb.String(), "Enterprise") {
+			t.Errorf("%v refused: %d %s", env, code, errb.String())
+		}
+		t.Setenv(env[0], "")
+	}
+}

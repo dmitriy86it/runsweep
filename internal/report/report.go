@@ -59,13 +59,40 @@ const RetentionNote = "incident window starts more than 90 days ago; GitHub may 
 // Markdown renders the scan result as a Markdown report.
 func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	var b strings.Builder
+	if r.Incomplete {
+		b.WriteString("Scan incomplete: " + Clean(r.Error) + "\n\n")
+	}
 	fmt.Fprintf(&b, "# runsweep: %s (%s)\n\n", code(inc.Title), code(inc.ID))
 	fmt.Fprintf(&b, "Window: %s → %s UTC · repositories scanned: %d · runs scanned: %d · jobs scanned: %d\n\n",
 		r.Start.UTC().Format("2006-01-02 15:04:05"), r.End.UTC().Format("2006-01-02 15:04:05"), r.ReposTargeted-len(r.Skipped), r.RunsScanned, r.JobsScanned)
 	if r.RetentionWarning {
 		b.WriteString("Warning: " + RetentionNote + ".\n\n")
 	}
-	fmt.Fprintf(&b, "**AFFECTED: %d · POSSIBLE: %d · UNCHECKED: %d**\n\n",
+	if !r.Incomplete { // an empty list would read as "all clear"
+		mdFindings(&b, r)
+	}
+	if len(r.Skipped) > 0 {
+		b.WriteString("## Skipped repositories\n\n")
+		for _, s := range r.Skipped {
+			fmt.Fprintf(&b, "- %s — %s\n", code(s.Repo), code(s.Reason))
+		}
+		b.WriteString("\nThe token needs read access to Actions, Contents and Metadata for these repositories.\n\n")
+	}
+	if len(inc.Refs) > 0 {
+		b.WriteString("## Incident sources\n\n")
+		for _, ref := range inc.Refs {
+			fmt.Fprintf(&b, "- %s\n", code(ref))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString(limits)
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// mdFindings renders the counts, the rotation lists and the findings.
+func mdFindings(b *strings.Builder, r *model.Result) {
+	fmt.Fprintf(b, "**AFFECTED: %d · POSSIBLE: %d · UNCHECKED: %d**\n\n",
 		r.Count(model.Affected), r.Count(model.Possible), r.Count(model.Unchecked))
 
 	b.WriteString("## Rotate first\n\n")
@@ -76,7 +103,7 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 		}
 		b.WriteString("| # | Secret / role | Priority | Why | Seen in |\n|---|---|---|---|---|\n")
 		for i, it := range list {
-			fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n", i+1, code(it.Name), tier(it.Tier), cell(it.Reason), seenIn(it.Runs, code))
+			fmt.Fprintf(b, "| %d | %s | %s | %s | %s |\n", i+1, code(it.Name), tier(it.Tier), cell(it.Reason), seenIn(it.Runs, code))
 		}
 		b.WriteString("\n")
 	}
@@ -107,28 +134,10 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 			if f.Run.Attempt > 1 {
 				run += fmt.Sprintf(" attempt %d", f.Run.Attempt)
 			}
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", f.Status, code(f.Run.Repo), code(job), run, strings.Join(ev, "; "))
+			fmt.Fprintf(b, "| %s | %s | %s | %s | %s |\n", f.Status, code(f.Run.Repo), code(job), run, strings.Join(ev, "; "))
 		}
 		b.WriteString("\n")
 	}
-
-	if len(r.Skipped) > 0 {
-		b.WriteString("## Skipped repositories\n\n")
-		for _, s := range r.Skipped {
-			fmt.Fprintf(&b, "- %s — %s\n", code(s.Repo), code(s.Reason))
-		}
-		b.WriteString("\nThe token needs read access to Actions, Contents and Metadata for these repositories.\n\n")
-	}
-	if len(inc.Refs) > 0 {
-		b.WriteString("## Incident sources\n\n")
-		for _, ref := range inc.Refs {
-			fmt.Fprintf(&b, "- %s\n", code(ref))
-		}
-		b.WriteString("\n")
-	}
-	b.WriteString(limits)
-	_, err := io.WriteString(w, b.String())
-	return err
 }
 
 // JSON renders the scan result as JSON.

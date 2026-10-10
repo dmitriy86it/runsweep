@@ -24,6 +24,9 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		return s.String()
 	}
 	var b strings.Builder
+	if r.Incomplete {
+		b.WriteString("Scan incomplete: " + Clean(r.Error) + "\n")
+	}
 	name := Clean(inc.ID)
 	if t := Clean(inc.Title); t != "" {
 		name = t + " (" + name + ")"
@@ -34,6 +37,11 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		count(r.RunsScanned, "run"), count(r.JobsScanned, "job"), days(r.Lookback), repos(r))
 	if r.RetentionWarning {
 		b.WriteString("Warning: " + RetentionNote + "\n")
+	}
+	if r.Incomplete { // an empty list would read as "all clear"
+		textTail(&b, r)
+		_, err := io.WriteString(w, b.String())
+		return err
 	}
 	fmt.Fprintf(&b, "\n%s %d   %s %d   %s %d\n\n", paint(model.Affected), r.Count(model.Affected),
 		paint(model.Possible), r.Count(model.Possible), paint(model.Unchecked), r.Count(model.Unchecked))
@@ -92,6 +100,13 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		}
 	}
 
+	textTail(&b, r)
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
+// textTail lists the skipped repositories and points to the full report.
+func textTail(b *strings.Builder, r *model.Result) {
 	if len(r.Skipped) > 0 {
 		var parts []string
 		for _, s := range r.Skipped {
@@ -100,8 +115,6 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		b.WriteString("\nSkipped repositories: " + strings.Join(parts, ", ") + "\n")
 	}
 	b.WriteString("\nLimits and the full report: --format md\n")
-	_, err := io.WriteString(w, b.String())
-	return err
 }
 
 // count renders "1 run", "2 runs".
