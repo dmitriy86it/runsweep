@@ -23,14 +23,14 @@ import (
 	"github.com/runsweep/runsweep/internal/workflow"
 )
 
-// installLogRe matches a job log line of a package install by npm, pnpm, yarn v1, yarn berry or bun.
-var installLogRe = regexp.MustCompile(`npm (ci|install|i)\b|(added|removed|changed) \d+ packages?|audited \d+ packages?|up to date in \d|` +
-	`pnpm (i|install|add)\b|Packages: \+\d+|Progress: resolved|Lockfile is up to date|` +
+// installLogRe matches a job log line of package install output (not the command text) by npm, pnpm, yarn v1, yarn berry or bun.
+var installLogRe = regexp.MustCompile(`(added|removed|changed) \d+ packages?|audited \d+ packages?|up to date in \d|` +
+	`Packages: \+\d+|Progress: resolved|Lockfile is up to date|` +
 	`yarn install|success Saved lockfile|\[\d/\d\] (Resolving|Fetching) packages|YN0000: .*(Resolution step|Fetch step|Link step)|` +
 	`bun install|\d+ packages? installed`)
 
 // installLogLiterals: every match of installLogRe contains one of them.
-var installLogLiterals = []string{"npm ", "package", "up to date", "Packages: +", "Progress: resolved",
+var installLogLiterals = []string{"package", "up to date", "Packages: +", "Progress: resolved",
 	"yarn install", "Saved lockfile", "YN0000", "bun install"}
 
 // installLog reports whether the job log shows output of a package install. The runner's echo of a
