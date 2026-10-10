@@ -221,7 +221,7 @@ func (c *Client) do(ctx context.Context, f func() (*github.Response, error)) err
 			return err
 		}
 		wait = min(max(wait, time.Second), maxWait)
-		c.Logf("rate limited, waiting %s", wait.Round(time.Second))
+		c.Logf("rate limited, waiting %s (until %s)", wait.Round(time.Second), time.Now().Add(wait).UTC().Format("15:04:05 UTC"))
 		if err := c.Sleep(ctx, wait); err != nil {
 			return err
 		}
@@ -232,13 +232,21 @@ func (c *Client) do(ctx context.Context, f func() (*github.Response, error)) err
 // fatal; rate limits that carry a reset time never get here.
 func mapErr(resp *github.Response, err error) error {
 	if resp != nil {
+		msg := err.Error()
+		if er := (*github.ErrorResponse)(nil); errors.As(err, &er) {
+			msg = er.Message // not the request URL
+		}
 		switch code := resp.StatusCode; {
 		case code == http.StatusGone:
 			return source.ErrGone
 		case code == http.StatusUnauthorized:
-			return fmt.Errorf("%w: %w", source.ErrAuth, err)
+			return fmt.Errorf("%w: the token was rejected (expired, revoked or mistyped): %s", source.ErrAuth, msg)
+		case code == http.StatusNotFound:
+			return fmt.Errorf("%w: HTTP 404, not found or the token cannot see it (check its repository access and SSO authorization): %s", source.ErrNoAccess, msg)
+		case code == http.StatusForbidden:
+			return fmt.Errorf("%w: HTTP 403, the token lacks read access to Actions, Contents or Metadata, or SSO is not authorized: %s", source.ErrNoAccess, msg)
 		case code >= 400 && code < 500 && code != http.StatusTooManyRequests:
-			return fmt.Errorf("%w: %w", source.ErrNoAccess, err)
+			return fmt.Errorf("%w: HTTP %d: %s", source.ErrNoAccess, code, msg)
 		}
 	}
 	return err
