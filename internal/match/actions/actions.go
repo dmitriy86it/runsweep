@@ -3,7 +3,9 @@ package actions
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/runsweep/runsweep/internal/incident"
@@ -65,6 +67,12 @@ func repoKey(uses string) string {
 	return parts[0] + "/" + parts[1]
 }
 
+// anySHA reports whether sha is a compromised commit of any incident action: a fork shares its
+// upstream's commits, so a full SHA matches under any owner/repo.
+func anySHA(b map[string]map[string]bool, sha string) bool {
+	return sha != "" && slices.ContainsFunc(slices.Collect(maps.Values(b)), func(s map[string]bool) bool { return s[sha] })
+}
+
 func badSHAs(bad []incident.Action) map[string]map[string]bool {
 	m := map[string]map[string]bool{}
 	for _, a := range bad {
@@ -89,7 +97,7 @@ func MatchLog(log string, bad []incident.Action) (model.Status, []model.Evidence
 			ev = append(ev, model.Evidence{Kind: "note", Detail: fmt.Sprintf("download record without a commit SHA: %s@%s", d.Uses, d.Ref)})
 			continue
 		}
-		if b[repoKey(d.Uses)][d.SHA] {
+		if anySHA(b, d.SHA) {
 			st = model.Affected
 			detail := fmt.Sprintf("job log: downloaded %s@%s", d.Uses, d.Ref)
 			if d.Ref != d.SHA {
@@ -121,11 +129,11 @@ func matchRefs(uses []string, bad []incident.Action, pinned, mutable string) (mo
 			continue
 		}
 		shas := b[repoKey(name)]
-		if shas == nil {
+		if shas == nil && !anySHA(b, ref) {
 			continue
 		}
 		switch {
-		case shas[ref]:
+		case anySHA(b, ref):
 			st = model.Affected
 			ev = append(ev, model.Evidence{Kind: "action", Detail: fmt.Sprintf(pinned, u)})
 		case model.CommitSHA.MatchString(ref):

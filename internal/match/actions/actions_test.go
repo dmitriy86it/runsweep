@@ -125,3 +125,16 @@ func TestMalformedDownloadRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestForkedActionMatchesBySHA(t *testing.T) {
+	log := "2025-03-14T18:01:02Z Download action repository 'myorg/changed-files@v45' (SHA:" + sha + ")"
+	if st, _ := MatchLog(log, bad); st != model.Affected {
+		t.Errorf("log: fork at a compromised SHA: %v", st)
+	}
+	if st, _ := MatchUses([]string{"myorg/changed-files@" + sha}, bad); st != model.Affected {
+		t.Errorf("uses: fork at a compromised SHA: %v", st)
+	}
+	if st, _ := MatchUses([]string{"myorg/changed-files@v45"}, bad); st != model.Clean {
+		t.Errorf("a tag matches only the exact name: %v", st)
+	}
+}
