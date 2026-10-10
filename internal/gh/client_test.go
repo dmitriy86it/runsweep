@@ -642,3 +642,49 @@ func TestJobLogMemory(t *testing.T) {
 		t.Errorf("allocated %d MB for a %d MB log", got>>20, len(body)>>20)
 	}
 }
+
+// Concurrent requests for the same tree, blob or file share one API call; a failure is not remembered.
+func TestConcurrentFetchesShareOneCall(t *testing.T) {
+	var calls, fails atomic.Int32
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond) // long enough for all callers to be waiting
+		if strings.Contains(r.URL.Path, "/missing") {
+			fails.Add(1)
+			http.NotFound(w, r)
+			return
+		}
+		calls.Add(1)
+		if strings.Contains(r.URL.Path, "/git/trees/") {
+			_, _ = w.Write([]byte(`{"sha":"s","tree":[{"path":"a","type":"blob","sha":"b"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte("body"))
+	}))
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			if e, _, err := c.Tree(ctx, "o/r", "sha"); err != nil || len(e) != 1 {
+				t.Errorf("tree: %v %v", e, err)
+			}
+			if b, err := c.Blob(ctx, "o/r", "blob", 1<<20); err != nil || string(b) != "body" {
+				t.Errorf("blob: %q %v", b, err)
+			}
+			if b, err := c.File(ctx, "o/r", "ref", "p.yml", 1<<20); err != nil || string(b) != "body" {
+				t.Errorf("file: %q %v", b, err)
+			}
+		})
+	}
+	wg.Wait()
+	if n := calls.Load(); n != 3 {
+		t.Errorf("%d API calls for 8 x (tree, blob, file), want 3", n)
+	}
+	for range 2 {
+		if _, err := c.Blob(ctx, "o/r", "missing", 1<<20); !errors.Is(err, source.ErrNoAccess) {
+			t.Fatal(err)
+		}
+	}
+	if fails.Load() != 2 {
+		t.Errorf("an error was cached: %d calls for 2 sequential requests", fails.Load())
+	}
+}
