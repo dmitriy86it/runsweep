@@ -141,7 +141,7 @@ func TestStaleLockfileKeepsPin(t *testing.T) {
 		"dev dependency":     {"package.json": `{"dependencies":{"axios":"^1.14.0"},"devDependencies":{"jest":"^29"}}`, "package-lock.json": badRootLock},
 	} {
 		r := matchFiles(t, files)
-		if r.Status != model.Affected || len(r.Pins) != 1 || len(r.Pinned) != 1 ||
+		if r.Status != model.Affected || len(r.Pinned) != 1 ||
 			!slices.ContainsFunc(r.Evidence, func(e model.Evidence) bool {
 				return strings.Contains(e.Detail, "lockfile may not be what npm installed")
 			}) {
@@ -154,7 +154,7 @@ func TestStaleLockfileKeepsPin(t *testing.T) {
 		"package-lock.json": `{"lockfileVersion":3,"packages":{"":{"dependencies":{"axios":"^1.14.0"}},"node_modules/axios":{"version":"1.14.0"}}}`,
 		".npmrc":            "package-lock=false\n",
 	})
-	if r.Status != model.Unchecked || len(r.Pins) != 0 {
+	if r.Status != model.Unchecked || len(r.Pinned) != 0 {
 		t.Errorf("%v %+v", r.Status, r.Evidence)
 	}
 }
@@ -167,7 +167,7 @@ func TestLockfileNpmUsesIsAffected(t *testing.T) {
 		"npmrc keeps the lock":    {"package.json": `{"dependencies":{"axios":"^1.14.0"}}`, "package-lock.json": badRootLock, ".npmrc": "package-lock=true\n"},
 		"npmrc of another folder": {"package.json": `{"dependencies":{"axios":"^1.14.0"}}`, "package-lock.json": badRootLock, "web/.npmrc": "package-lock=false\n"},
 	} {
-		if r := matchFiles(t, files); r.Status != model.Affected || len(r.Pins) != 1 {
+		if r := matchFiles(t, files); r.Status != model.Affected || len(r.Pinned) != 1 {
 			t.Errorf("%s: %v %+v", name, r.Status, r.Evidence)
 		}
 	}

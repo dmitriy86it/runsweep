@@ -30,22 +30,12 @@ type Result struct {
 	// Unlocked: bad packages declared in a package.json below the root that no lockfile covers;
 	// whether that is POSSIBLE depends on the job installing it (Resolve).
 	Unlocked []Unlocked
-	// Pinned: directories of the lockfiles that pin a bad version; Pins: that evidence, also in Evidence.
+	// Pinned: directories of the lockfiles that pin a bad version.
 	Pinned []string
-	Pins   []model.Evidence
-	rest   model.Status // Status without the pins
 }
 
 // mark raises the status for evidence other than a pin.
-func (r *Result) mark(s model.Status) {
-	r.Status, r.rest = model.Worse(r.Status, s), model.Worse(r.rest, s)
-}
-
-// WithoutPins returns r without the lockfile pins: the status and evidence of everything else.
-func (r Result) WithoutPins() Result {
-	ev := slices.DeleteFunc(slices.Clone(r.Evidence), func(e model.Evidence) bool { return slices.Contains(r.Pins, e) })
-	return Result{Status: r.rest, Evidence: ev, Unlocked: r.Unlocked, rest: r.rest}
-}
+func (r *Result) mark(s model.Status) { r.Status = model.Worse(r.Status, s) }
 
 // Unlocked is a bad package declared in Dir/package.json with no covering lockfile.
 type Unlocked struct {
@@ -55,7 +45,7 @@ type Unlocked struct {
 // Resolve folds r.Unlocked into the status: POSSIBLE where installed(Dir), otherwise UNCHECKED
 // with a note that the job does not seem to install it.
 func (r Result) Resolve(installed func(dir string) bool) Result {
-	out := Result{Status: r.Status, Evidence: slices.Clone(r.Evidence), Pinned: r.Pinned, Pins: r.Pins, rest: r.rest}
+	out := Result{Status: r.Status, Evidence: slices.Clone(r.Evidence), Pinned: r.Pinned}
 	for _, u := range r.Unlocked {
 		if installed(u.Dir) {
 			out.mark(model.Possible)
@@ -170,16 +160,6 @@ func (c *Cache) load(ctx context.Context, f Fetcher, repo string, e source.TreeE
 // lockfile there or above, or a lockfile runsweep cannot read, yields UNCHECKED. Once a lockfile
 // pins a bad version, package.json files are not read.
 func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMPackage) (Result, error) {
-	return c.match(ctx, f, repo, sha, bad, false)
-}
-
-// MatchAll is Match that also reads the package.json files when a lockfile pins a bad version,
-// so WithoutPins tells what the rest of the tree gives.
-func (c *Cache) MatchAll(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMPackage) (Result, error) {
-	return c.match(ctx, f, repo, sha, bad, true)
-}
-
-func (c *Cache) match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMPackage, all bool) (Result, error) {
 	var r Result
 	entries, truncated, err := f.Tree(ctx, repo, sha)
 	if err != nil {
@@ -225,7 +205,7 @@ func (c *Cache) match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 		}
 		pkgs, err := p.pkgs, p.err
 		var stale string
-		pinned := len(r.Pins)
+		hasPin := false
 		if err == nil {
 			if stale, err = c.stale(ctx, f, repo, e, p.root, byPath); err != nil {
 				return r, err
@@ -253,14 +233,13 @@ func (c *Cache) match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 				continue
 			}
 			r.Status = model.Affected
-			r.Evidence, r.Pins = append(r.Evidence, pin), append(r.Pins, pin)
+			r.Evidence, hasPin = append(r.Evidence, pin), true
 			if !slices.Contains(r.Pinned, dir) {
 				r.Pinned = append(r.Pinned, dir)
 			}
 		}
 		// The pin keeps its status: npm ci installs the lockfile and npm install keeps what still
 		// satisfies package.json. Without a pin, a lockfile npm may not use is UNCHECKED.
-		hasPin := len(r.Pins) > pinned
 		if stale != "" {
 			if !hasPin {
 				r.mark(model.Unchecked)
@@ -281,7 +260,7 @@ func (c *Cache) match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			failedDirs[dir] = true
 		}
 	}
-	if len(r.Pins) == 0 || all { // a pin makes the job AFFECTED; the rest is read only when asked
+	if len(r.Pinned) == 0 { // a pin makes the job AFFECTED; package.json files would add nothing
 		type pkgJSON struct {
 			path, name string
 			names      []string
