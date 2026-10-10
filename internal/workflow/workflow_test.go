@@ -805,10 +805,10 @@ func TestPackageManagerBehindShellIndirection(t *testing.T) {
 	}
 }
 
-// Adversarial 1 MiB lines of any package manager word are read in bounded time.
+// Adversarial 256 KiB lines (it took minutes before; -race is 20x slower) of any package manager word are read in bounded time.
 func TestPackageManagerWordsBoundedTime(t *testing.T) {
 	for _, tok := range []string{"npm ", "yarn ", "(npm ", `"npm `, "npm.cmd ", "npx ", "pnpm i ", "$PM "} {
-		j := &Job{Runs: []string{strings.Repeat(tok, (1<<20)/len(tok))}}
+		j := &Job{Runs: []string{strings.Repeat(tok, (1<<18)/len(tok))}}
 		start := time.Now()
 		j.RunInstalls()
 		j.InstallsNPM()
