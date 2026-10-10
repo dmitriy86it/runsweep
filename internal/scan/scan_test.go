@@ -1436,3 +1436,12 @@ jobs:
 		t.Errorf("push: %+v", res.Findings)
 	}
 }
+
+func TestPullRequestTargetPinIsOnlyPossible(t *testing.T) {
+	wf := "on: pull_request_target\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps: [{run: npm ci}]\n"
+	res := runOne(t, "pull_request_target", wf, scanBadLock, "build")
+	if len(res.Findings) != 1 || res.Findings[0].Status != model.Possible ||
+		!strings.Contains(fmt.Sprint(res.Findings[0].Evidence), "the run used the base branch") {
+		t.Fatalf("want POSSIBLE with a note: %+v", res.Findings)
+	}
+}
