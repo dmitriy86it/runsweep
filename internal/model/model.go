@@ -109,6 +109,9 @@ type Result struct {
 	Skipped    []Skip         `json:"skipped"`
 	// RetentionWarning: the window started more than 90 days ago, so missing runs prove nothing.
 	RetentionWarning bool `json:"retention_warning,omitempty"`
+	// Incomplete: the scan ended in a fatal error (Error), so an empty report proves nothing.
+	Incomplete bool   `json:"incomplete,omitempty"`
+	Error      string `json:"error,omitempty"`
 	// Lookback is how long before the window runs were listed to catch re-runs (text report only).
 	Lookback time.Duration `json:"-"`
 }

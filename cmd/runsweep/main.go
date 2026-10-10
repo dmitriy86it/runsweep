@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -125,6 +126,20 @@ func validateTargets(repos []string, org string) error {
 	}
 	if org != "" && !orgRe.MatchString(org) {
 		return fmt.Errorf("invalid --org %q", org)
+	}
+	return nil
+}
+
+// refuseEnterprise fails when GITHUB_API_URL or GH_HOST name a host other than github.com: the
+// client only talks to api.github.com, and a token for another host must not be sent there.
+func refuseEnterprise() error {
+	if v := strings.TrimSpace(os.Getenv("GITHUB_API_URL")); v != "" {
+		if u, err := url.Parse(v); err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "api.github.com") {
+			return fmt.Errorf("GitHub Enterprise is not supported yet (GITHUB_API_URL=%s)", v)
+		}
+	}
+	if v := strings.TrimSpace(os.Getenv("GH_HOST")); v != "" && !strings.EqualFold(v, "github.com") {
+		return fmt.Errorf("GitHub Enterprise is not supported yet (GH_HOST=%s)", v)
 	}
 	return nil
 }
@@ -256,6 +271,9 @@ Exit codes:
 			if err := inc.Validate(); err != nil {
 				return err
 			}
+			if err := refuseEnterprise(); err != nil {
+				return err
+			}
 			token, err := d.token(c.Context())
 			if err != nil {
 				return err
@@ -273,6 +291,21 @@ Exit codes:
 				return scanErr
 			}
 			res.RetentionWarning = inc.Window.Start.Before(time.Now().Add(-90 * 24 * time.Hour))
+			findings := res.Count(model.Affected)+res.Count(model.Possible) > 0
+			var fatal error // the reasons for exit 2 after a report; the report must not look clean
+			switch {
+			case scanErr != nil:
+				if errors.Is(scanErr, source.ErrAuth) && !findings {
+					fatal = scanErr
+				}
+			case res.ReposTargeted == 0:
+				fatal = errors.New("no repositories to scan (does the token have access to the organization?)")
+			case len(res.Skipped) == res.ReposTargeted:
+				fatal = errors.New("no repository could be scanned (missing access?)")
+			}
+			if fatal != nil {
+				res.Incomplete, res.Error = true, fatal.Error()
+			}
 			switch format {
 			case "json":
 				err = report.JSON(c.OutOrStdout(), inc, res)
@@ -299,12 +332,8 @@ Exit codes:
 			if res.RetentionWarning {
 				warn("%s", report.RetentionNote)
 			}
-			findings := res.Count(model.Affected)+res.Count(model.Possible) > 0
 			if scanErr != nil {
 				return stopped(c.ErrOrStderr(), scanErr, findings)
-			}
-			if res.ReposTargeted == 0 {
-				return errors.New("no repositories to scan (does the token have access to the organization?)")
 			}
 			if n := len(res.Skipped); n > 0 {
 				noun := "repositories"
@@ -312,9 +341,9 @@ Exit codes:
 					noun = "repository"
 				}
 				warn("%d %s skipped (see report)", n, noun)
-				if n == res.ReposTargeted {
-					return errors.New("no repository could be scanned (missing access?)")
-				}
+			}
+			if fatal != nil {
+				return fatal
 			}
 			if findings {
 				return exitFindings
