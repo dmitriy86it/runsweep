@@ -1515,3 +1515,28 @@ func TestBaseEventCapsUsesAtPossible(t *testing.T) {
 		}
 	}
 }
+
+func TestScanDedupesReposByCase(t *testing.T) {
+	f := fixture()
+	f.Runs["O/A"] = f.Runs["o/a"]
+	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"O/A", "o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ReposTargeted != 1 || res.RunsScanned != 1 {
+		t.Fatalf("one repository under two spellings: %+v", res)
+	}
+}
+
+func TestScanNotesUnknownTokenPermsWithoutLog(t *testing.T) {
+	f := fixture()
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1]
+	f.GoneLogs[10], f.GoneLogs[11] = true, true
+	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasNote(res.Findings[0], "GITHUB_TOKEN permissions unknown (log unavailable)") {
+		t.Fatalf("%+v", res.Findings[0])
+	}
+}

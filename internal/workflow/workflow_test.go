@@ -860,3 +860,13 @@ func TestRunInstallsCapsPackageManagerWords(t *testing.T) {
 		t.Error("the cap is maxMatches words")
 	}
 }
+
+func TestSecretRefMustStandAlone(t *testing.T) {
+	w, err := Parse([]byte("on: push\njobs:\n  a: {runs-on: x, steps: [{run: \"echo ${{ vars.secrets.NOT }} ${{ steps.x.outputs.secrets.OUT }} ${{ secrets.REAL }} ${{ (secrets.PAREN) }}\"}]}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := w.Exposure(w.Jobs["a"]); !slices.Equal(e.Secrets, []string{"PAREN", "REAL"}) {
+		t.Errorf("secrets: %v", e.Secrets)
+	}
+}

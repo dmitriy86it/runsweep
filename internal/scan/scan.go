@@ -121,7 +121,12 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 		repos = append(repos, r...)
 	}
 	sort.Strings(repos)
-	repos = slices.Compact(repos)
+	seen := map[string]bool{} // GitHub names are case-insensitive; the first spelling stays
+	repos = slices.DeleteFunc(repos, func(r string) bool {
+		k := strings.ToLower(r)
+		defer func() { seen[k] = true }()
+		return seen[k]
+	})
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	res := &model.Result{ReposTargeted: len(repos), IncidentID: inc.ID, Start: inc.Window.Start, End: inc.Window.End,
@@ -552,6 +557,8 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			}
 			if logErr == nil {
 				e.TokenPerms = workflow.ParseTokenPerms(log)
+			} else {
+				f.Evidence = append(f.Evidence, note("GITHUB_TOKEN permissions unknown (log unavailable)"))
 			}
 			f.Exposure = &e
 		}
