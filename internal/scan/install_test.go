@@ -86,6 +86,19 @@ func TestInstallLogIgnoresStepEcho(t *testing.T) {
 	}
 }
 
+// A script's own "::group::Run tests" is not the runner's echo: install output inside it counts.
+func TestInstallLogCountsOutputInsideUserGroup(t *testing.T) {
+	log := "2026-03-31T01:00:00Z ##[group]Run tests\n2026-03-31T01:00:00Z added 5 packages in 2s\n2026-03-31T01:00:00Z ##[endgroup]\n"
+	if !installLog(log) {
+		t.Error("output inside a group")
+	}
+	multi := "2026-03-31T01:00:00Z ##[group]Run |\n2026-03-31T01:00:00Z \x1b[36;1mnpm i -g x\x1b[0m\n2026-03-31T01:00:00Z \x1b[36;1mnpm ci\x1b[0m\n" +
+		"2026-03-31T01:00:00Z shell: /usr/bin/bash -e {0}\n2026-03-31T01:00:00Z ##[endgroup]\n"
+	if installLog(multi) {
+		t.Error("echo of a multi-line script")
+	}
+}
+
 // A stale lockfile or package-lock=false never lowers a pin: npm ci installs the lockfile anyway.
 func TestScanStaleLockfileKeepsPin(t *testing.T) {
 	log := "2026-03-31T01:00:00Z ##[group]Run npm ci\n2026-03-31T01:00:00Z ##[endgroup]\n2026-03-31T01:00:00Z added 1 package in 1s\n"

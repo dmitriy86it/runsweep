@@ -34,21 +34,14 @@ var installLogLiterals = []string{"npm ", "package", "up to date", "Packages: +"
 	"yarn install", "Saved lockfile", "YN0000", "bun install"}
 
 // installLog reports whether the job log shows output of a package install. The runner's echo of a
-// step ("##[group]Run <script>" up to "##[endgroup]", the script in cyan) is not output: it only
-// shows what the step was told to run, e.g. `npm i -g x` or `echo "run npm ci"`.
+// step is not output: the "##[group]Run <script>" header and the script lines in cyan show what the
+// step was told to run, e.g. `npm i -g x`. Everything else counts, also inside a group: a script
+// can print its own "::group::Run tests" and real install output follows.
 func installLog(log string) bool {
-	inEcho := false
 	for log != "" {
 		var line string
 		line, log, _ = strings.Cut(log, "\n")
-		switch {
-		case strings.Contains(line, "##[group]Run "):
-			inEcho = true
-			continue
-		case inEcho:
-			inEcho = !strings.Contains(line, "##[endgroup]")
-			continue
-		case strings.Contains(line, "\x1b[36;1m"):
+		if strings.Contains(line, "##[group]Run ") || strings.Contains(line, "\x1b[36;1m") {
 			continue
 		}
 		if slices.ContainsFunc(installLogLiterals, func(l string) bool { return strings.Contains(line, l) }) && installLogRe.MatchString(line) {
