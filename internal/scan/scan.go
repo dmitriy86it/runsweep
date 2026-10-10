@@ -29,6 +29,13 @@ var installLogRe = regexp.MustCompile(`npm (ci|install|i)\b|(added|removed|chang
 	`yarn install|success Saved lockfile|\[\d/\d\] (Resolving|Fetching) packages|YN0000: .*(Resolution step|Fetch step|Link step)|` +
 	`bun install|\d+ packages? installed`)
 
+// installLogLiterals: every match of installLogRe contains one of them.
+var installLogLiterals = []string{"npm ", "package", "up to date", "pnpm ", "Packages: +", "Progress: resolved",
+	"Lockfile is up", "yarn install", "Saved lockfile", "ing packages", "YN0000", "bun install", "installed"}
+
+// installLog reports whether the job log shows a package install.
+func installLog(log string) bool { return workflow.MatchLines(installLogRe, installLogLiterals, log) }
+
 // concurrency is how many runs of a repository are scanned at once; tests set 1 for a fixed order.
 var concurrency = 10
 
@@ -349,6 +356,9 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 	var npmAllErr error
 	var out []model.Finding
 	for _, job := range jobs {
+		if err := ctx.Err(); err != nil { // Ctrl-C: keep the jobs judged so far
+			return out, len(jobs), err
+		}
 		if job.Conclusion == "skipped" {
 			continue // never ran: no runner, no install, no log
 		}
@@ -394,7 +404,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			return rj == nil || rj.Mentions(dir) || logErr == nil && strings.Contains(log, dir)
 		}
 		npmJob := npmRes.Resolve(mentioned)
-		logInstall := logErr == nil && (installLogRe.MatchString(log) || workflow.CallsPackageManager(log))
+		logInstall := logErr == nil && (installLog(log) || workflow.CallsPackageManager(log))
 		// quiet: the log was read and shows no install or package-manager call (output may be
 		// silenced), and the job (every job when unidentified) names no install.
 		quiet := logErr == nil && !logInstall && len(installs) == 0 && (rj == nil || !rj.InstallsNPM())
@@ -403,7 +413,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		// steps or log name. A quiet identified job that runs no opaque script (a silent install)
 		// drops the pin and keeps the rest; else the pin is POSSIBLE.
 		if npmJob.Status == model.Affected {
-			installed := logErr == nil && installLogRe.MatchString(log) || wj != nil && wj.InstallsNPMStrict()
+			installed := logErr == nil && installLog(log) || wj != nil && wj.InstallsNPMStrict()
 			related := slices.ContainsFunc(npmRes.Pinned, func(dir string) bool {
 				return dir == "." || wj != nil && wj.Mentions(dir) || logErr == nil && pathInLog(log, dir)
 			})

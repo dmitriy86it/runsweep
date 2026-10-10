@@ -15,6 +15,7 @@ import (
 	"github.com/runsweep/runsweep/internal/model"
 	"github.com/runsweep/runsweep/internal/source"
 	"github.com/runsweep/runsweep/internal/source/sourcetest"
+	"github.com/runsweep/runsweep/internal/workflow"
 )
 
 const actionSHA = "0e58ed8671d6b60d0890c21b07f8835ace038e67"
@@ -1208,7 +1209,26 @@ func TestInstallLogRe(t *testing.T) {
 		if installLogRe.MatchString(line) != want {
 			t.Errorf("%q: want %v", line, want)
 		}
+		// the literal prefilter must not change the answer, alone or among other lines
+		if installLog(line) != want || installLog("a\n2026-01-01T00:00:00Z "+line+"\r\nb") != want {
+			t.Errorf("%q: installLog want %v", line, want)
+		}
 	}
+}
+
+func BenchmarkInstallLog(b *testing.B) {
+	log := strings.Repeat("2026-03-31T01:00:00.0000000Z Compiling serde v1.0.210 (/home/runner/work/x)\n", 100_000)
+	b.Run("prefilter", func(b *testing.B) {
+		for range b.N {
+			installLog(log)
+			workflow.CallsPackageManager(log)
+		}
+	})
+	b.Run("regexp", func(b *testing.B) {
+		for range b.N {
+			installLogRe.MatchString(log)
+		}
+	})
 }
 
 // Fix round 1: an unidentified job is judged by every job's installs, and a package manager

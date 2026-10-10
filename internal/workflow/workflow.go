@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -84,13 +85,12 @@ var (
 	secretsID = regexp.MustCompile(`(?i)\bsecrets\b`)
 	namedRe   = regexp.MustCompile(`^(\.[A-Za-z_]|\[\s*['"])`)
 	// package-manager binary as a word anywhere in a script; over-reports (e.g. `echo npm`) by design
-	installRe = regexp.MustCompile(`(?:^|[^\w./-])(npm|npx|yarn|pnpm|pnpx|bun|bunx)(?:$|[^\w.-])`)
-	// a package manager install command: an install subcommand after optional flags, or bare yarn
-	installCmdRe = regexp.MustCompile(`(?m)(?:^|[^\w./-])(?:(?:npm|pnpm|yarn|bun)(?:[ \t]+-\S+(?:[ \t]+[^-\s;&|]\S*)?)*[ \t]+(?:ci|cit|clean-install|install-clean|install-ci-test|install|isntall|i|it|install-test|add|update|up|upgrade)(?:$|[^\w.-])|yarn(?:[ \t]+-\S+)*[ \t]*(?:$|[;&|)]))`)
+	installRe = regexp.MustCompile(`(?:^|[^\w./-])(npm|npx|yarn|pnpm|pnpx|bun|bunx)(?:\.cmd|\.exe)?(?:$|[^\w.-])`)
 	// opaque runners and scripts that may install npm packages without naming npm in the workflow
-	opaqueRe = regexp.MustCompile(`(?:^|[^\w./-])(?:(?:make|task|just|mise|nx|turbo|lerna|rush|corepack|python3?|node|docker(?:-compose)?|podman|buildah|mvnw?|gradlew?|sbt|bazel|dotnet|composer)(?:$|[^\w.-])|(?:ba|z)?sh\s+\S)|(?:^|[\s;&|(])\./[\w-]|\.sh\b`)
-	// a package manager command, up to a newline or shell separator; runInstalls reads its arguments
-	runtimeRe = regexp.MustCompile(`(?:^|[^\w./-])(npx|pnpx|bunx|npm|pnpm|yarn|bun)(?:$|[ \t]+([^\n;&|)]*))`)
+	// (a command word that is a variable, a substitution or eval can be a package manager too)
+	opaqueRe = regexp.MustCompile(`(?:^|[^\w./-])(?:(?:make|task|just|mise|nx|turbo|lerna|rush|corepack|python3?|node|docker(?:-compose)?|podman|buildah|mvnw?|gradlew?|sbt|bazel|dotnet|composer)(?:$|[^\w.-])|(?:ba|z)?sh\s+\S)|(?:^|[\s;&|(])\./[\w-]|\.sh\b|(?m:(?:^|[;&|({]|\b(?:then|do|else)\b)[ \t]*["']?(?:\$|eval\b|` + "`" + `))`)
+	// a package manager command word; runInstalls reads its arguments
+	runtimeRe = regexp.MustCompile(`(?:^|[^\w./-])(npx|pnpx|bunx|npm|pnpm|yarn|bun)((?:\.cmd|\.exe)?)(?:$|[ \t])`)
 	// a github-script that runs a process, which may be a package manager named in a variable
 	scriptExecRe = regexp.MustCompile("exec\\.exec|execSync|execFileSync|spawn|spawnSync|child_process|\\$`")
 	tplRe        = regexp.MustCompile(`\$\{\{.*?\}\}`)
@@ -277,10 +277,68 @@ func (j *Job) InstallsNPM() bool {
 }
 
 // InstallsNPMStrict reports whether the job surely installs dependencies: an install action or a
-// package manager install command (npm ci, pnpm i, bare yarn, ...). `npm test`, `npm run` and
-// runners such as npx do not count.
+// package manager install command (npm ci, pnpm i, bare yarn, ...) as a command word. `npm test`,
+// `npm run`, runners such as npx, global installs (-g) and mere mentions (`which yarn`,
+// `echo "run npm ci"`) do not count.
 func (j *Job) InstallsNPMStrict() bool {
-	return j.installAction() || slices.ContainsFunc(slices.Concat(j.Runs, j.Scripts), installCmdRe.MatchString)
+	return j.installAction() ||
+		slices.ContainsFunc(j.Runs, func(s string) bool { return installsFromLock(s, false) }) ||
+		slices.ContainsFunc(j.Scripts, func(s string) bool { return installsFromLock(s, true) })
+}
+
+// lockSubs are the subcommands that install from, or re-resolve, the lockfile.
+var lockSubs = map[string]bool{"ci": true, "cit": true, "clean-install": true, "install-clean": true,
+	"install-ci-test": true, "install": true, "isntall": true, "i": true, "in": true, "ins": true, "inst": true,
+	"insta": true, "instal": true, "isnt": true, "isnta": true, "isntal": true, "it": true, "install-test": true,
+	"add": true, "update": true, "up": true, "upgrade": true}
+
+var (
+	envAssignRe = regexp.MustCompile(`^[A-Za-z_]\w*=`)
+	quotedRe    = regexp.MustCompile(`"[^"\n]*"|'[^'\n]*'`)
+	// words that run the next word as a command
+	cmdPrefix = []string{"then", "do", "else", "elif", "if", "!", "time", "sudo", "exec", "env", "nohup", "xargs", "corepack"}
+)
+
+// installsFromLock reports whether script runs a package manager install as a command. In a shell
+// script a quoted string is not a command; in a github-script (js) each string literal is one.
+func installsFromLock(script string, js bool) bool {
+	script = continuation.Replace(script)
+	seps, quote := "\n;&|()`", quotedRe.ReplaceAllString
+	if js {
+		seps = "\n;&|()`'\",[]{}"
+		quote = func(s, _ string) string { return s }
+	}
+	for _, seg := range strings.FieldsFunc(quote(script, `""`), func(r rune) bool { return strings.ContainsRune(seps, r) }) {
+		fields, skipped := strings.Fields(seg), false
+		for len(fields) > 0 && (envAssignRe.MatchString(fields[0]) || slices.Contains(cmdPrefix, fields[0]) ||
+			skipped && strings.HasPrefix(fields[0], "-")) {
+			fields, skipped = fields[1:], true
+		}
+		if len(fields) == 0 {
+			continue
+		}
+		word := fields[0][strings.LastIndexAny(fields[0], `/\`)+1:]
+		tool := strings.TrimSuffix(strings.TrimSuffix(word, ".cmd"), ".exe")
+		if tool == "npm" || tool == "pnpm" || tool == "yarn" || tool == "bun" {
+			if lockInstall(tool, fields[1:]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func lockInstall(tool string, args []string) bool {
+	if slices.ContainsFunc(args, func(a string) bool { return a == "-g" || a == "--global" || a == "--location=global" }) {
+		return false
+	}
+	sub, _ := subcommand(tool, args)
+	if sub == "" { // bare yarn installs
+		return tool == "yarn" && !slices.ContainsFunc(args, func(a string) bool {
+			return a == "-v" || a == "--version" || a == "-h" || a == "--help"
+		})
+	}
+	return lockSubs[sub]
 }
 
 func (j *Job) installAction() bool {
@@ -297,7 +355,23 @@ func (j *Job) Mentions(dir string) bool {
 
 // CallsPackageManager reports whether s calls npm, npx, yarn, pnpm, pnpx, bun or bunx as a command
 // word; NPM_TOKEN or npm_config_* names do not count.
-func CallsPackageManager(s string) bool { return installRe.MatchString(s) }
+func CallsPackageManager(s string) bool {
+	return MatchLines(installRe, []string{"npm", "npx", "pnpx", "yarn", "bun"}, s)
+}
+
+// MatchLines is re.MatchString(s) for a regexp that never matches across lines and has one of
+// literals in every match: only the lines that contain a literal are matched, which skips most
+// of a big job log at a fraction of the cost.
+func MatchLines(re *regexp.Regexp, literals []string, s string) bool {
+	for s != "" {
+		line, rest, _ := strings.Cut(s, "\n")
+		if slices.ContainsFunc(literals, func(l string) bool { return strings.Contains(line, l) }) && re.MatchString(line) {
+			return true
+		}
+		s = rest
+	}
+	return false
+}
 
 // RunInstall is a command that installs or runs npm packages named in the workflow itself.
 type RunInstall struct {
@@ -326,6 +400,64 @@ var installSubs = map[string]bool{
 	"pnpm add": true, "yarn add": true, "bun add": true, "bun i": true, "bun install": true,
 	"npm exec": true, "npm x": true, "pnpm dlx": true, "yarn dlx": true, "bun x": true,
 	"npx": true, "pnpx": true, "bunx": true,
+	"pnpm i": true, "pnpm install": true,
+	"npm update": true, "npm up": true, "npm upgrade": true, "pnpm update": true, "pnpm up": true, "pnpm upgrade": true,
+	"yarn up": true, "yarn upgrade": true, "bun update": true,
+	"npm create": true, "npm init": true, "npm innit": true, "pnpm create": true, "yarn create": true, "bun create": true,
+}
+
+// updateSubs re-resolve every dependency when no package is named.
+var updateSubs = map[string]bool{"npm update": true, "npm up": true, "npm upgrade": true, "pnpm update": true,
+	"pnpm up": true, "pnpm upgrade": true, "yarn up": true, "yarn upgrade": true, "bun update": true}
+
+// createSubs run the package create-<name> (create-@scope/x is @scope/create-x).
+var createSubs = map[string]bool{"npm create": true, "npm init": true, "npm innit": true, "pnpm create": true,
+	"yarn create": true, "bun create": true}
+
+const (
+	maxArgs     = 64  // arguments read per command; more are named at run time
+	maxInstalls = 256 // commands read per script; more are named at run time
+)
+
+var argSep = func() (t [256]bool) {
+	for _, c := range " \t\r\v\f\n;&|)" {
+		t[c] = true
+	}
+	return
+}()
+
+// commandArgs reads the arguments of a command up to a newline or shell separator, at most maxArgs
+// of them; capped is true if there are more.
+func commandArgs(s string) (args []string, capped bool) {
+	for i, n := 0, 0; i < len(s); {
+		switch c := s[i]; {
+		case c == '\n' || c == ';' || c == '&' || c == '|' || c == ')':
+			return args, false
+		case argSep[c]:
+			i++
+		default:
+			if n++; n > maxArgs {
+				return args, true
+			}
+			j := i
+			for j < len(s) && !argSep[s[j]] {
+				j++
+			}
+			// a leading backtick stays: it marks a command substitution
+			if f := strings.TrimRight(strings.TrimLeft(s[i:j], `'",`), "'\"`,"); f != "" {
+				args = append(args, f)
+			}
+			i = j
+		}
+	}
+	return args, false
+}
+
+func createName(pkg string) string {
+	if scope, rest, ok := strings.Cut(pkg, "/"); ok && strings.HasPrefix(scope, "@") {
+		return scope + "/create-" + rest
+	}
+	return "create-" + pkg
 }
 
 // valueFlags take the next argument as their value, so it is neither a subcommand nor a package.
@@ -349,18 +481,14 @@ func runInstalls(script string) []RunInstall {
 		if m == nil {
 			break
 		}
-		tool := script[pos+m[2] : pos+m[3]]
-		var args []string
-		if m[4] >= 0 {
-			for _, f := range strings.Fields(script[pos+m[4] : pos+m[5]]) {
-				// a leading backtick stays: it marks a command substitution
-				if f = strings.TrimRight(strings.TrimLeft(f, `'",`), "'\"`,"); f != "" {
-					args = append(args, f)
-				}
-			}
+		if len(out) == maxInstalls {
+			out = append(out, RunInstall{Cmd: "more than " + strconv.Itoa(maxInstalls) + " package manager commands", Dynamic: true})
+			break
 		}
-		pos += m[3] // resume after the tool name: `…` and $(…) in its arguments are commands too
-		cmd := tool
+		tool, written := script[pos+m[2]:pos+m[3]], script[pos+m[2]:pos+m[5]]
+		args, capped := commandArgs(script[pos+m[5]:])
+		pos += m[5] // resume after the tool name: `…` and $(…) in its arguments are commands too
+		cmd := written
 		for _, a := range args {
 			cmd += " " + strings.Trim(a, "`")
 		}
@@ -397,8 +525,14 @@ func runInstalls(script string) []RunInstall {
 					dynamic = true
 				} else {
 					pkgs = append(pkgs, n)
+					if createSubs[key] {
+						pkgs = append(pkgs, createName(n))
+					}
 				}
 			}
+		}
+		if len(pkgs) == 0 && updateSubs[key] || capped {
+			dynamic = true // update re-resolves every dependency
 		}
 		if len(pkgs) > 0 || dynamic {
 			out = append(out, RunInstall{Cmd: cmd, Pkgs: pkgs, Dynamic: dynamic})

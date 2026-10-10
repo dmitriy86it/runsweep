@@ -685,3 +685,122 @@ func TestFindJobTemplatedNameShadowsExactHit(t *testing.T) {
 		t.Error("an unambiguous unnamed job is identified by its ID")
 	}
 }
+
+// A 1 MiB line of package manager names must be read in linear time (it took days).
+func TestRunInstallsLinear(t *testing.T) {
+	script := strings.Repeat("npx ", 256*1024)
+	start := time.Now()
+	j := &Job{Runs: []string{script}}
+	ins := j.RunInstalls()
+	j.InstallsNPM()
+	j.InstallsNPMStrict()
+	j.MayInstallNPM()
+	if d := time.Since(start); d > time.Second {
+		t.Errorf("took %v", d)
+	}
+	if len(ins) == 0 || !slices.ContainsFunc(ins, func(in RunInstall) bool { return in.Dynamic }) {
+		t.Error("a script cut short must be marked as naming packages at run time")
+	}
+}
+
+func TestRunInstallsMoreForms(t *testing.T) {
+	for script, want := range map[string][]string{
+		"pnpm i axios@latest":        {"pnpm i axios@latest", "axios"},
+		"pnpm install axios":         {"pnpm install axios", "axios"},
+		"npm update axios":           {"npm update axios", "axios"},
+		"npm up axios":               {"npm up axios", "axios"},
+		"pnpm up --latest axios":     {"pnpm up --latest axios", "axios"},
+		"yarn upgrade axios":         {"yarn upgrade axios", "axios"},
+		"yarn up axios":              {"yarn up axios", "axios"},
+		"bun update axios":           {"bun update axios", "axios"},
+		"npm update":                 {"npm update", "DYN"},
+		"pnpm up":                    {"pnpm up", "DYN"},
+		"yarn upgrade":               {"yarn upgrade", "DYN"},
+		"npm create vite":            {"npm create vite", "vite", "create-vite"},
+		"npm init @scope/app":        {"npm init @scope/app", "@scope/app", "@scope/create-app"},
+		"pnpm create vite":           {"pnpm create vite", "vite", "create-vite"},
+		"yarn create vite":           {"yarn create vite", "vite", "create-vite"},
+		"bun create vite":            {"bun create vite", "vite", "create-vite"},
+		"npm.cmd i axios":            {"npm.cmd i axios", "axios"},
+		"npx.cmd axios":              {"npx.cmd axios", "axios"},
+		"bun upgrade":                nil,
+		"npm init -y":                nil,
+		"npm npm npm npm":            nil,
+		"npm install $PKG && npm ci": {"npm install $PKG", "DYN"},
+	} {
+		var got []string
+		for _, in := range runInstalls(script) {
+			got = append(append(got, in.Cmd), in.Pkgs...)
+			if in.Dynamic {
+				got = append(got, "DYN")
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%q: got %q, want %q", script, got, want)
+		}
+	}
+}
+
+func TestInstallsNPMStrictForms(t *testing.T) {
+	for run, want := range map[string]bool{
+		"npm.cmd ci --silent":              true,
+		`C:\node\npm.cmd ci`:               true,
+		"pnpm i axios":                     true,
+		"npm update":                       true,
+		"sudo -E npm ci":                   true,
+		"corepack yarn install":            true,
+		"cd web\nnpm ci":                   true,
+		"x=`npm ci`":                       true,
+		"npm i -g left-pad":                false,
+		"npm install --global left-pad":    false,
+		"yarn global add left-pad":         false,
+		"which yarn":                       false,
+		"corepack enable yarn":             false,
+		`echo "run npm ci"`:                false,
+		"echo run npm ci":                  false,
+		"yarn --version":                   false,
+		"npm run ci":                       false,
+		"$PM ci":                           false,
+		"command -v pnpm || npm i -g pnpm": false,
+		"command -v yarn":                  false,
+	} {
+		if got := (&Job{Runs: []string{run}}).InstallsNPMStrict(); got != want {
+			t.Errorf("%q: got %v", run, got)
+		}
+	}
+	// a github-script runs the command from a string literal
+	if !(&Job{Scripts: []string{"execSync('npm ci')"}}).InstallsNPMStrict() {
+		t.Error("execSync('npm ci')")
+	}
+	if (&Job{Scripts: []string{"console.log('run npm ci')"}}).InstallsNPMStrict() {
+		t.Error("a mention in a script")
+	}
+}
+
+// A package manager named by a variable, a substitution or eval may install: opaque, never CLEAN.
+func TestPackageManagerBehindShellIndirection(t *testing.T) {
+	for run, want := range map[string]bool{
+		"$PM ci --silent":       true,
+		"${PM} ci":              true,
+		`"$PM" ci`:              true,
+		"${{ env.PM }} ci":      true,
+		"cd web && $PM ci":      true,
+		"if x; then $PM ci; fi": true,
+		`eval "npm ci"`:         true,
+		"$(which npm) ci":       true,
+		"echo $PM":              false,
+		"export PM=npm":         false,
+		"echo done":             false,
+	} {
+		j := &Job{Runs: []string{run}}
+		if got := j.RunsOpaque(); got != want {
+			t.Errorf("%q: RunsOpaque %v", run, got)
+		}
+		if j.MayInstallNPM() != (want || CallsPackageManager(run)) {
+			t.Errorf("%q: MayInstallNPM %v", run, j.MayInstallNPM())
+		}
+	}
+	if !CallsPackageManager("PM: npm.cmd") || !(&Job{Runs: []string{"npm.exe ci"}}).InstallsNPM() {
+		t.Error("npm.cmd and npm.exe are npm")
+	}
+}
