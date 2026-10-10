@@ -1366,3 +1366,73 @@ func TestScanUncheckedExposure(t *testing.T) {
 		t.Fatalf("rotation %+v, unverified %+v", res.Rotation, res.Unverified)
 	}
 }
+
+const m3Workflow = `on: push
+jobs:
+  build:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps: [{run: echo lint}]
+  deploy:
+    name: ${{ 'build' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: npm ci
+        env: {NPM_TOKEN: "${{ secrets.NPM_TOKEN }}"}
+`
+
+const scanBadLock = `{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`
+
+const scanGoodLock = `{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.0"}}}`
+
+var npmInc = &incident.Incident{ID: "t", Window: inc.Window,
+	NPM: []incident.NPMPackage{{Name: "axios", Versions: []string{"1.14.1"}}}}
+
+func runOne(t *testing.T, event, wf, lock, jobName string) *model.Result {
+	t.Helper()
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Event: event, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+	f.Jobs[1] = []source.Job{{ID: 10, Name: jobName}}
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(wf))
+	f.AddFile("o/a", "s1", "package-lock.json", []byte(lock))
+	f.Logs[10] = "2026-03-31T01:00:00Z ##[group]Run npm ci\nadded 1 package in 1s\n"
+	res, err := Run(context.Background(), f, npmInc, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func TestTemplatedNameEqualToOtherJobIDKeepsSecrets(t *testing.T) {
+	res := runOne(t, "push", m3Workflow, scanBadLock, "build")
+	all := append(slices.Clone(res.Rotation), res.Unverified...)
+	if !slices.ContainsFunc(all, func(r model.RotationItem) bool { return r.Name == "NPM_TOKEN" }) {
+		t.Errorf("NPM_TOKEN hidden: findings=%+v rotation=%+v", res.Findings, all)
+	}
+}
+
+func TestPullRequestTargetIsAtLeastUnchecked(t *testing.T) {
+	wf := `on: pull_request_target
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+        env: {NPM_TOKEN: "${{ secrets.NPM_TOKEN }}"}
+`
+	for _, ev := range []string{"pull_request_target", "workflow_run"} {
+		res := runOne(t, ev, wf, scanGoodLock, "build")
+		if len(res.Findings) != 1 || res.Findings[0].Status < model.Unchecked {
+			t.Fatalf("%s: want an UNCHECKED finding, got %+v", ev, res.Findings)
+		}
+		if !strings.Contains(fmt.Sprint(res.Findings[0].Evidence), "files read at head_sha may differ") {
+			t.Errorf("%s: no head_sha note: %+v", ev, res.Findings[0].Evidence)
+		}
+		if !slices.ContainsFunc(res.Unverified, func(r model.RotationItem) bool { return r.Name == "NPM_TOKEN" }) {
+			t.Errorf("%s: NPM_TOKEN not in unverified: %+v", ev, res.Unverified)
+		}
+	}
+	if res := runOne(t, "push", wf, scanGoodLock, "build"); len(res.Findings) != 0 {
+		t.Errorf("push: %+v", res.Findings)
+	}
+}
