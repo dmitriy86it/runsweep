@@ -1103,14 +1103,15 @@ func TestScanCalledWorkflowOtherOwnerCompromisedRef(t *testing.T) {
 	}
 }
 
-// A github-script step that runs npm is an install: lockfile evidence is kept without a log.
+// A github-script step that runs npm may install: lockfile evidence is kept (POSSIBLE: the strict
+// install check does not read exec arguments) though the log shows no install.
 func TestScanGithubScriptInstallKeepsLockfile(t *testing.T) {
 	f := fixture()
 	f.Jobs[1] = []source.Job{{ID: 10, Name: "gs"}}
 	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  gs:\n    runs-on: x\n    steps:\n"+
 		"      - uses: actions/github-script@v7\n        with:\n          script: await exec.exec('npm', ['ci'])\n"))
 	delete(f.Logs, 10)
-	if fd := scanOne(t, f, npmOnly); fd.Status != model.Affected {
+	if fd := scanOne(t, f, npmOnly); fd.Status != model.Possible {
 		t.Fatalf("%+v", fd)
 	}
 }
@@ -1305,6 +1306,25 @@ func TestScanLockfileNeedsInstall(t *testing.T) {
 	rust := fx("      - uses: dtolnay/rust-toolchain@stable\n", "package-lock.json", "2026-03-31T01:00:00Z rustc 1.90.0\n", false)
 	if res, err := Run(context.Background(), rust, npmOnly, Options{Repos: []string{"o/a"}}); err != nil || len(res.Findings) != 0 {
 		t.Fatalf("toolchain only: %v %+v", err, res.Findings)
+	}
+	// a test step is no install step
+	fd = scanOne(t, fx("      - run: npm test\n", "package-lock.json", "2026-03-31T01:00:00Z > jest\n", false), npmOnly)
+	if fd.Status != model.Possible {
+		t.Fatalf("npm test: %+v", fd)
+	}
+	// an unidentified job is judged by every job: a quiet log does not drop the pin
+	f := fx(action, "package-lock.json", "2026-03-31T01:00:00Z CLA ok\n", false)
+	f.Jobs[1][0].Name = "unknown"
+	if fd := scanOne(t, f, npmOnly); fd.Status != model.Possible {
+		t.Fatalf("unidentified: %+v", fd)
+	}
+	// a dropped pin keeps the rest: a package.json without a lockfile in a directory the job names
+	f = fx("      - uses: some/action@v1\n        with: {path: web}\n", "package-lock.json", "2026-03-31T01:00:00Z ok\n", false)
+	f.AddFile("o/a", "s1", "package.json", []byte(`{"workspaces":["packages/*"]}`))
+	f.AddFile("o/a", "s1", "web/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
+	if fd := scanOne(t, f, npmOnly); fd.Status != model.Possible || len(fd.Evidence) == 0 ||
+		slices.ContainsFunc(fd.Evidence, func(e model.Evidence) bool { return strings.Contains(e.Detail, "package-lock.json at") }) {
+		t.Fatalf("rest after a dropped pin: %+v", fd)
 	}
 	// a package manager called, but no install output and no install step
 	fd = scanOne(t, fx(action, "package-lock.json", "2026-03-31T01:00:00Z npm --version\n", false), npmOnly)

@@ -638,3 +638,27 @@ jobs:
 		t.Error("union")
 	}
 }
+
+func TestInstallsNPMStrict(t *testing.T) {
+	for run, want := range map[string]bool{
+		"npm ci":                             true,
+		"npm --prefix web ci":                true,
+		"cd web && pnpm i --frozen-lockfile": true,
+		"yarn":                               true,
+		"yarn --frozen-lockfile; yarn build": true,
+		"bun install":                        true,
+		"npm update axios":                   true,
+		"npm test":                           false,
+		"npm run build":                      false,
+		"npx eslint .":                       false,
+		"yarn build":                         false,
+		"echo npm":                           false,
+	} {
+		if got := (&Job{Runs: []string{run}}).InstallsNPMStrict(); got != want {
+			t.Errorf("%q: %v", run, got)
+		}
+	}
+	if !(&Job{Uses: []string{"pnpm/action-setup@v4"}}).InstallsNPMStrict() {
+		t.Error("install action")
+	}
+}

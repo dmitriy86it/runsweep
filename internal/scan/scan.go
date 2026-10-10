@@ -336,6 +336,8 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		}
 	}
 
+	var npmAll *npm.Result // MatchAll, read once when a job drops a pin
+	var npmAllErr error
 	var out []model.Finding
 	for _, job := range jobs {
 		if job.Conclusion == "skipped" {
@@ -379,20 +381,36 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		}
 		// A package.json no lockfile covers is POSSIBLE only for a job that names its directory
 		// (or whose workflow is unavailable); else UNCHECKED.
-		npmJob := npmRes.Resolve(func(dir string) bool {
+		mentioned := func(dir string) bool {
 			return rj == nil || rj.Mentions(dir) || logErr == nil && strings.Contains(log, dir)
-		})
+		}
+		npmJob := npmRes.Resolve(mentioned)
 		logInstall := logErr == nil && (installLogRe.MatchString(log) || workflow.CallsPackageManager(log))
+		// quiet: the log was read and shows no install or package-manager call (output may be
+		// silenced), and the job (every job when unidentified) names no install.
+		quiet := logErr == nil && !logInstall && len(installs) == 0 && (rj == nil || !rj.InstallsNPM())
 		// A lockfile pin is AFFECTED only for a job that installed (install output in its log or an
-		// install step of its own) from that lockfile: the root one or one in a directory its steps
-		// or log name. Else POSSIBLE.
-		unproven := false
+		// install command of its own) from that lockfile: the root one or one in a directory its
+		// steps or log name. A quiet identified job that runs no opaque script (a silent install)
+		// drops the pin and keeps the rest; else the pin is POSSIBLE.
 		if npmJob.Status == model.Affected {
-			installed := logErr == nil && installLogRe.MatchString(log) || wj != nil && wj.InstallsNPM()
+			installed := logErr == nil && installLogRe.MatchString(log) || wj != nil && wj.InstallsNPMStrict()
 			related := slices.ContainsFunc(npmRes.Pinned, func(dir string) bool {
-				return dir == "." || rj != nil && rj.Mentions(dir) || logErr == nil && pathInLog(log, dir)
+				return dir == "." || wj != nil && wj.Mentions(dir) || logErr == nil && pathInLog(log, dir)
 			})
-			if unproven = !installed || !related; unproven {
+			drop := (!installed || !related) && quiet && wj != nil && !wj.RunsOpaque()
+			if drop && npmAll == nil {
+				all, err := s.npm.MatchAll(ctx, s.src, repo, run.HeadSHA, s.inc.NPM)
+				if err != nil && !soft(err) {
+					return out, len(jobs), err
+				}
+				npmAll, npmAllErr = &all, err // on a soft error the rest is unknown: the pin stays POSSIBLE
+			}
+			switch {
+			case installed && related:
+			case drop && npmAllErr == nil:
+				npmJob = npmAll.WithoutPins().Resolve(mentioned)
+			default:
 				npmJob.Status = model.Possible
 				switch {
 				case logErr != nil:
@@ -408,12 +426,8 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 				}
 			}
 		}
-		// A missing or unreadable lockfile, or an unproven pin, matters only to a job that installed:
-		// it is dropped when the log was read, shows no install and no package-manager call (output
-		// may be silenced), and the job (every job when unidentified) names no install. An unproven
-		// pin is kept for an unidentified job and one that runs opaque scripts (a silent install).
-		quiet := logErr == nil && !logInstall && len(installs) == 0 && (rj == nil || !rj.InstallsNPM())
-		noInstall := quiet && (npmJob.Status == model.Unchecked || unproven && wj != nil && !rj.RunsOpaque())
+		// A missing or unreadable lockfile matters only to a job that installed: dropped when quiet.
+		noInstall := quiet && npmJob.Status == model.Unchecked
 		// Otherwise drop npm evidence only on positive evidence the job cannot install packages.
 		if npmJob.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logInstall) {
 			f.Status = model.Worse(f.Status, npmJob.Status)
@@ -503,7 +517,18 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 // pathInLog reports whether dir appears in log as a path: after a line start, space, quote, `/`
 // or `=`, and before `/`, space, quote or a line end.
 func pathInLog(log, dir string) bool {
-	return regexp.MustCompile(`(?m)(^|[\s"'/=])` + regexp.QuoteMeta(dir) + `($|[/\s"'])`).MatchString(log)
+	for i := 0; ; {
+		k := strings.Index(log[i:], dir)
+		if k < 0 {
+			return false
+		}
+		start, end := i+k, i+k+len(dir)
+		if (start == 0 || strings.IndexByte(" \t\r\n\"'/=", log[start-1]) >= 0) &&
+			(end == len(log) || strings.IndexByte(" \t\r\n\"'/", log[end]) >= 0) {
+			return true
+		}
+		i = start + 1
+	}
 }
 
 // maxCallDepth caps how many nested reusable-workflow calls are followed (GitHub allows ten
