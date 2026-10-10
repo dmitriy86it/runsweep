@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -686,5 +687,43 @@ func TestConcurrentFetchesShareOneCall(t *testing.T) {
 	}
 	if fails.Load() != 2 {
 		t.Errorf("an error was cached: %d calls for 2 sequential requests", fails.Load())
+	}
+}
+
+// 401 and 404 say what is likely wrong and carry no request URL.
+func TestErrorTextsExplainTheCause(t *testing.T) {
+	for _, tc := range []struct {
+		code int
+		want string
+	}{
+		{http.StatusUnauthorized, "token was rejected"},
+		{http.StatusNotFound, "token cannot see it"},
+		{http.StatusForbidden, "SSO"},
+	} {
+		c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.code)
+			_, _ = fmt.Fprint(w, `{"message":"Server said so"}`)
+		}))
+		_, err := c.ListJobs(context.Background(), "o/r", 1)
+		if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", tc.code)) ||
+			!strings.Contains(err.Error(), "Server said so") || strings.Contains(err.Error(), "https://") {
+			t.Errorf("%d: %v", tc.code, err)
+		}
+	}
+}
+
+func TestRateLimitWaitShowsResetTime(t *testing.T) {
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-RateLimit-Limit", "5000")
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(90*time.Second).Unix(), 10))
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprint(w, `{"message":"API rate limit exceeded"}`)
+	}))
+	var logs []string
+	c.Logf = func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }
+	_, _ = c.ListJobs(context.Background(), "o/r", 1)
+	if len(logs) == 0 || !regexp.MustCompile(`^rate limited, waiting 1m\d\ds \(until \d\d:\d\d:\d\d UTC\)$`).MatchString(logs[0]) {
+		t.Fatalf("%q", logs)
 	}
 }
