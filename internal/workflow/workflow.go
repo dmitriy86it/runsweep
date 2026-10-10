@@ -422,6 +422,12 @@ func (j *Job) MayInstallNPM() bool {
 			return true
 		}
 	}
+	return j.RunsOpaque()
+}
+
+// RunsOpaque reports whether a `run:` calls an opaque script or runner, or a github-script runs a
+// process: either may install packages without output in the log.
+func (j *Job) RunsOpaque() bool {
 	return slices.ContainsFunc(j.Runs, opaqueRe.MatchString) || slices.ContainsFunc(j.Scripts, scriptExecRe.MatchString)
 }
 
