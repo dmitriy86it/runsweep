@@ -241,7 +241,7 @@ Exit codes:
      skipped repositories, the scan was interrupted (Ctrl-C, API error), or no runs
      were found in a window that starts more than 90 days ago
 1 wins over 2 and 3: findings are reported even if the scan then stops on an error.`,
-		Example: `  runsweep scan --incident axios-2026-03 --repo owner/name
+		Example: `  runsweep scan --incident chaindrop-2026-08 --repo owner/name
   runsweep scan --incident ./incident.yaml --org my-org --format json`,
 		RunE: func(c *cobra.Command, _ []string) error {
 			if len(repos) == 0 && org == "" {
