@@ -115,6 +115,9 @@ func textTail(b *strings.Builder, r *model.Result) {
 		b.WriteString("\nSkipped repositories: " + strings.Join(parts, ", ") + "\n")
 	}
 	b.WriteString("\nLimits and the full report: --format md\n")
+	if !r.Incomplete {
+		b.WriteString(spreadNote(r))
+	}
 }
 
 // count renders "1 run", "2 runs".

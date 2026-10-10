@@ -234,8 +234,9 @@ func scanCmd(d deps) *cobra.Command {
 Exit codes:
   0  every job checked, nothing AFFECTED or POSSIBLE
   1  at least one job AFFECTED or POSSIBLE
-  2  error (bad flags or incident, no token, token rejected, organization not listed,
-     nothing could be scanned)
+  2  error (bad flags or incident, no token, token rejected, GitHub Enterprise host,
+     organization not listed, nothing could be scanned); the report then starts
+     "Scan incomplete:" and the JSON has incomplete and error
   3  nothing AFFECTED or POSSIBLE, but not everything was checked: UNCHECKED jobs,
      skipped repositories, the scan was interrupted (Ctrl-C, API error), or no runs
      were found in a window that starts more than 90 days ago

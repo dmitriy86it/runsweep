@@ -34,6 +34,8 @@ The token needs read access to Actions, Contents and Metadata for these reposito
 
 - `https://osv.dev/vulnerability/MAL-2026-2307`
 
+Malicious code can spread through caches, artifacts, self-hosted runners and workflow chains; see Limits
+
 ## Limits
 
 - GitHub deletes workflow runs, checks and logs after the repository's retention period (default 90 days). Older runs cannot be checked and show as UNCHECKED or are absent.
@@ -51,4 +53,9 @@ The token needs read access to Actions, Contents and Metadata for these reposito
 - Re-runs of runs created more than the lookback period (default 7 days) before the window are not scanned; use --lookback 30d for full coverage.
 - Called workflows are read when local or pinned to a commit SHA, and in the scanned repository's owner or a public repository; others are judged from the caller job, at least UNCHECKED for another owner's private repository.
 - Workflow files over 1 MiB, lockfiles or package.json over 32 MB, and those past the first 500 of a commit are not read; the job is at least UNCHECKED.
+- Lateral movement is not traced: caches, artifacts and needs outputs, dispatch and workflow_run chains, and self-hosted runners (runs-on is not read) can carry malicious code beyond the job that ran it. node_modules restored from a cache or artifact is not seen.
+- pull_request_target and workflow_run run the base-branch workflow, but files are read at head_sha: secrets and lockfile may differ from what ran, and a fork can control them. Such runs are capped at POSSIBLE or UNCHECKED.
+- A job name made only of an expression, or equal to another job's id, leaves the job unidentified; its exposure is taken from the whole workflow, so more jobs are POSSIBLE or UNCHECKED.
+- Runs that start after the window end are not scanned.
+- GitHub Enterprise is not supported; OIDC trust in nested reusable workflows is not resolved.
 - npm and GitHub Actions only.

@@ -187,3 +187,30 @@ func TestHeaderCountsScannedRepositories(t *testing.T) {
 		t.Fatalf("%v %s", err, txt.String())
 	}
 }
+
+func TestSpreadNoteOnlyWithFindings(t *testing.T) {
+	const note = "Malicious code can spread through caches, artifacts, self-hosted runners and workflow chains; see Limits"
+	inc, res := sample()
+	var txt, md bytes.Buffer
+	if err := Text(&txt, inc, res, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Markdown(&md, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(txt.String(), note+"\n") || !strings.Contains(md.String(), note+"\n\n## Limits") {
+		t.Fatalf("%s\n%s", txt.String(), md.String())
+	}
+	res.Findings = nil
+	txt.Reset()
+	md.Reset()
+	if err := Text(&txt, inc, res, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Markdown(&md, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(txt.String(), note) || strings.Contains(md.String(), note) {
+		t.Fatal("note without AFFECTED or POSSIBLE findings")
+	}
+}
