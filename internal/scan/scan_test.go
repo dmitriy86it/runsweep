@@ -98,6 +98,8 @@ func TestScanSkipsNoAccessRepo(t *testing.T) {
 func TestScanWorkflowMissingUsesAllJobs(t *testing.T) {
 	f := fixture()
 	f.Runs["o/a"][0].Path = "dynamic/dependabot"
+	f.Logs[10] += "2026-03-31T01:00:00Z added 12 packages in 1s\n"
+	f.Logs[11] = f.Logs[10]
 	res, err := Run(context.Background(), f, inc, Options{Repos: []string{"o/a"}})
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +110,7 @@ func TestScanWorkflowMissingUsesAllJobs(t *testing.T) {
 		}
 	}
 	if res.Count(model.Affected) != 2 {
-		t.Fatalf("without a workflow every job of an npm-affected run is AFFECTED: %+v", res.Findings)
+		t.Fatalf("without a workflow every installing job of an npm-affected run is AFFECTED: %+v", res.Findings)
 	}
 }
 
@@ -190,6 +192,7 @@ func TestScanBadWorkflowAppliesNPMToAllJobs(t *testing.T) {
 	f.Trees["o/a@s1"] = nil
 	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("jobs: [unclosed"))
 	f.AddFile("o/a", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	f.Logs[10], f.Logs[11] = "2026-03-31T01:00:00Z added 12 packages in 1s\n", "2026-03-31T01:00:00Z added 12 packages in 1s\n"
 	npmOnly := &incident.Incident{ID: "t", Window: inc.Window, NPM: inc.NPM}
 	res, err := Run(context.Background(), f, npmOnly, Options{Repos: []string{"o/a"}})
 	if err != nil {
@@ -361,8 +364,9 @@ jobs:
       - run: echo hi
 `))
 	f.AddFile("o/a", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
-	f.Logs[10], f.Logs[11], f.Logs[12] = "", "", ""
-	f.Logs[13] = "2026-03-31T01:00:00Z added 312 packages in 4s\n"
+	f.Logs[10] = "2026-03-31T01:00:00Z added 312 packages in 4s\n"
+	f.Logs[11], f.Logs[12] = f.Logs[10], ""
+	f.Logs[13] = f.Logs[10]
 	npmOnly := &incident.Incident{ID: "t", Window: inc.Window, NPM: inc.NPM}
 	res, err := Run(context.Background(), f, npmOnly, Options{Repos: []string{"o/a"}})
 	if err != nil {
@@ -582,6 +586,7 @@ func callFixture(uses, apiName string) *sourcetest.Fake {
 	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  deploy:\n    uses: "+uses+"\n    secrets: inherit\n"))
 	f.AddFile("o/a", "s1", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
 	f.Jobs[1] = []source.Job{{ID: 10, Name: apiName}}
+	f.Logs[10] += "2026-03-31T01:00:00Z added 12 packages in 1s\n"
 	return f
 }
 
@@ -1162,8 +1167,9 @@ func TestScanNoLockfileWithoutInstallInLog(t *testing.T) {
 			t.Fatalf("%q: %+v", l, fd)
 		}
 	}
-	if fd := scanOne(t, rust(cargo, `{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`), npmOnly); fd.Status != model.Affected {
-		t.Fatalf("affected: %+v", fd)
+	// a lockfile pin does not count for a job whose log shows no install
+	if res, err := Run(context.Background(), rust(cargo, `{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`), npmOnly, Options{Repos: []string{"o/a"}}); err != nil || len(res.Findings) != 0 {
+		t.Fatalf("pinned, no install: %v %+v", err, res.Findings)
 	}
 }
 
@@ -1258,6 +1264,48 @@ func TestScanNonWorkspaceManifestNotInstalled(t *testing.T) {
 	fd = scanOne(t, fx("      - run: npm install\n        working-directory: examples/x\n", npmLog), npmOnly)
 	if fd.Status != model.Possible {
 		t.Fatalf("working-directory: %+v", fd)
+	}
+}
+
+// A lockfile pin is AFFECTED only for a job that installed from that lockfile (R1).
+func TestScanLockfileNeedsInstall(t *testing.T) {
+	fx := func(steps, lockfile, log string, logGone bool) *sourcetest.Fake {
+		f := sourcetest.New()
+		f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+		f.Jobs[1] = []source.Job{{ID: 10, Name: "cla"}}
+		f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte("on: push\njobs:\n  cla:\n    runs-on: x\n    steps:\n"+steps))
+		f.AddFile("o/a", "s1", lockfile, []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+		f.Logs[10] = log
+		f.GoneLogs[10] = logGone
+		return f
+	}
+	action := "      - uses: contributor-assistant/github-action@v2.6.1\n        env: {T: \"${{ secrets.CLA_TOKEN }}\"}\n"
+	install := "2026-03-31T01:00:00Z ##[group]Run npm ci\n2026-03-31T01:00:00Z added 12 packages in 1s\n"
+
+	// third-party action only, log read and shows no install: npm hit does not count
+	res, err := Run(context.Background(), fx(action, "package-lock.json", "2026-03-31T01:00:00Z CLA ok\n", false), npmOnly, Options{Repos: []string{"o/a"}})
+	if err != nil || len(res.Findings) != 0 {
+		t.Fatalf("no install in log: %v %+v", err, res.Findings)
+	}
+	// log unavailable: the action may have installed
+	fd := scanOne(t, fx(action, "package-lock.json", "", true), npmOnly)
+	if fd.Status != model.Possible || !hasNote(fd, "lockfile pins a bad version; install not confirmed (log unavailable)") {
+		t.Fatalf("log gone: %+v", fd)
+	}
+	// installed, but from another directory than the lockfile's
+	fd = scanOne(t, fx("      - run: npm ci\n", "web/package-lock.json", install, false), npmOnly)
+	if fd.Status != model.Possible || !hasNote(fd, "install from web not confirmed") {
+		t.Fatalf("other dir: %+v", fd)
+	}
+	// installed from the lockfile's directory
+	for name, f := range map[string]*sourcetest.Fake{
+		"root lockfile, log":           fx(action, "package-lock.json", install, false),
+		"root lockfile, workflow step": fx("      - run: npm ci\n", "package-lock.json", "", true),
+		"working-directory":            fx("      - run: npm ci\n        working-directory: web\n", "web/package-lock.json", install, false),
+	} {
+		if fd := scanOne(t, f, npmOnly); fd.Status != model.Affected {
+			t.Errorf("%s: %+v", name, fd)
+		}
 	}
 }
 

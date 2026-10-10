@@ -52,6 +52,7 @@ func TestScanExitCodes(t *testing.T) {
 	f.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
 	f.Jobs[1] = []source.Job{{ID: 2, Name: "build"}}
 	f.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	f.Logs[2] = "added 12 packages in 1s\n"
 
 	var out, errb bytes.Buffer
 	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 1 {
@@ -233,6 +234,7 @@ func TestHardErrorMidRunKeepsFindings(t *testing.T) {
 	f.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
 	f.Jobs[1] = []source.Job{{ID: 2, Name: "build"}, {ID: 3, Name: "test"}}
 	f.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	f.Logs[2] = "added 12 packages in 1s\n"
 	var out, errb bytes.Buffer
 	code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--repo", "o/a"}, &out, &errb, failDeps(f, map[string]error{"job:3": errors.New("HTTP 500")}))
 	if code != 1 || !strings.Contains(out.String(), "AFFECTED") || !strings.Contains(out.String(), "UNCHECKED") {
@@ -254,6 +256,7 @@ func TestInterruptedPrintsPartialReport(t *testing.T) {
 	affected.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
 	affected.Jobs[1] = []source.Job{{ID: 2, Name: "build"}}
 	affected.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	affected.Logs[2] = "added 12 packages in 1s\n"
 	for _, tc := range []struct {
 		name    string
 		f       *sourcetest.Fake
@@ -305,6 +308,7 @@ func TestNoTerminalEscapesInOutput(t *testing.T) {
 	f.Runs["o/a"+evil] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
 	f.Jobs[1] = []source.Job{{ID: 2, Name: "build" + evil}}
 	f.AddFile("o/a"+evil, "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	f.Logs[2] = "added 12 packages in 1s\n"
 	var out, errb bytes.Buffer
 	if code := run([]string{"scan", "--incident", writeInc(t, incYAML), "--org", "o"}, &out, &errb, fakeDeps(f)); code != 1 {
 		t.Fatalf("code %d: %s", code, errb.String())
@@ -399,6 +403,7 @@ func TestLookbackFindsReRun(t *testing.T) {
 	f.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: created, StartedAt: inWindow, UpdatedAt: inWindow, Attempt: 2}}
 	f.Jobs[1] = []source.Job{{ID: 2, Name: "build", Attempt: 2, StartedAt: inWindow}}
 	f.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	f.Logs[2] = "added 12 packages in 1s\n"
 	inc := writeInc(t, incYAML)
 	var out, errb bytes.Buffer
 	if code := run([]string{"scan", "--incident", inc, "--repo", "o/a"}, &out, &errb, fakeDeps(f)); code != 1 {
@@ -416,6 +421,7 @@ func affectedFake() *sourcetest.Fake {
 	f.Runs["o/a"] = []source.Run{{ID: 1, Path: "missing.yml", HeadSHA: "s", CreatedAt: time.Date(2026, 3, 31, 1, 0, 0, 0, time.UTC)}}
 	f.Jobs[1] = []source.Job{{ID: 2, Name: "build"}}
 	f.AddFile("o/a", "s", "package-lock.json", []byte(`{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`))
+	f.Logs[2] = "added 12 packages in 1s\n"
 	return f
 }
 
