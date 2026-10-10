@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -614,5 +615,30 @@ func TestAPIRedirectStaysOnHost(t *testing.T) {
 	}
 	if b, err := c.Blob(context.Background(), "o/r", "same", 1<<20); err != nil || string(b) != "ok" {
 		t.Fatalf("same-host redirect: %q %v", b, err)
+	}
+}
+
+// A job log is read once into a buffer sized from Content-Length and returned without a copy.
+func TestJobLogMemory(t *testing.T) {
+	body := []byte(strings.Repeat("0123456789abcdef\n", 1<<20)) // 17 MB
+	logSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		_, _ = w.Write(body)
+	}))
+	defer logSrv.Close()
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, logSrv.URL+"/log", http.StatusFound)
+	}))
+	c.http.Transport = logSrv.Client().Transport
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	log, err := c.JobLog(context.Background(), "o/r", 1)
+	runtime.ReadMemStats(&after)
+	if err != nil || len(log) != len(body) {
+		t.Fatalf("%d %v", len(log), err)
+	}
+	if got := after.TotalAlloc - before.TotalAlloc; got > uint64(len(body))*3/2 {
+		t.Errorf("allocated %d MB for a %d MB log", got>>20, len(body)>>20)
 	}
 }
