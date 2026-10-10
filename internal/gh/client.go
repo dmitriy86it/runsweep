@@ -352,14 +352,17 @@ func (c *Client) downloadLog(ctx context.Context, u string) (string, int, error)
 	default: // 429 and 5xx are retried by JobLog
 		return "", code, fmt.Errorf("download job log: HTTP %d", code)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, maxLogBytes+1))
-	if err != nil {
+	var b strings.Builder // String() does not copy; sized from Content-Length so it never regrows
+	if resp.ContentLength > 0 {
+		b.Grow(int(min(resp.ContentLength, maxLogBytes+1)))
+	}
+	if _, err := io.Copy(&b, io.LimitReader(resp.Body, maxLogBytes+1)); err != nil {
 		return "", 0, err // body cut mid-transfer: retry
 	}
-	if int64(len(b)) > maxLogBytes {
+	if int64(b.Len()) > maxLogBytes {
 		return "", resp.StatusCode, fmt.Errorf("%w: job log exceeds %d MB", source.ErrIncomplete, maxLogBytes>>20)
 	}
-	return string(b), resp.StatusCode, nil
+	return b.String(), resp.StatusCode, nil
 }
 
 // Tree returns the git tree of a commit.
