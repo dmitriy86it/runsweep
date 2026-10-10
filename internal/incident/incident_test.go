@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -68,6 +69,20 @@ func TestPresetsLoad(t *testing.T) {
 	if _, err := Load("no-such-incident"); err == nil {
 		t.Fatal("expected unknown incident error")
 	}
+}
+
+// The axios attack dropped plain-crypto-js (OSV MAL-2026-2306); the preset must list both versions.
+func TestAxiosPresetHasDropper(t *testing.T) {
+	inc, err := Load("axios-2026-03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range inc.NPM {
+		if p.Name == "plain-crypto-js" && slices.Equal(p.Versions, []string{"4.2.0", "4.2.1"}) {
+			return
+		}
+	}
+	t.Fatalf("plain-crypto-js 4.2.0, 4.2.1 missing: %+v", inc.NPM)
 }
 
 // Every built-in preset: valid, named after its file, and backed by at least two
