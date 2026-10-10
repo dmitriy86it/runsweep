@@ -104,7 +104,9 @@ type Result struct {
 	JobsScanned   int            `json:"jobs_scanned"`
 	Findings      []Finding      `json:"findings"`
 	Rotation      []RotationItem `json:"rotation"`
-	Skipped       []Skip         `json:"skipped"`
+	// Unverified: what UNCHECKED jobs could read, not in Rotation; exposure could not be ruled out.
+	Unverified []RotationItem `json:"unverified_rotation"`
+	Skipped    []Skip         `json:"skipped"`
 	// RetentionWarning: the window started more than 90 days ago, so missing runs prove nothing.
 	RetentionWarning bool `json:"retention_warning,omitempty"`
 	// Lookback is how long before the window runs were listed to catch re-runs (text report only).

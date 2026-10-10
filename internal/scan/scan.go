@@ -180,7 +180,7 @@ func Run(ctx context.Context, src source.Source, inc *incident.Incident, opt Opt
 		}
 		return x.Run.JobID < y.Run.JobID
 	})
-	res.Rotation = rotate.Plan(res.Findings)
+	res.Rotation, res.Unverified = rotate.Plan(res.Findings), rotate.Unverified(res.Findings)
 	return res, stopErr
 }
 
@@ -449,7 +449,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		f.Status = model.Worse(f.Status, call.status)
 		f.Evidence = append(f.Evidence, call.notes...)
 
-		if f.Status >= model.Possible {
+		if f.Status != model.Clean { // UNCHECKED too: its exposure cannot be ruled out
 			var e model.Exposure
 			switch {
 			case wj != nil:

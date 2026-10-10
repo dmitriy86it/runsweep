@@ -27,6 +27,11 @@ func TestTier(t *testing.T) {
 		"SENTRY_DSN":              3,
 		"SNYK_TOKEN":              3,
 		"OPENAI_API_KEY":          3,
+		"SIGNING_KEY":             2,
+		"COMPATIBILITY_KEY":       3,
+		"DESIGN_API_KEY":          3,
+		"CLA_SIGNATURES_TOKEN":    3,
+		"FARM_TOKEN":              3,
 	} {
 		if got := Tier(name); got != want {
 			t.Errorf("%s: %d want %d", name, got, want)
@@ -151,5 +156,21 @@ func TestRunsSorted(t *testing.T) {
 	}
 	if item.Runs[0].Repo != "o/a" || item.Runs[1].Repo != "o/b" || item.Runs[2].Repo != "o/c" {
 		t.Fatalf("runs should be sorted by Repo: %+v", item.Runs)
+	}
+}
+
+func TestUnverified(t *testing.T) {
+	affected := model.RunRef{Repo: "o/a", RunID: 1, Job: "build"}
+	unchecked := model.RunRef{Repo: "o/a", RunID: 2, Job: "publish"}
+	fs := []model.Finding{
+		{Run: affected, Status: model.Affected, Exposure: &model.Exposure{Secrets: []string{"SLACK_WEBHOOK"}}},
+		{Run: unchecked, Status: model.Unchecked, Exposure: &model.Exposure{Secrets: []string{"SLACK_WEBHOOK", "SENTRY_DSN", "NPM_TOKEN"}}},
+	}
+	if p := Plan(fs); len(p) != 1 || p[0].Name != "SLACK_WEBHOOK" {
+		t.Fatalf("plan: %+v", p)
+	}
+	u := Unverified(fs)
+	if len(u) != 2 || u[0].Name != "NPM_TOKEN" || u[1].Name != "SENTRY_DSN" || u[0].Runs[0] != unchecked {
+		t.Fatalf("unverified must hold only what the plan lacks, by tier: %+v", u)
 	}
 }

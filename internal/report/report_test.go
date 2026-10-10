@@ -34,6 +34,9 @@ func sample() (*incident.Incident, *model.Result) {
 			{Name: "OIDC token (id-token: write)", Tier: 1, Reason: "review cloud roles", Runs: []model.RunRef{run}},
 			{Name: "NPM_TOKEN", Tier: 2, Reason: "rotate", Runs: []model.RunRef{run}},
 		},
+		Unverified: []model.RotationItem{
+			{Name: "DEPLOY_KEY", Tier: 2, Reason: "rotate", Runs: []model.RunRef{{Repo: "o/app", RunID: 43, Job: "publish"}}},
+		},
 		Skipped:  []model.Skip{{Repo: "o/private", Reason: "no access (HTTP 403/404)"}},
 		Lookback: 7 * 24 * time.Hour,
 	}
@@ -154,7 +157,7 @@ func TestJSONEmptyAndUTC(t *testing.T) {
 	if err := JSON(&b, &incident.Incident{ID: "x"}, &model.Result{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"findings": []`, `"rotation": []`, `"skipped": []`} {
+	for _, want := range []string{`"findings": []`, `"rotation": []`, `"unverified_rotation": []`, `"skipped": []`} {
 		if !strings.Contains(b.String(), want) {
 			t.Fatalf("missing %s in\n%s", want, b.String())
 		}
@@ -309,5 +312,18 @@ func TestFormatCharsAndTags(t *testing.T) {
 	}
 	if err := json.Unmarshal(b.Bytes(), &v); err != nil || v.Findings[0].Evidence[0].Detail != in {
 		t.Fatalf("%v %q", err, v.Findings[0].Evidence[0].Detail)
+	}
+}
+
+func TestMarkdownOnlyUnverified(t *testing.T) {
+	inc, res := sample()
+	res.Rotation = nil
+	var b bytes.Buffer
+	if err := Markdown(&b, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "## Rotate first\n\nNothing confirmed to rotate; 1 secret in jobs that could not be checked.\n\n"+
+		"## Not verified — could not rule out exposure\n\n| # |") || strings.Contains(b.String(), "Nothing to rotate") {
+		t.Fatal(b.String())
 	}
 }

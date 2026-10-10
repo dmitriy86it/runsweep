@@ -39,32 +39,37 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		paint(model.Possible), r.Count(model.Possible), paint(model.Unchecked), r.Count(model.Unchecked))
 
 	b.WriteString("Rotate first\n")
-	if len(r.Rotation) == 0 {
-		b.WriteString("  Nothing to rotate.\n")
-	}
-	width := 0
-	for _, it := range r.Rotation {
-		width = max(width, utf8.RuneCountInString(Clean(it.Name)))
-	}
+	b.WriteString(nothingToRotate(r, "  ", "\n"))
 	oneRepo := r.ReposTargeted == 1
-	for i, it := range r.Rotation {
-		runs := it.Runs
-		if oneRepo { // Findings name the repository; "seen in" fits one terminal line
-			runs = make([]model.RunRef, len(it.Runs))
-			for j, ref := range it.Runs {
-				ref.Repo = ""
-				runs[j] = ref
-			}
+	items := func(list []model.RotationItem) {
+		width := 0
+		for _, it := range list {
+			width = max(width, utf8.RuneCountInString(Clean(it.Name)))
 		}
-		fmt.Fprintf(&b, "  %-3d%-*s  %s\n", i+1, width, Clean(it.Name), tier(it.Tier))
-		fmt.Fprintf(&b, "     %s\n     seen in: %s\n", Clean(it.Reason), seenIn(runs, Clean))
+		for i, it := range list {
+			runs := it.Runs
+			if oneRepo { // Findings name the repository; "seen in" fits one terminal line
+				runs = make([]model.RunRef, len(it.Runs))
+				for j, ref := range it.Runs {
+					ref.Repo = ""
+					runs[j] = ref
+				}
+			}
+			fmt.Fprintf(&b, "  %-3d%-*s  %s\n", i+1, width, Clean(it.Name), tier(it.Tier))
+			fmt.Fprintf(&b, "     %s\n     seen in: %s\n", Clean(it.Reason), seenIn(runs, Clean))
+		}
+	}
+	items(r.Rotation)
+	if len(r.Unverified) > 0 {
+		b.WriteString("\n" + unverifiedTitle + "\n")
+		items(r.Unverified)
 	}
 
 	b.WriteString("\nFindings\n")
 	if len(r.Findings) == 0 {
 		b.WriteString("  No affected jobs found.\n")
 	}
-	width = 0
+	width := 0
 	for _, f := range r.Findings {
 		width = max(width, utf8.RuneCountInString(Clean(f.Run.Repo)))
 	}
