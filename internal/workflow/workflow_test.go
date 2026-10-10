@@ -294,8 +294,9 @@ func TestExpressionOnlyName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if j, ok := w.FindJob("lint / other"); !ok || j.ID != "lint" {
-		t.Errorf("lint / other -> %v %v", j, ok)
+	// the expression-only name may evaluate to "lint": the ID hit is no longer certain
+	if j, ok := w.FindJob("lint / other"); ok {
+		t.Errorf("lint / other -> %v", j)
 	}
 	if _, ok := w.FindJob("random thing"); ok {
 		t.Error("expression-only name must not match")
@@ -660,5 +661,27 @@ func TestInstallsNPMStrict(t *testing.T) {
 	}
 	if !(&Job{Uses: []string{"pnpm/action-setup@v4"}}).InstallsNPMStrict() {
 		t.Error("install action")
+	}
+}
+
+// A templated name that may equal another job's ID or name leaves the job unidentified.
+func TestFindJobTemplatedNameShadowsExactHit(t *testing.T) {
+	for name, y := range map[string]string{
+		"expression-only vs unnamed id": "jobs:\n  build:\n    runs-on: x\n    steps: [{run: a}]\n  deploy:\n    name: ${{ matrix.task }}\n    runs-on: x\n    steps: [{run: b}]\n",
+		"expression-only vs name":       "jobs:\n  lint:\n    name: Lint\n    runs-on: x\n    steps: [{run: a}]\n  deploy:\n    name: ${{ matrix.task }}\n    runs-on: x\n    steps: [{run: b}]\n",
+		"literal template vs name":      "jobs:\n  a:\n    name: Build x\n    runs-on: x\n    steps: [{run: a}]\n  b:\n    name: Build ${{ matrix.x }}\n    runs-on: x\n    steps: [{run: b}]\n",
+	} {
+		w, err := Parse([]byte("on: push\n" + y))
+		if err != nil {
+			t.Fatal(err)
+		}
+		api := map[string]string{"expression-only vs unnamed id": "build", "expression-only vs name": "Lint", "literal template vs name": "Build x"}[name]
+		if j, ok := w.FindJob(api); ok {
+			t.Errorf("%s: identified %s", name, j.ID)
+		}
+	}
+	w, _ := Parse([]byte("on: push\njobs:\n  build:\n    runs-on: x\n    steps: [{run: a}]\n"))
+	if j, ok := w.FindJob("build"); !ok || j.ID != "build" {
+		t.Error("an unambiguous unnamed job is identified by its ID")
 	}
 }

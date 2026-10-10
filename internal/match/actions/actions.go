@@ -3,9 +3,7 @@ package actions
 
 import (
 	"fmt"
-	"maps"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/runsweep/runsweep/internal/incident"
@@ -67,24 +65,25 @@ func repoKey(uses string) string {
 	return parts[0] + "/" + parts[1]
 }
 
-// anySHA reports whether sha is a compromised commit of any incident action: a fork shares its
-// upstream's commits, so a full SHA matches under any owner/repo.
-func anySHA(b map[string]map[string]bool, sha string) bool {
-	return sha != "" && slices.ContainsFunc(slices.Collect(maps.Values(b)), func(s map[string]bool) bool { return s[sha] })
+// badSet indexes the incident actions: by owner/repo, and every SHA regardless of repo (a fork
+// shares its upstream's commits, so a full SHA matches under any owner/repo).
+type badSet struct {
+	byRepo map[string]map[string]bool
+	shas   map[string]bool
 }
 
-func badSHAs(bad []incident.Action) map[string]map[string]bool {
-	m := map[string]map[string]bool{}
+func badSHAs(bad []incident.Action) badSet {
+	b := badSet{map[string]map[string]bool{}, map[string]bool{}}
 	for _, a := range bad {
 		k := repoKey(a.Uses)
-		if m[k] == nil {
-			m[k] = map[string]bool{}
+		if b.byRepo[k] == nil {
+			b.byRepo[k] = map[string]bool{}
 		}
 		for _, s := range a.SHAs {
-			m[k][s] = true
+			b.byRepo[k][s], b.shas[s] = true, true
 		}
 	}
-	return m
+	return b
 }
 
 // MatchLog returns AFFECTED when the job log shows a compromised SHA was downloaded.
@@ -92,12 +91,12 @@ func MatchLog(log string, bad []incident.Action) (model.Status, []model.Evidence
 	b := badSHAs(bad)
 	st, ev := model.Clean, []model.Evidence(nil)
 	for _, d := range ParseDownloads(log) {
-		if d.SHA == "" && b[repoKey(d.Uses)] != nil {
+		if d.SHA == "" && b.byRepo[repoKey(d.Uses)] != nil {
 			st = model.Worse(st, model.Unchecked)
 			ev = append(ev, model.Evidence{Kind: "note", Detail: fmt.Sprintf("download record without a commit SHA: %s@%s", d.Uses, d.Ref)})
 			continue
 		}
-		if anySHA(b, d.SHA) {
+		if b.shas[d.SHA] {
 			st = model.Affected
 			detail := fmt.Sprintf("job log: downloaded %s@%s", d.Uses, d.Ref)
 			if d.Ref != d.SHA {
@@ -128,12 +127,11 @@ func matchRefs(uses []string, bad []incident.Action, pinned, mutable string) (mo
 		if !ok || strings.HasPrefix(u, "./") || strings.HasPrefix(u, "docker://") {
 			continue
 		}
-		shas := b[repoKey(name)]
-		if shas == nil && !anySHA(b, ref) {
+		if b.byRepo[repoKey(name)] == nil && !b.shas[ref] {
 			continue
 		}
 		switch {
-		case anySHA(b, ref):
+		case b.shas[ref]:
 			st = model.Affected
 			ev = append(ev, model.Evidence{Kind: "action", Detail: fmt.Sprintf(pinned, u)})
 		case model.CommitSHA.MatchString(ref):

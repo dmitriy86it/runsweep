@@ -259,7 +259,8 @@ func (w *Workflow) templatedHit(ids []string, exact *Job, names []string) bool {
 	for _, id := range ids {
 		if j := w.Jobs[id]; j != exact {
 			p := w.pattern(j)
-			if p.bad || p.re != nil && slices.ContainsFunc(names, p.re.MatchString) {
+			// an expression-only name has no pattern: it may evaluate to anything
+			if strings.Contains(j.Name, "${{") && (p.bad || p.re == nil || slices.ContainsFunc(names, p.re.MatchString)) {
 				return true
 			}
 		}
