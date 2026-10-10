@@ -37,9 +37,58 @@ type Client struct {
 	http  *http.Client
 	sem   chan struct{}
 	cache sync.Map // "tree:repo@sha" -> treeVal; blobs are not cached, callers cache what they parse
+	fl    flight   // one in-flight request per tree, blob or file
 
 	Logf  func(format string, args ...any)
 	Sleep func(ctx context.Context, d time.Duration) error
+}
+
+// flight shares the result of a call among concurrent callers of the same key; nothing is kept
+// afterwards, so errors are not cached.
+type flight struct {
+	mu sync.Mutex
+	m  map[string]*flightCall
+}
+
+type flightCall struct {
+	done chan struct{}
+	val  any
+	err  error
+}
+
+// shared runs f unless a call for key is in flight, in which case it waits for that one. A waiter
+// whose own context is alive retries when the call it waited for died of its caller's context.
+func shared[T any](ctx context.Context, g *flight, key string, f func() (T, error)) (T, error) {
+	for {
+		g.mu.Lock()
+		if call, ok := g.m[key]; ok {
+			g.mu.Unlock()
+			select {
+			case <-call.done:
+			case <-ctx.Done():
+				var zero T
+				return zero, ctx.Err()
+			}
+			if call.err != nil && ctx.Err() == nil && (errors.Is(call.err, context.Canceled) || errors.Is(call.err, context.DeadlineExceeded)) {
+				continue
+			}
+			v, _ := call.val.(T)
+			return v, call.err
+		}
+		call := &flightCall{done: make(chan struct{})}
+		if g.m == nil {
+			g.m = map[string]*flightCall{}
+		}
+		g.m[key] = call
+		g.mu.Unlock()
+		v, err := f()
+		call.val, call.err = v, err
+		g.mu.Lock()
+		delete(g.m, key)
+		g.mu.Unlock()
+		close(call.done)
+		return v, err
+	}
 }
 
 type treeVal struct {
@@ -372,26 +421,29 @@ func (c *Client) Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry
 		t := v.(treeVal)
 		return t.entries, t.truncated, nil
 	}
-	owner, name := split(repo)
-	var tree *github.Tree
-	err := c.do(ctx, func() (*github.Response, error) {
-		var resp *github.Response
-		var err error
-		tree, resp, err = c.gh.Git.GetTree(ctx, owner, name, sha, true)
-		return resp, err
-	})
-	if err != nil {
-		return nil, false, err
-	}
-	var t treeVal
-	for _, e := range tree.Entries {
-		if e.GetType() == "blob" {
-			t.entries = append(t.entries, source.TreeEntry{Path: e.GetPath(), SHA: e.GetSHA()})
+	t, err := shared(ctx, &c.fl, key, func() (treeVal, error) {
+		owner, name := split(repo)
+		var tree *github.Tree
+		err := c.do(ctx, func() (*github.Response, error) {
+			var resp *github.Response
+			var err error
+			tree, resp, err = c.gh.Git.GetTree(ctx, owner, name, sha, true)
+			return resp, err
+		})
+		if err != nil {
+			return treeVal{}, err
 		}
-	}
-	t.truncated = tree.GetTruncated()
-	c.cache.Store(key, t)
-	return t.entries, t.truncated, nil
+		var t treeVal
+		for _, e := range tree.Entries {
+			if e.GetType() == "blob" {
+				t.entries = append(t.entries, source.TreeEntry{Path: e.GetPath(), SHA: e.GetSHA()})
+			}
+		}
+		t.truncated = tree.GetTruncated()
+		c.cache.Store(key, t)
+		return t, nil
+	})
+	return t.entries, t.truncated, err
 }
 
 // Blob returns the content of a git blob, or source.ErrIncomplete if it exceeds limit bytes.
@@ -426,6 +478,11 @@ func (c *Client) RepoPublic(ctx context.Context, repo string) (bool, error) {
 // raw GETs an API URL with the raw media type, streaming the body into a buffer capped at limit
 // bytes instead of reading it whole.
 func (c *Client) raw(ctx context.Context, u string, limit int) ([]byte, error) {
+	// the bytes are shared by concurrent callers: they only read them
+	return shared(ctx, &c.fl, fmt.Sprintf("raw:%d:%s", limit, u), func() ([]byte, error) { return c.fetchRaw(ctx, u, limit) })
+}
+
+func (c *Client) fetchRaw(ctx context.Context, u string, limit int) ([]byte, error) {
 	buf := capBuf{max: limit}
 	bodyErr := false // the last attempt got a 200 whose body stalled or broke
 	err := c.do(ctx, func() (*github.Response, error) {
