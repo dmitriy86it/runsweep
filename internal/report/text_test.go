@@ -158,7 +158,7 @@ func TestRepoLevelFindingHasNoRunNumber(t *testing.T) {
 
 func TestTextOnlyUnverified(t *testing.T) {
 	inc, res := sample()
-	res.Rotation = nil
+	res.Rotation, res.Findings = nil, res.Findings[:1] // no job with unknown secrets
 	var b bytes.Buffer
 	if err := Text(&b, inc, res, false); err != nil {
 		t.Fatal(err)

@@ -126,5 +126,6 @@
       "repo": "o/private",
       "reason": "no access (HTTP 403/404)"
     }
-  ]
+  ],
+  "secrets_unknown_jobs": 1
 }
