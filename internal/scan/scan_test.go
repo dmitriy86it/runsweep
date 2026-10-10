@@ -1169,9 +1169,9 @@ func TestScanNoLockfileWithoutInstallInLog(t *testing.T) {
 			t.Fatalf("%q: %+v", l, fd)
 		}
 	}
-	// a lockfile pin does not count for a job whose log shows no install
-	if res, err := Run(context.Background(), rust(cargo, `{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`), npmOnly, Options{Repos: []string{"o/a"}}); err != nil || len(res.Findings) != 0 {
-		t.Fatalf("pinned, no install: %v %+v", err, res.Findings)
+	// a lockfile pin is POSSIBLE for a job whose log shows no install but that uses a third-party action
+	if fd := scanOne(t, rust(cargo, `{"lockfileVersion":3,"packages":{"node_modules/axios":{"version":"1.14.1"}}}`), npmOnly); fd.Status != model.Possible || !hasNote(fd, "job uses actions that may install silently") {
+		t.Fatalf("pinned, no install: %+v", fd)
 	}
 }
 
@@ -1311,10 +1311,9 @@ func TestScanLockfileNeedsInstall(t *testing.T) {
 	action := "      - uses: contributor-assistant/github-action@v2.6.1\n        env: {T: \"${{ secrets.CLA_TOKEN }}\"}\n"
 	install := "2026-03-31T01:00:00Z ##[group]Run npm ci\n2026-03-31T01:00:00Z ##[endgroup]\n2026-03-31T01:00:00Z added 12 packages in 1s\n"
 
-	// third-party action only, log read and shows no install: npm hit does not count
-	res, err := Run(context.Background(), fx(action, "package-lock.json", "2026-03-31T01:00:00Z CLA ok\n", false), npmOnly, Options{Repos: []string{"o/a"}})
-	if err != nil || len(res.Findings) != 0 {
-		t.Fatalf("no install in log: %v %+v", err, res.Findings)
+	// third-party action only, log read and shows no install: the action may have installed silently
+	if fd := scanOne(t, fx(action, "package-lock.json", "2026-03-31T01:00:00Z CLA ok\n", false), npmOnly); fd.Status != model.Possible || !hasNote(fd, "job uses actions that may install silently") {
+		t.Fatalf("no install in log: %+v", fd)
 	}
 	// log unavailable: the action may have installed
 	fd := scanOne(t, fx(action, "package-lock.json", "", true), npmOnly)
@@ -1332,8 +1331,8 @@ func TestScanLockfileNeedsInstall(t *testing.T) {
 		t.Fatalf("opaque script: %+v", fd)
 	}
 	rust := fx("      - uses: dtolnay/rust-toolchain@stable\n", "package-lock.json", "2026-03-31T01:00:00Z rustc 1.90.0\n", false)
-	if res, err := Run(context.Background(), rust, npmOnly, Options{Repos: []string{"o/a"}}); err != nil || len(res.Findings) != 0 {
-		t.Fatalf("toolchain only: %v %+v", err, res.Findings)
+	if fd := scanOne(t, rust, npmOnly); fd.Status != model.Possible || !hasNote(fd, "lockfile pins a bad version; job uses actions that may install silently") {
+		t.Fatalf("toolchain only: %+v", fd)
 	}
 	// a test step is no install step
 	fd = scanOne(t, fx("      - run: npm test\n", "package-lock.json", "2026-03-31T01:00:00Z > jest\n", false), npmOnly)
@@ -1347,7 +1346,8 @@ func TestScanLockfileNeedsInstall(t *testing.T) {
 		t.Fatalf("unidentified: %+v", fd)
 	}
 	// a dropped pin keeps the rest: a package.json without a lockfile in a directory the job names
-	f = fx("      - uses: some/action@v1\n        with: {path: web}\n", "package-lock.json", "2026-03-31T01:00:00Z ok\n", false)
+	f = fx("      - uses: actions/checkout@v4\n        with: {path: web}\n", "package-lock.json", "2026-03-31T01:00:00Z ok\n", false)
+	f.Runs["o/a"][0].Event = "pull_request_target" // a job that cannot install keeps evidence only for base-branch events
 	f.AddFile("o/a", "s1", "package.json", []byte(`{"workspaces":["packages/*"]}`))
 	f.AddFile("o/a", "s1", "web/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
 	if fd := scanOne(t, f, npmOnly); fd.Status != model.Possible || len(fd.Evidence) == 0 ||

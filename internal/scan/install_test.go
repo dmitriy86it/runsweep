@@ -168,3 +168,12 @@ func TestInstallLogCommandLine(t *testing.T) {
 		t.Error("mid-line or bare text")
 	}
 }
+
+// A local action may run npm through exec with silent: true, which prints no [command] line.
+func TestScanLocalActionKeepsPinPossible(t *testing.T) {
+	wf := "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./.github/actions/x\n"
+	fd := oneJob(t, wf, "2026-03-31T01:00:00Z ##[group]Run ./.github/actions/x\n2026-03-31T01:00:00Z ##[endgroup]\n", map[string]string{"package-lock.json": axiosLock})
+	if fd.Status != model.Possible || !hasNote(fd, "job uses actions that may install silently") {
+		t.Errorf("%v %+v", fd.Status, fd.Evidence)
+	}
+}
