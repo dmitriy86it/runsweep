@@ -84,7 +84,7 @@ type Workflow struct {
 }
 
 var (
-	secretRe  = regexp.MustCompile(`(?i)secrets\.([A-Za-z_][A-Za-z0-9_]*)|secrets\[\s*['"]([^'"]+)['"]\s*\]`)
+	secretRe  = regexp.MustCompile(`(?i)(?:^|[^\w.])(?:secrets\.([A-Za-z_][A-Za-z0-9_]*)|secrets\[\s*['"]([^'"]+)['"]\s*\])`)
 	exprRe    = regexp.MustCompile(`(?s)\$\{\{(.*?)\}\}`)
 	secretsID = regexp.MustCompile(`(?i)\bsecrets\b`)
 	namedRe   = regexp.MustCompile(`^(\.[A-Za-z_]|\[\s*['"])`)
