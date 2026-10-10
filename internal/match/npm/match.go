@@ -30,6 +30,8 @@ type Result struct {
 	// Unlocked: bad packages declared in a package.json below the root that no lockfile covers;
 	// whether that is POSSIBLE depends on the job installing it (Resolve).
 	Unlocked []Unlocked
+	// Pinned: directories of the lockfiles that pin a bad version (the AFFECTED evidence).
+	Pinned []string
 }
 
 // Unlocked is a bad package declared in Dir/package.json with no covering lockfile.
@@ -40,7 +42,7 @@ type Unlocked struct {
 // Resolve folds r.Unlocked into the status: POSSIBLE where installed(Dir), otherwise UNCHECKED
 // with a note that the job does not seem to install it.
 func (r Result) Resolve(installed func(dir string) bool) Result {
-	out := Result{Status: r.Status, Evidence: slices.Clone(r.Evidence)}
+	out := Result{Status: r.Status, Evidence: slices.Clone(r.Evidence), Pinned: r.Pinned}
 	for _, u := range r.Unlocked {
 		if installed(u.Dir) {
 			out.Status = model.Worse(out.Status, model.Possible)
@@ -158,6 +160,11 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			case badVer[p.Name][p.Version]:
 				r.Status = model.Affected
 				r.Evidence = append(r.Evidence, model.Evidence{Kind: "npm", Detail: fmt.Sprintf("%s@%s in %s at %s", p.Name, p.Version, e.Path, short(sha))})
+			default:
+				continue
+			}
+			if !slices.Contains(r.Pinned, dir) {
+				r.Pinned = append(r.Pinned, dir)
 			}
 		}
 	}

@@ -382,13 +382,34 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		npmJob := npmRes.Resolve(func(dir string) bool {
 			return rj == nil || rj.Mentions(dir) || logErr == nil && strings.Contains(log, dir)
 		})
-		// A missing or unreadable lockfile matters only to a job that installed: an UNCHECKED-only
-		// result is dropped when the log was read, shows no install and no package-manager call
-		// (output may be silenced), and the job (every job when unidentified) names no install.
-		noInstall := npmJob.Status == model.Unchecked && logErr == nil && !installLogRe.MatchString(log) &&
-			!workflow.CallsPackageManager(log) && len(installs) == 0 && (rj == nil || !rj.InstallsNPM())
+		logInstall := logErr == nil && (installLogRe.MatchString(log) || workflow.CallsPackageManager(log))
+		// A lockfile pin is AFFECTED only for a job that installed (log or its own workflow steps)
+		// from that lockfile: the root one or one in a directory its steps or log name. Else POSSIBLE.
+		unproven := false
+		if npmJob.Status == model.Affected {
+			installed := logInstall || wj != nil && wj.InstallsNPM()
+			related := slices.ContainsFunc(npmRes.Pinned, func(dir string) bool {
+				return dir == "." || rj != nil && rj.Mentions(dir) || logErr == nil && strings.Contains(log, dir)
+			})
+			if unproven = !installed || !related; unproven {
+				npmJob.Status = model.Possible
+				switch {
+				case logErr != nil:
+					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; install not confirmed (log unavailable)"))
+				case installed:
+					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; install from %s not confirmed", strings.Join(npmRes.Pinned, ", ")))
+				default:
+					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; install not confirmed"))
+				}
+			}
+		}
+		// A missing or unreadable lockfile, or an unproven pin, matters only to a job that installed:
+		// it is dropped when the log was read, shows no install and no package-manager call (output
+		// may be silenced), and the job (every job when unidentified) names no install.
+		noInstall := (npmJob.Status == model.Unchecked || unproven) && logErr == nil && !logInstall &&
+			len(installs) == 0 && (rj == nil || !rj.InstallsNPM())
 		// Otherwise drop npm evidence only on positive evidence the job cannot install packages.
-		if npmJob.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logErr == nil && installLogRe.MatchString(log)) {
+		if npmJob.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logInstall) {
 			f.Status = model.Worse(f.Status, npmJob.Status)
 			f.Evidence = append(f.Evidence, npmJob.Evidence...)
 		}
