@@ -25,3 +25,4 @@ Findings
 Skipped repositories: o/private (no access (HTTP 403/404))
 
 Limits and the full report: --format md
+Malicious code can spread through caches, artifacts, self-hosted runners and workflow chains; see Limits
