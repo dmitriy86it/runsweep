@@ -215,6 +215,13 @@ func TestCleanDropsBidi(t *testing.T) {
 	}
 }
 
+func TestCleanDropsInvisibleFillers(t *testing.T) {
+	in := "a\u115fb\u1160c\u3164d\uffa0e\u2800f\ufe0fg\U000e0100h"
+	if got := Clean(in); got != "abcdefgh" {
+		t.Fatalf("%q", got)
+	}
+}
+
 func TestJSONEscapesC1(t *testing.T) {
 	inc, res := sample()
 	res.Findings[0].Evidence[0].Detail = "x\u0085y\u009bz"

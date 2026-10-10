@@ -208,12 +208,13 @@ var newlines = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
 
 // Clean makes repo-derived text safe for a terminal: CR/LF become spaces; C0/C1 controls, DEL,
 // Unicode line/paragraph separators, format characters (Cf: bidi controls, zero-width characters,
-// ...) and the tag block are dropped (no escape sequences reach the terminal, no text reordering,
-// no hidden text).
+// ...), the tag block, the blank fillers (Hangul fillers, braille blank) and variation selectors
+// are dropped (no escape sequences reach the terminal, no text reordering, no hidden text).
 func Clean(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch {
-		case r < 0x20, r >= 0x7f && r <= 0x9f, r == 0x2028, r == 0x2029, unicode.Is(unicode.Cf, r), r >= 0xe0000 && r <= 0xe007f:
+		case r < 0x20, r >= 0x7f && r <= 0x9f, r == 0x2028, r == 0x2029, unicode.Is(unicode.Cf, r), r >= 0xe0000 && r <= 0xe007f,
+			r == 0x115f, r == 0x1160, r == 0x3164, r == 0xffa0, r == 0x2800, r >= 0xfe00 && r <= 0xfe0f, r >= 0xe0100 && r <= 0xe01ef:
 			return -1
 		}
 		return r
