@@ -340,40 +340,40 @@ func TestCloudRolesDedupeAndCopy(t *testing.T) {
 
 func TestMayInstallNPM(t *testing.T) {
 	for name, tc := range map[string]struct {
-		j    Job
+		j    *Job
 		want bool
 	}{
-		"checkout+echo":   {Job{Uses: []string{"actions/checkout@v4", "actions/setup-node@v4", "actions/cache@v4"}, Runs: []string{"echo hi"}}, false},
-		"local action":    {Job{Uses: []string{"actions/checkout@v4", "./.github/actions/setup"}}, true},
-		"reusable":        {Job{Uses: []string{"./.github/workflows/build.yml"}}, true},
-		"third-party":     {Job{Uses: []string{"some/action@v1"}}, true},
-		"make":            {Job{Runs: []string{"make test"}}, true},
-		"bash -c":         {Job{Runs: []string{"bash -c 'x'"}}, true},
-		"script":          {Job{Runs: []string{"./scripts/build"}}, true},
-		"sh file":         {Job{Runs: []string{"ci/run.sh"}}, true},
-		"python":          {Job{Runs: []string{"python3 build.py"}}, true},
-		"npm":             {Job{Runs: []string{"npm ci"}}, true},
-		"go":              {Job{Runs: []string{"go test ./..."}}, false},
-		"echo":            {Job{Runs: []string{"echo done"}}, false},
-		"docker build":    {Job{Runs: []string{"docker build ."}}, true},
-		"compose":         {Job{Runs: []string{"docker-compose up"}}, true},
-		"podman":          {Job{Runs: []string{"podman build ."}}, true},
-		"buildah":         {Job{Runs: []string{"buildah bud ."}}, true},
-		"mvn":             {Job{Runs: []string{"mvn -B package"}}, true},
-		"mvnw":            {Job{Runs: []string{"./mvnw verify"}}, true},
-		"gradle":          {Job{Runs: []string{"gradle build"}}, true},
-		"gradlew":         {Job{Runs: []string{"./gradlew build"}}, true},
-		"sbt":             {Job{Runs: []string{"sbt test"}}, true},
-		"bazel":           {Job{Runs: []string{"bazel build //..."}}, true},
-		"dotnet":          {Job{Runs: []string{"dotnet build"}}, true},
-		"composer":        {Job{Runs: []string{"composer install"}}, true},
-		"github-script":   {Job{Uses: []string{"actions/github-script@v7"}}, false},
-		"script exec":     {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"await exec.exec('make', ['x'])"}}, true},
-		"script spawn":    {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"require('child_process').spawnSync(tool)"}}, true},
-		"script template": {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"await $`make`"}}, true},
-		"script npm":      {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"run('npm', ['ci'])"}}, true},
-		"script api":      {Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"await github.rest.issues.create({})"}}, false},
-		"turbo in a pipe": {Job{Runs: []string{"echo x | turbo run build"}}, true},
+		"checkout+echo":   {&Job{Uses: []string{"actions/checkout@v4", "actions/setup-node@v4", "actions/cache@v4"}, Runs: []string{"echo hi"}}, false},
+		"local action":    {&Job{Uses: []string{"actions/checkout@v4", "./.github/actions/setup"}}, true},
+		"reusable":        {&Job{Uses: []string{"./.github/workflows/build.yml"}}, true},
+		"third-party":     {&Job{Uses: []string{"some/action@v1"}}, true},
+		"make":            {&Job{Runs: []string{"make test"}}, true},
+		"bash -c":         {&Job{Runs: []string{"bash -c 'x'"}}, true},
+		"script":          {&Job{Runs: []string{"./scripts/build"}}, true},
+		"sh file":         {&Job{Runs: []string{"ci/run.sh"}}, true},
+		"python":          {&Job{Runs: []string{"python3 build.py"}}, true},
+		"npm":             {&Job{Runs: []string{"npm ci"}}, true},
+		"go":              {&Job{Runs: []string{"go test ./..."}}, false},
+		"echo":            {&Job{Runs: []string{"echo done"}}, false},
+		"docker build":    {&Job{Runs: []string{"docker build ."}}, true},
+		"compose":         {&Job{Runs: []string{"docker-compose up"}}, true},
+		"podman":          {&Job{Runs: []string{"podman build ."}}, true},
+		"buildah":         {&Job{Runs: []string{"buildah bud ."}}, true},
+		"mvn":             {&Job{Runs: []string{"mvn -B package"}}, true},
+		"mvnw":            {&Job{Runs: []string{"./mvnw verify"}}, true},
+		"gradle":          {&Job{Runs: []string{"gradle build"}}, true},
+		"gradlew":         {&Job{Runs: []string{"./gradlew build"}}, true},
+		"sbt":             {&Job{Runs: []string{"sbt test"}}, true},
+		"bazel":           {&Job{Runs: []string{"bazel build //..."}}, true},
+		"dotnet":          {&Job{Runs: []string{"dotnet build"}}, true},
+		"composer":        {&Job{Runs: []string{"composer install"}}, true},
+		"github-script":   {&Job{Uses: []string{"actions/github-script@v7"}}, false},
+		"script exec":     {&Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"await exec.exec('make', ['x'])"}}, true},
+		"script spawn":    {&Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"require('child_process').spawnSync(tool)"}}, true},
+		"script template": {&Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"await $`make`"}}, true},
+		"script npm":      {&Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"run('npm', ['ci'])"}}, true},
+		"script api":      {&Job{Uses: []string{"actions/github-script@v7"}, Scripts: []string{"await github.rest.issues.create({})"}}, false},
+		"turbo in a pipe": {&Job{Runs: []string{"echo x | turbo run build"}}, true},
 	} {
 		if got := tc.j.MayInstallNPM(); got != tc.want {
 			t.Errorf("%s: want %v", name, tc.want)
@@ -802,5 +802,47 @@ func TestPackageManagerBehindShellIndirection(t *testing.T) {
 	}
 	if !CallsPackageManager("PM: npm.cmd") || !(&Job{Runs: []string{"npm.exe ci"}}).InstallsNPM() {
 		t.Error("npm.cmd and npm.exe are npm")
+	}
+}
+
+// Adversarial 1 MiB lines of any package manager word are read in bounded time.
+func TestPackageManagerWordsBoundedTime(t *testing.T) {
+	for _, tok := range []string{"npm ", "yarn ", "(npm ", `"npm `, "npm.cmd ", "npx ", "pnpm i ", "$PM "} {
+		j := &Job{Runs: []string{strings.Repeat(tok, (1<<20)/len(tok))}}
+		start := time.Now()
+		j.RunInstalls()
+		j.InstallsNPM()
+		j.InstallsNPMStrict()
+		j.MayInstallNPM()
+		if d := time.Since(start); d > 2*time.Second {
+			t.Errorf("%q: %v", tok, d)
+		}
+	}
+}
+
+func TestInstallsNPMStrictQuotesAndGlobalForms(t *testing.T) {
+	for run, want := range map[string]bool{
+		`echo "a; npm ci"`:               false,
+		`echo 'a; npm ci'`:               false,
+		"echo don't; npm ci; echo won't": true,
+		"npm i --location global x":      false,
+		"npm i --global=true x":          false,
+		"npm i --location=project x":     true,
+		"npm ci --prefix 'web dir'":      true,
+	} {
+		if got := (&Job{Runs: []string{run}}).InstallsNPMStrict(); got != want {
+			t.Errorf("%q: got %v", run, got)
+		}
+	}
+}
+
+func TestCallsPackageManagerPrefilter(t *testing.T) {
+	for line, want := range map[string]bool{
+		"PM: npm": true, "run npx foo": true, "pnpx foo": true, "yarn": true, "bun x": true, "bunx y": true,
+		"PM: npm.cmd": true, "echo npmrc": false, "go test": false,
+	} {
+		if got := CallsPackageManager("a\n2026-01-01T00:00:00Z " + line + "\r\nb"); got != want || got != installRe.MatchString(line) {
+			t.Errorf("%q: %v", line, got)
+		}
 	}
 }

@@ -63,13 +63,36 @@ func TestScanNPMCmdInstallIsAffected(t *testing.T) {
 	}
 }
 
-// Global installs and mentions are not installs from the lockfile.
+// Global installs and mentions are not installs from the lockfile, also when the runner echoes them.
 func TestScanMentionsAreNotInstalls(t *testing.T) {
 	for _, step := range []string{"npm i -g pnpm", "which yarn", "corepack enable yarn", `echo "run npm ci"`} {
-		fd := oneJob(t, runStep(step), "2026-03-31T01:00:00Z ##[group]Run x\n2026-03-31T01:00:00Z ##[endgroup]\n", map[string]string{"package-lock.json": axiosLock})
+		log := "2026-03-31T01:00:00Z ##[group]Run " + step + "\n2026-03-31T01:00:00Z \x1b[36;1m" + step + "\x1b[0m\n" +
+			"2026-03-31T01:00:00Z shell: /usr/bin/bash -e {0}\n2026-03-31T01:00:00Z ##[endgroup]\n2026-03-31T01:00:00Z done\n"
+		fd := oneJob(t, runStep(step), log, map[string]string{"package-lock.json": axiosLock})
 		if fd.Status == model.Affected {
 			t.Errorf("%q: %v %+v", step, fd.Status, fd.Evidence)
 		}
+	}
+}
+
+// Install output proves an install; the echo of the step does not.
+func TestInstallLogIgnoresStepEcho(t *testing.T) {
+	echo := "2026-03-31T01:00:00Z ##[group]Run npm ci\n2026-03-31T01:00:00Z \x1b[36;1mnpm ci\x1b[0m\n2026-03-31T01:00:00Z ##[endgroup]\n"
+	if installLog(echo) {
+		t.Error("echo only")
+	}
+	if !installLog(echo + "2026-03-31T01:00:00Z added 1 package in 1s\n") {
+		t.Error("output after the echo")
+	}
+}
+
+// A stale lockfile or package-lock=false never lowers a pin: npm ci installs the lockfile anyway.
+func TestScanStaleLockfileKeepsPin(t *testing.T) {
+	log := "2026-03-31T01:00:00Z ##[group]Run npm ci\n2026-03-31T01:00:00Z ##[endgroup]\n2026-03-31T01:00:00Z added 1 package in 1s\n"
+	lock := `{"lockfileVersion":3,"packages":{"":{"dependencies":{"axios":"^1.14.0"}},"node_modules/axios":{"version":"1.14.1"}}}`
+	fd := oneJob(t, runStep("npm ci"), log, map[string]string{"package-lock.json": lock, ".npmrc": "package-lock=false\n", "package.json": `{"dependencies":{"axios":"^1.14.0"}}`})
+	if fd.Status != model.Affected || !hasNote(fd, "lockfile may not be what npm installed") {
+		t.Errorf("%v %+v", fd.Status, fd.Evidence)
 	}
 }
 

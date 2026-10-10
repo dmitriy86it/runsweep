@@ -233,7 +233,7 @@ func (c *Cache) match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 		}
 		pkgs, err := p.pkgs, p.err
 		var stale staleness
-		var stalePins []string
+		pinned := len(r.Pins)
 		if err == nil {
 			if stale, err = c.stale(ctx, f, repo, e, p.root, byPath, badVer); err != nil {
 				return r, err
@@ -260,23 +260,20 @@ func (c *Cache) match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			default:
 				continue
 			}
-			if stale.reason != "" { // npm may not install what the lockfile pins
-				stale.relevant, stalePins = true, append(stalePins, pin.Detail)
-				continue
-			}
 			r.Status = model.Affected
 			r.Evidence, r.Pins = append(r.Evidence, pin), append(r.Pins, pin)
 			if !slices.Contains(r.Pinned, dir) {
 				r.Pinned = append(r.Pinned, dir)
 			}
 		}
-		if stale.relevant {
-			r.mark(model.Unchecked)
-			detail := fmt.Sprintf("%s: %s — lockfile may not be what npm installed", e.Path, stale.reason)
-			if len(stalePins) > 0 {
-				detail += "; it pins " + strings.Join(stalePins, ", ")
+		// The pin keeps its status: npm ci installs the lockfile and npm install keeps what still
+		// satisfies package.json. Without a pin, a lockfile npm may not use is UNCHECKED.
+		hasPin := len(r.Pins) > pinned
+		if stale.reason != "" && (hasPin || stale.relevant) {
+			if !hasPin {
+				r.mark(model.Unchecked)
 			}
-			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: detail})
+			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("%s: %s — lockfile may not be what npm installed", e.Path, stale.reason)})
 		}
 	}
 	for _, e := range entries {
