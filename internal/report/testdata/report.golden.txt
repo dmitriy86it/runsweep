@@ -1,5 +1,5 @@
 runsweep · axios malicious release (axios-2026-03)
-2026-03-31 00:21:00 → 2026-03-31 03:21:00 UTC · 3 runs · 5 jobs scanned · lookback 7d
+2026-03-31 00:21:00 → 2026-03-31 03:21:00 UTC · 3 runs · 5 jobs scanned · lookback 7d · 2 repositories scanned
 
 AFFECTED 1   POSSIBLE 0   UNCHECKED 1
 

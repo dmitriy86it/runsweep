@@ -60,8 +60,8 @@ const RetentionNote = "incident window starts more than 90 days ago; GitHub may 
 func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# runsweep: %s (%s)\n\n", code(inc.Title), code(inc.ID))
-	fmt.Fprintf(&b, "Window: %s → %s UTC · runs scanned: %d · jobs scanned: %d\n\n",
-		r.Start.UTC().Format("2006-01-02 15:04:05"), r.End.UTC().Format("2006-01-02 15:04:05"), r.RunsScanned, r.JobsScanned)
+	fmt.Fprintf(&b, "Window: %s → %s UTC · repositories scanned: %d · runs scanned: %d · jobs scanned: %d\n\n",
+		r.Start.UTC().Format("2006-01-02 15:04:05"), r.End.UTC().Format("2006-01-02 15:04:05"), r.ReposTargeted-len(r.Skipped), r.RunsScanned, r.JobsScanned)
 	if r.RetentionWarning {
 		b.WriteString("Warning: " + RetentionNote + ".\n\n")
 	}

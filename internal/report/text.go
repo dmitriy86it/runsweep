@@ -29,9 +29,9 @@ func Text(w io.Writer, inc *incident.Incident, r *model.Result, color bool) erro
 		name = t + " (" + name + ")"
 	}
 	fmt.Fprintf(&b, "runsweep · %s\n", name)
-	fmt.Fprintf(&b, "%s → %s UTC · %s · %s scanned · lookback %s\n",
+	fmt.Fprintf(&b, "%s → %s UTC · %s · %s scanned · lookback %s · %s scanned\n",
 		r.Start.UTC().Format("2006-01-02 15:04:05"), r.End.UTC().Format("2006-01-02 15:04:05"),
-		count(r.RunsScanned, "run"), count(r.JobsScanned, "job"), days(r.Lookback))
+		count(r.RunsScanned, "run"), count(r.JobsScanned, "job"), days(r.Lookback), repos(r))
 	if r.RetentionWarning {
 		b.WriteString("Warning: " + RetentionNote + "\n")
 	}
@@ -110,6 +110,14 @@ func count(n int, noun string) string {
 		noun += "s"
 	}
 	return fmt.Sprintf("%d %s", n, noun)
+}
+
+// repos renders how many of the targeted repositories were scanned: "1 repository", "2 repositories".
+func repos(r *model.Result) string {
+	if n := r.ReposTargeted - len(r.Skipped); n != 1 {
+		return fmt.Sprintf("%d repositories", n)
+	}
+	return "1 repository"
 }
 
 // days renders whole days as "7d", anything else as a Go duration.
