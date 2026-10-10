@@ -377,8 +377,6 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		}
 		return st
 	}
-	var npmAll *npm.Result // MatchAll, read once when a job drops a pin
-	var npmAllErr error
 	var out []model.Finding
 	for _, job := range jobs {
 		if err := ctx.Err(); err != nil { // Ctrl-C: keep the jobs judged so far
@@ -436,24 +434,17 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		// A lockfile pin is AFFECTED only for a job that installed (install output in its log or an
 		// install command of its own) from that lockfile: the root one or one in a directory its
 		// steps or log name. A quiet identified job that runs no opaque script (a silent install)
-		// drops the pin and keeps the rest; else the pin is POSSIBLE.
+		// drops the npm evidence; else the pin is POSSIBLE.
 		if npmJob.Status == model.Affected {
 			installed := logErr == nil && installLog(log) || wj != nil && wj.InstallsNPMStrict()
 			related := slices.ContainsFunc(npmRes.Pinned, func(dir string) bool {
 				return dir == "." || wj != nil && wj.Mentions(dir) || logErr == nil && pathInLog(log, dir)
 			})
 			drop := (!installed || !related) && quiet && wj != nil && !wj.MayInstallNPM() && !baseEvent
-			if drop && npmAll == nil {
-				all, err := s.npm.MatchAll(ctx, s.src, repo, run.HeadSHA, s.inc.NPM)
-				if err != nil && !soft(err) {
-					return out, len(jobs), err
-				}
-				npmAll, npmAllErr = &all, err // on a soft error the rest is unknown: the pin stays POSSIBLE
-			}
 			switch {
 			case installed && related:
-			case drop && npmAllErr == nil:
-				npmJob = npmAll.WithoutPins().Resolve(mentioned)
+			case drop: // the rest of the tree would be dropped below too: the job cannot install
+				npmJob = npm.Result{}
 			default:
 				npmJob.Status = model.Possible
 				switch {
