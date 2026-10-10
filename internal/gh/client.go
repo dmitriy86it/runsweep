@@ -81,14 +81,25 @@ func shared[T any](ctx context.Context, g *flight, key string, f func() (T, erro
 		}
 		g.m[key] = call
 		g.mu.Unlock()
-		v, err := f()
-		call.val, call.err = v, err
+		return run(g, key, call, f)
+	}
+}
+
+// errPanic is what waiters see when the call they wait for panicked.
+var errPanic = errors.New("shared request panicked")
+
+// run executes f and always releases the waiters, also when f panics (the panic goes on).
+func run[T any](g *flight, key string, call *flightCall, f func() (T, error)) (T, error) {
+	call.err = errPanic
+	defer func() {
 		g.mu.Lock()
 		delete(g.m, key)
 		g.mu.Unlock()
 		close(call.done)
-		return v, err
-	}
+	}()
+	v, err := f()
+	call.val, call.err = v, err
+	return v, err
 }
 
 type treeVal struct {
@@ -430,6 +441,9 @@ func (c *Client) Tree(ctx context.Context, repo, sha string) ([]source.TreeEntry
 		return t.entries, t.truncated, nil
 	}
 	t, err := shared(ctx, &c.fl, key, func() (treeVal, error) {
+		if v, ok := c.cache.Load(key); ok { // filled while this call was starting
+			return v.(treeVal), nil
+		}
 		owner, name := split(repo)
 		var tree *github.Tree
 		err := c.do(ctx, func() (*github.Response, error) {

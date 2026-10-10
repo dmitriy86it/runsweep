@@ -727,3 +727,80 @@ func TestRateLimitWaitShowsResetTime(t *testing.T) {
 		t.Fatalf("%q", logs)
 	}
 }
+
+// After a panic in the shared call, waiters are released and the key is free again.
+func TestSharedPanicReleasesKey(t *testing.T) {
+	var g flight
+	started, release := make(chan struct{}), make(chan struct{})
+	waiter := make(chan error, 1)
+	go func() {
+		defer func() { _ = recover() }()
+		_, _ = shared(context.Background(), &g, "k", func() (int, error) {
+			close(started)
+			<-release
+			panic("boom")
+		})
+	}()
+	<-started
+	go func() {
+		_, err := shared(context.Background(), &g, "k", func() (int, error) { return 0, nil })
+		waiter <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // the waiter is queued behind the leader
+	close(release)
+	select {
+	case err := <-waiter:
+		if !errors.Is(err, errPanic) {
+			t.Errorf("waiter: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter blocked after the leader panicked")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if v, err := shared(ctx, &g, "k", func() (int, error) { return 7, nil }); err != nil || v != 7 {
+		t.Fatalf("next call: %d %v", v, err)
+	}
+}
+
+// A waiter whose own context is alive retries when the leader died of its caller's cancellation;
+// a waiter that is cancelled itself returns at once and leaves the leader running.
+func TestSharedWaiterRetryAndCancel(t *testing.T) {
+	var g flight
+	started, release := make(chan struct{}), make(chan struct{})
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	go func() {
+		_, _ = shared(leaderCtx, &g, "k", func() (int, error) {
+			close(started)
+			<-release
+			return 0, leaderCtx.Err()
+		})
+	}()
+	<-started
+	retried := make(chan int, 1)
+	go func() {
+		v, _ := shared(context.Background(), &g, "k", func() (int, error) { return 7, nil })
+		retried <- v
+	}()
+	wctx, cancelWaiter := context.WithCancel(context.Background())
+	cancelled := make(chan error, 1)
+	go func() {
+		_, err := shared(wctx, &g, "k", func() (int, error) { return 9, nil })
+		cancelled <- err
+	}()
+	time.Sleep(50 * time.Millisecond)
+	cancelWaiter()
+	if err := <-cancelled; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled waiter: %v", err)
+	}
+	cancelLeader()
+	close(release)
+	select {
+	case v := <-retried:
+		if v != 7 {
+			t.Errorf("retry returned %d", v)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter did not retry")
+	}
+}
