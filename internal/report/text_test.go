@@ -168,3 +168,22 @@ func TestTextOnlyUnverified(t *testing.T) {
 		t.Fatal(b.String())
 	}
 }
+
+func TestHeaderCountsScannedRepositories(t *testing.T) {
+	inc, res := sample() // 3 targeted, 1 skipped
+	var txt, md bytes.Buffer
+	if err := Text(&txt, inc, res, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := Markdown(&md, inc, res); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(txt.String(), " · lookback 7d · 2 repositories scanned\n") || !strings.Contains(md.String(), "· repositories scanned: 2 · runs scanned: 3") {
+		t.Fatalf("%s\n%s", txt.String(), md.String())
+	}
+	res.ReposTargeted, res.Skipped = 1, nil
+	txt.Reset()
+	if err := Text(&txt, inc, res, false); err != nil || !strings.Contains(txt.String(), " · 1 repository scanned\n") {
+		t.Fatalf("%v %s", err, txt.String())
+	}
+}

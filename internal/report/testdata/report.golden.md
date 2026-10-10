@@ -1,6 +1,6 @@
 # runsweep: `axios malicious release` (`axios-2026-03`)
 
-Window: 2026-03-31 00:21:00 → 2026-03-31 03:21:00 UTC · runs scanned: 3 · jobs scanned: 5
+Window: 2026-03-31 00:21:00 → 2026-03-31 03:21:00 UTC · repositories scanned: 2 · runs scanned: 3 · jobs scanned: 5
 
 **AFFECTED: 1 · POSSIBLE: 0 · UNCHECKED: 1**
 
