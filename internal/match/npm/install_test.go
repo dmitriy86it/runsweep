@@ -173,13 +173,14 @@ func TestLockfileNpmUsesIsAffected(t *testing.T) {
 	}
 }
 
-// A stale lockfile matters only when the incident package is involved.
-func TestStaleLockfileWithoutBadPackageIsClean(t *testing.T) {
+// A stale lockfile is UNCHECKED even without the incident package declared: npm install resolves
+// the changed dependencies fresh, and a bad version may come in transitively.
+func TestStaleLockfileIsUnchecked(t *testing.T) {
 	r := matchFiles(t, map[string]string{
 		"package.json":      `{"dependencies":{"left-pad":"^1.1"}}`,
 		"package-lock.json": `{"lockfileVersion":3,"packages":{"":{"dependencies":{"left-pad":"^1.0"}},"node_modules/left-pad":{"version":"1.0.0"}}}`,
 	})
-	if r.Status != model.Clean {
+	if r.Status != model.Unchecked {
 		t.Errorf("%v %+v", r.Status, r.Evidence)
 	}
 	// the incident package is declared and the lock is out of date: npm install may resolve it fresh

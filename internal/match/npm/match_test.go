@@ -227,7 +227,7 @@ func TestMatchNoLockfile(t *testing.T) {
 		"direct dep wins":    {map[string]string{"app/package.json": `{"dependencies":{"axios":"^1"}}`}, model.Possible, true},
 		"no deps":            {map[string]string{"app/package.json": `{"name":"x"}`}, model.Clean, false},
 		"root lockfile":      {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`, "yarn.lock": "__metadata:\n  version: 8\n"}, model.Clean, false},
-		"same-dir lockfile":  {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`, "app/package-lock.json": `{"packages":{"":{}}}`}, model.Clean, false},
+		"same-dir lockfile":  {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`, "app/package-lock.json": `{"packages":{"":{"dependencies":{"left-pad":"^1"}}}}`}, model.Clean, false},
 		"sibling lockfile":   {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`, "web/package-lock.json": `{"packages":{"":{}}}`}, model.Unchecked, true},
 		"unsupported counts": {map[string]string{"app/package.json": `{"dependencies":{"left-pad":"^1"}}`, "bun.lock": "{}"}, model.Unchecked, false},
 	} {

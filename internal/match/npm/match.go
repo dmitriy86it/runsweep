@@ -68,45 +68,37 @@ func (r Result) Resolve(installed func(dir string) bool) Result {
 	return out
 }
 
-// staleness: why the package-lock at a path may not be what npm installed (reason), and whether
-// that matters for the incident (relevant): always for package-lock=false, otherwise when the lockfile
-// pins a bad version or the package.json beside it declares a bad package.
-type staleness struct {
-	reason   string
-	relevant bool
-}
-
 // stale checks a package-lock.json for npm re-resolving instead of installing it: `package-lock=false`
 // in the .npmrc of its folder, or a package.json beside it whose dependency specs differ from those
-// the lockfile was made for (npm install resolves the difference fresh).
+// the lockfile was made for (npm install resolves the difference and its dependencies fresh, so a
+// bad version may come in transitively). It returns why, or "".
 func (c *Cache) stale(ctx context.Context, f Fetcher, repo string, lock source.TreeEntry, root []string,
-	byPath map[string]source.TreeEntry, badVer map[string]map[string]bool) (staleness, error) {
+	byPath map[string]source.TreeEntry) (string, error) {
 	if b := path.Base(lock.Path); b != "package-lock.json" && b != "npm-shrinkwrap.json" {
-		return staleness{}, nil
+		return "", nil
 	}
 	dir := path.Dir(lock.Path)
 	if rc, ok := byPath[path.Join(dir, ".npmrc")]; ok {
 		p, err := c.load(ctx, f, repo, rc, func(b []byte) parsed { return parsed{noLock: npmrcNoLock(b)} })
 		if err != nil {
-			return staleness{}, err
+			return "", err
 		}
 		if p.noLock {
-			return staleness{reason: rc.Path + " sets package-lock=false", relevant: true}, nil
+			return rc.Path + " sets package-lock=false", nil
 		}
 	}
 	pj, ok := byPath[path.Join(dir, "package.json")]
 	if !ok || root == nil {
-		return staleness{}, nil
+		return "", nil
 	}
 	p, err := c.load(ctx, f, repo, pj, func(b []byte) parsed {
 		m, err := declared(b)
 		return parsed{m: m, err: err}
 	})
 	if err != nil || p.err != nil || slices.Equal(p.m.specs, root) {
-		return staleness{}, err
+		return "", err
 	}
-	declaresBad := slices.ContainsFunc(p.m.deps, func(n string) bool { _, ok := badVer[n]; return ok })
-	return staleness{reason: pj.Path + " and the lockfile disagree on dependencies", relevant: declaresBad}, nil
+	return pj.Path + " and the lockfile disagree on dependencies", nil
 }
 
 // npmrcNoLock reports whether an .npmrc sets package-lock=false (the last assignment wins).
@@ -232,10 +224,10 @@ func (c *Cache) match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			return r, err
 		}
 		pkgs, err := p.pkgs, p.err
-		var stale staleness
+		var stale string
 		pinned := len(r.Pins)
 		if err == nil {
-			if stale, err = c.stale(ctx, f, repo, e, p.root, byPath, badVer); err != nil {
+			if stale, err = c.stale(ctx, f, repo, e, p.root, byPath); err != nil {
 				return r, err
 			}
 		}
@@ -269,11 +261,11 @@ func (c *Cache) match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 		// The pin keeps its status: npm ci installs the lockfile and npm install keeps what still
 		// satisfies package.json. Without a pin, a lockfile npm may not use is UNCHECKED.
 		hasPin := len(r.Pins) > pinned
-		if stale.reason != "" && (hasPin || stale.relevant) {
+		if stale != "" {
 			if !hasPin {
 				r.mark(model.Unchecked)
 			}
-			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("%s: %s — lockfile may not be what npm installed", e.Path, stale.reason)})
+			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("%s: %s — lockfile may not be what npm installed", e.Path, stale)})
 		}
 	}
 	for _, e := range entries {
