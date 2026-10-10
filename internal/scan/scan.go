@@ -27,11 +27,13 @@ import (
 var installLogRe = regexp.MustCompile(`(added|removed|changed) \d+ packages?|audited \d+ packages?|up to date in \d|` +
 	`Packages: \+\d+|Progress: resolved|Lockfile is up to date|` +
 	`yarn install|success Saved lockfile|\[\d/\d\] (Resolving|Fetching) packages|YN0000: .*(Resolution step|Fetch step|Link step)|` +
-	`bun install|\d+ packages? installed`)
+	`bun install|\d+ packages? installed|` +
+	// the actions toolkit prints this line just before it runs the process; step echo and env never do
+	`^\s*(?:\d{4}-\d\d-\d\dT[\d:.]+Z )?\[command\]\S*(?:npm|pnpm|yarn)(?:\.cmd|\.exe)? (?:ci|install|i|add)\b`)
 
 // installLogLiterals: every match of installLogRe contains one of them.
 var installLogLiterals = []string{"package", "up to date", "Packages: +", "Progress: resolved",
-	"yarn install", "Saved lockfile", "YN0000", "bun install"}
+	"yarn install", "Saved lockfile", "[command]", "YN0000", "bun install"}
 
 // installLog reports whether the job log shows output of a package install. The runner's echo of a
 // step is not output: the "##[group]Run <script>" header and the script lines in cyan show what the

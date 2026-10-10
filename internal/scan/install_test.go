@@ -158,3 +158,13 @@ func TestScanSilentNPMCiIsAffected(t *testing.T) {
 		t.Errorf("%v %+v", fd.Status, fd.Evidence)
 	}
 }
+
+// A JS action that runs npm with silenced output still prints the toolkit's [command] line.
+func TestInstallLogCommandLine(t *testing.T) {
+	if !installLog("2026-03-31T01:00:00Z [command]/usr/bin/npm ci\n") || !installLog("[command]/usr/bin/npm ci\n") {
+		t.Error("[command] line")
+	}
+	if installLog("2026-03-31T01:00:00Z echo \"[command] npm ci\"\n2026-03-31T01:00:00Z npm ci\n") {
+		t.Error("mid-line or bare text")
+	}
+}
