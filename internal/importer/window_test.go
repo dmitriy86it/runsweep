@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -260,5 +261,50 @@ func TestComputeWindowWildcardLive(t *testing.T) {
 	}
 	if !end.Equal(now) {
 		t.Errorf("end = %s, want import time %s (b is still published)", end, now)
+	}
+}
+
+func wildTimes(vs ...string) PkgTimes {
+	pt := PkgTimes{Found: true, Times: map[string]time.Time{}, Published: map[string]bool{}}
+	for i, v := range vs {
+		pt.Times["1."+string(rune('0'+i))+".0"], _ = time.Parse(time.RFC3339, v)
+		pt.Published["1."+string(rune('0'+i))+".0"] = true
+	}
+	return pt
+}
+
+// A "*" package whose first version predates the wave by more than the wave slack leaves the start alone.
+func TestComputeWindowWildcardOutsideWave(t *testing.T) {
+	p := func(s string) time.Time { x, _ := time.Parse(time.RFC3339, s); return x }
+	npm := map[string]map[string]bool{"a": {"1.0.0": true}, "b": {"*": true}}
+	times := map[string]PkgTimes{
+		"a": {Found: true, Times: map[string]time.Time{"1.0.0": p("2026-10-01T00:00:00Z")}},
+		"b": wildTimes("2015-01-01T00:00:00Z", "2026-09-30T00:00:00Z"),
+	}
+	start, _, notes, _, err := computeWindow(npm, times, false, time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC))
+	if err != nil || !start.Equal(p("2026-10-01T00:00:00Z")) {
+		t.Fatalf("start %s %v", start, err)
+	}
+	if !slices.ContainsFunc(notes, func(n string) bool {
+		return strings.Contains(n, "b@*: every version flagged; first published 2015-01-01T00:00:00Z, outside the wave")
+	}) {
+		t.Errorf("no note: %q", notes)
+	}
+	// published inside the slack: it moves the start
+	times["b"] = wildTimes("2026-09-28T00:00:00Z")
+	if start, _, _, _, _ = computeWindow(npm, times, false, time.Now()); !start.Equal(p("2026-09-28T00:00:00Z")) {
+		t.Errorf("start %s", start)
+	}
+}
+
+// Only "*" packages: no wave, the earliest first publish starts the window.
+func TestComputeWindowOnlyWildcard(t *testing.T) {
+	p := func(s string) time.Time { x, _ := time.Parse(time.RFC3339, s); return x }
+	npm := map[string]map[string]bool{"b": {"*": true}, "c": {"*": true}}
+	times := map[string]PkgTimes{"b": wildTimes("2020-05-05T00:00:00Z"), "c": wildTimes("2019-01-01T00:00:00Z", "2026-01-01T00:00:00Z")}
+	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	start, end, _, _, err := computeWindow(npm, times, false, now)
+	if err != nil || !start.Equal(p("2019-01-01T00:00:00Z")) || !end.Equal(now) {
+		t.Fatalf("%s %s %v", start, end, err)
 	}
 }

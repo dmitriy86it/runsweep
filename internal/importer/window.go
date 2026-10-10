@@ -3,8 +3,6 @@ package importer
 import (
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -38,13 +36,16 @@ func ceilMinute(t time.Time) time.Time {
 // publish time, split at gaps over 7 days; the largest cluster (the latest on a
 // tie) is the wave, and clusters before it are dropped whole. A package is
 // never partly dropped. dropped repeats the drop notes, for stderr. A "*"
-// version (every version) has no publish time and is skipped.
+// version (every version) has no publish time of its own and takes no part in the
+// clustering; the package's earliest version moves the start only when it falls within
+// waveSlack of the wave (or when there is no wave), otherwise a note says so.
 func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, keepAll bool, now time.Time) (start, end time.Time, notes, dropped []string, err error) {
 	type pkg struct {
 		name  string
 		first time.Time
 	}
 	var pkgs []pkg
+	wild := map[string]time.Time{} // "*" package -> its earliest version
 	for _, name := range sortedKeys(npm) {
 		pt := times[name]
 		if !pt.Found {
@@ -65,8 +66,15 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 		if !first.IsZero() {
 			pkgs = append(pkgs, pkg{name, first})
 		}
+		if npm[name]["*"] {
+			for _, t := range pt.Times {
+				if w := wild[name]; w.IsZero() || t.Before(w) {
+					wild[name] = t
+				}
+			}
+		}
 	}
-	if len(pkgs) == 0 {
+	if len(pkgs) == 0 && len(wild) == 0 {
 		return time.Time{}, time.Time{}, notes, nil, errNoTimes
 	}
 	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].first.Before(pkgs[j].first) })
@@ -128,10 +136,13 @@ func computeWindow(npm map[string]map[string]bool, times map[string]PkgTimes, ke
 				if len(pt.Published) > 0 {
 					live = append(live, name+"@*")
 				}
-				for _, pv := range slices.Sorted(maps.Keys(pt.Times)) {
-					if t := pt.Times[pv]; start.IsZero() || t.Before(start) {
-						start, startRef = t, name+"@"+pv
-					}
+				w := wild[name]
+				switch {
+				case w.IsZero():
+				case len(pkgs) > 0 && w.Before(pkgs[mainStart].first.Add(-waveSlack)):
+					notes = append(notes, fmt.Sprintf("%s@*: every version flagged; first published %s, outside the wave (start not moved)", name, w.UTC().Format(time.RFC3339)))
+				case start.IsZero() || w.Before(start):
+					start, startRef = w, name+"@*"
 				}
 				continue
 			}
