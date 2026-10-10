@@ -824,6 +824,7 @@ func TestFatalScanReportsIncomplete(t *testing.T) {
 func TestEnterpriseHostRefused(t *testing.T) {
 	for _, env := range [][2]string{
 		{"GITHUB_API_URL", "https://ghe.example.com/api/v3"}, {"GH_HOST", "ghe.example.com"}, {"GITHUB_API_URL", "http://api.github.com"},
+		{"GITHUB_API_URL", "https://api.github.com:8443"},
 		{"GITHUB_API_URL", "https://user:sekret@ghe.example.com/api/v3"}, {"GH_HOST", "https://ghe.example.com/"},
 	} {
 		t.Setenv(env[0], env[1])
