@@ -622,7 +622,7 @@ func TestAPIRedirectStaysOnHost(t *testing.T) {
 // A job log is read once into a buffer sized from Content-Length and returned without a copy.
 func TestJobLogMemory(t *testing.T) {
 	body := []byte(strings.Repeat("0123456789abcdef\n", 1<<20)) // 17 MB
-	logSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	logSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		_, _ = w.Write(body)
 	}))
