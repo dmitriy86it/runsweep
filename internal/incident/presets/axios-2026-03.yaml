@@ -6,10 +6,12 @@ title: "axios 1.14.1 / 0.30.4 malicious release"
 window: {start: 2026-03-31T00:21:58Z, end: 2026-03-31T03:15:30Z}
 npm:
   - {name: axios, versions: ["1.14.1", "0.30.4"]}
+  - {name: plain-crypto-js, versions: ["4.2.0", "4.2.1"]}
 iocs:
   domains: [sfrclak.com]
   ips: [142.11.206.73]
 refs:
   - https://osv.dev/vulnerability/MAL-2026-2307
+  - https://osv.dev/vulnerability/MAL-2026-2306
   - https://registry.npmjs.org/axios
   - https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan
