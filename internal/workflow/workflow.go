@@ -206,11 +206,15 @@ func (w *Workflow) findStaged(name string) (*Job, bool) {
 	for _, n := range names {
 		var hit []*Job
 		for _, id := range ids {
-			if j := w.Jobs[id]; j.ID == n || j.Name == n {
+			// GitHub never shows the ID of a named job
+			if j := w.Jobs[id]; j.Name == n || j.Name == "" && j.ID == n {
 				hit = append(hit, j)
 			}
 		}
 		if len(hit) == 1 {
+			if w.templatedHit(ids, hit[0], names) {
+				return nil, true // another job's templated name may evaluate to the same string
+			}
 			return hit[0], true
 		} else if len(hit) > 1 {
 			return nil, true
@@ -247,6 +251,20 @@ func (w *Workflow) findStaged(name string) (*Job, bool) {
 		return nil, true
 	}
 	return best, true
+}
+
+// templatedHit reports whether a job other than exact has a templated name that may equal one of
+// names, or one that could not be compared.
+func (w *Workflow) templatedHit(ids []string, exact *Job, names []string) bool {
+	for _, id := range ids {
+		if j := w.Jobs[id]; j != exact {
+			p := w.pattern(j)
+			if p.bad || p.re != nil && slices.ContainsFunc(names, p.re.MatchString) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // InstallsNPM reports whether the job installs npm dependencies.

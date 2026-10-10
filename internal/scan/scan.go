@@ -336,6 +336,8 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		}
 	}
 
+	// These events run the workflow from the base branch, so head_sha files may not be what ran.
+	baseEvent := run.Event == "pull_request_target" || run.Event == "workflow_run"
 	var npmAll *npm.Result // MatchAll, read once when a job drops a pin
 	var npmAllErr error
 	var out []model.Finding
@@ -429,7 +431,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		// A missing or unreadable lockfile matters only to a job that installed: dropped when quiet.
 		noInstall := quiet && npmJob.Status == model.Unchecked
 		// Otherwise drop npm evidence only on positive evidence the job cannot install packages.
-		if npmJob.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logInstall) {
+		if npmJob.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logInstall || baseEvent) {
 			f.Status = model.Worse(f.Status, npmJob.Status)
 			f.Evidence = append(f.Evidence, npmJob.Evidence...)
 		}
@@ -489,6 +491,10 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 
 		f.Status = model.Worse(f.Status, call.status)
 		f.Evidence = append(f.Evidence, call.notes...)
+		if baseEvent {
+			f.Status = model.Worse(f.Status, model.Unchecked)
+			f.Evidence = append(f.Evidence, note("workflow ran from the base branch; files read at head_sha may differ"))
+		}
 
 		if f.Status != model.Clean { // UNCHECKED too: its exposure cannot be ruled out
 			var e model.Exposure

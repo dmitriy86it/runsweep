@@ -45,6 +45,7 @@ type Run struct {
 	Name      string // workflow name
 	Path      string // e.g. .github/workflows/ci.yml
 	HeadSHA   string
+	Event     string // triggering event (API `event`), e.g. push or pull_request_target
 	URL       string
 	CreatedAt time.Time
 	StartedAt time.Time // start of the latest attempt (run_started_at); zero if unknown
