@@ -360,7 +360,7 @@ func TestIncompleteKeepsFindings(t *testing.T) {
 func TestSecretsUnknownReplacesNothingToRotate(t *testing.T) {
 	inc, res := sample() // o/old#9: jobs unavailable, no exposure
 	res.Rotation, res.Unverified = nil, nil
-	const line = "Secrets unknown for 1 job (workflow or job list unavailable); review them manually: "
+	const line = "Secrets unknown for 1 job (workflow file, job list or run not available); review them manually: "
 	var txt, md, js bytes.Buffer
 	if err := Text(&txt, inc, res, false); err != nil {
 		t.Fatal(err)

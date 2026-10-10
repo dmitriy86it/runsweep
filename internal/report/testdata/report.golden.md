@@ -6,7 +6,7 @@ Window: 2026-03-31 00:21:00 → 2026-03-31 03:21:00 UTC · repositories scanned:
 
 ## Rotate first
 
-Secrets unknown for 1 job (workflow or job list unavailable); review them manually: `o/old#9`.
+Secrets unknown for 1 job (workflow file, job list or run not available); review them manually: `o/old#9`.
 
 | # | Secret / role | Priority | Why | Seen in |
 |---|---|---|---|---|
@@ -45,7 +45,7 @@ Malicious code can spread through caches, artifacts, self-hosted runners and wor
 - Priority by secret name is a name-based heuristic. Review the list; do not treat it as complete.
 - A job whose log was unavailable is reported UNCHECKED: actions used via composite actions (and reusable workflows that are neither local nor pinned to a SHA) can only be seen in the log. Job logs over 64 MB count as unavailable.
 - Lockfiles are assumed to be written by npm, pnpm or yarn; hand-edited lockfiles may be misread. bun.lock, bun.lockb, deno.lock and .pnp.cjs are not read: their directory is at least UNCHECKED, even next to a lockfile that is read (it may be stale).
-- A missing, unread, unsupported or stale lockfile does not mark a job whose log shows no package install and whose workflow installs none. A lockfile that pins a bad version does not mark an identified job whose log was read and shows no package install or package manager call, whose workflow installs nothing and runs no opaque script, and whose only actions are actions/checkout, actions/setup-*, actions/cache, actions/upload-artifact, actions/download-artifact and actions/github-script; this never applies to pull_request_target or workflow_run runs. A pin is AFFECTED only for a job that installed from that lockfile (the root one or one in a directory its steps or log name); a job that may have installed it is POSSIBLE. A dependency on a package of the same repository (a workspace) is not reported as missing from the lockfile.
+- A missing, unread, unsupported or stale lockfile does not mark a job whose log shows no package install and whose workflow installs none. A lockfile that pins a bad version does not mark an identified job whose log shows no package install or package manager call (or is unavailable), whose workflow installs nothing and runs no opaque script, and whose only actions are actions/checkout, actions/setup-*, actions/cache, actions/upload-artifact, actions/download-artifact and actions/github-script; this never applies to pull_request_target or workflow_run runs. A pin is AFFECTED only for a job that installed from that lockfile (the root one or one in a directory its steps or log name); a job that may have installed it is POSSIBLE. A dependency on a package of the same repository (a workspace) is not reported as missing from the lockfile.
 - An install whose output is fully suppressed inside a JS action or a called script is not seen.
 - A lockfile in a directory that declares workspaces covers only its members. A package.json that no lockfile covers, below the root, is POSSIBLE only for a job whose steps or log name its directory; otherwise UNCHECKED.
 - Packages named on the command line (npm i axios) are found only in the workflow's own run: steps, not in scripts it calls or in local composite actions.
