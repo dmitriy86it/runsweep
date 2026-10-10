@@ -52,7 +52,9 @@ func New(httpClient *http.Client, token, baseURL string) (*Client, error) {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	opts := []github.ClientOptionsFunc{github.WithHTTPClient(httpClient), github.WithRateLimitRedirectionalEndpoints()}
+	apiHTTP := *httpClient // the auth transport re-adds the token on every hop: keep redirects on the host
+	apiHTTP.CheckRedirect = sameHost
+	opts := []github.ClientOptionsFunc{github.WithHTTPClient(&apiHTTP), github.WithRateLimitRedirectionalEndpoints()}
 	if token != "" {
 		opts = append(opts, github.WithAuthToken(token))
 	}
@@ -76,6 +78,20 @@ var errNotHTTPS = fmt.Errorf("%w: job log URL is not https", source.ErrNoAccess)
 func httpsOnly(req *http.Request, via []*http.Request) error {
 	if req.URL.Scheme != "https" {
 		return errNotHTTPS
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
+}
+
+// errCrossHost refuses an API redirect that leaves the host or the https scheme.
+var errCrossHost = fmt.Errorf("%w: API redirected to another host or to http", source.ErrNoAccess)
+
+// sameHost is the API client's redirect policy: https, the host of the first request, at most 10 hops.
+func sameHost(req *http.Request, via []*http.Request) error {
+	if req.URL.Scheme != "https" || req.URL.Host != via[0].URL.Host {
+		return errCrossHost
 	}
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")

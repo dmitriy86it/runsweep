@@ -587,3 +587,32 @@ func TestListRunsMapsEvent(t *testing.T) {
 		t.Fatalf("%+v %v", runs, err)
 	}
 }
+
+// An API redirect to another host or to http never carries the token.
+func TestAPIRedirectStaysOnHost(t *testing.T) {
+	var seen atomic.Value
+	seen.Store("")
+	evil := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.Store(r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte("on: push\n"))
+	}))
+	defer evil.Close()
+	c := newTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/same" {
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/blobs/same") {
+			http.Redirect(w, r, "/same", http.StatusFound)
+			return
+		}
+		http.Redirect(w, r, evil.URL+"/steal", http.StatusFound)
+	}))
+	_, err := c.Blob(context.Background(), "o/r", "abc", 1<<20)
+	if !errors.Is(err, source.ErrNoAccess) || seen.Load() != "" {
+		t.Fatalf("err=%v auth at the other host=%q", err, seen.Load())
+	}
+	if b, err := c.Blob(context.Background(), "o/r", "same", 1<<20); err != nil || string(b) != "ok" {
+		t.Fatalf("same-host redirect: %q %v", b, err)
+	}
+}
