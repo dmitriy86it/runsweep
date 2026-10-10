@@ -1297,11 +1297,31 @@ func TestScanLockfileNeedsInstall(t *testing.T) {
 	if fd.Status != model.Possible || !hasNote(fd, "install from web not confirmed") {
 		t.Fatalf("other dir: %+v", fd)
 	}
+	// a script may install silently; a toolchain action alone does not
+	fd = scanOne(t, fx("      - run: ./build.sh\n", "package-lock.json", "2026-03-31T01:00:00Z build ok\n", false), npmOnly)
+	if fd.Status != model.Possible || !hasNote(fd, "lockfile pins a bad version; job runs scripts that may install silently") {
+		t.Fatalf("opaque script: %+v", fd)
+	}
+	rust := fx("      - uses: dtolnay/rust-toolchain@stable\n", "package-lock.json", "2026-03-31T01:00:00Z rustc 1.90.0\n", false)
+	if res, err := Run(context.Background(), rust, npmOnly, Options{Repos: []string{"o/a"}}); err != nil || len(res.Findings) != 0 {
+		t.Fatalf("toolchain only: %v %+v", err, res.Findings)
+	}
+	// a package manager called, but no install output and no install step
+	fd = scanOne(t, fx(action, "package-lock.json", "2026-03-31T01:00:00Z npm --version\n", false), npmOnly)
+	if fd.Status != model.Possible || !hasNote(fd, "package manager called, install not confirmed") {
+		t.Fatalf("npm called: %+v", fd)
+	}
+	// the directory named only inside another word is no link
+	fd = scanOne(t, fx(action, "web/package-lock.json", install+"2026-03-31T01:00:00Z webpack 5 compiled\n", false), npmOnly)
+	if fd.Status != model.Possible {
+		t.Fatalf("substring: %+v", fd)
+	}
 	// installed from the lockfile's directory
 	for name, f := range map[string]*sourcetest.Fake{
 		"root lockfile, log":           fx(action, "package-lock.json", install, false),
 		"root lockfile, workflow step": fx("      - run: npm ci\n", "package-lock.json", "", true),
 		"working-directory":            fx("      - run: npm ci\n        working-directory: web\n", "web/package-lock.json", install, false),
+		"dir in log":                   fx(action, "web/package-lock.json", install+"2026-03-31T01:00:00Z   working-directory: web\n", false),
 	} {
 		if fd := scanOne(t, f, npmOnly); fd.Status != model.Affected {
 			t.Errorf("%s: %+v", name, fd)

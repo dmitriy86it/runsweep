@@ -383,19 +383,24 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			return rj == nil || rj.Mentions(dir) || logErr == nil && strings.Contains(log, dir)
 		})
 		logInstall := logErr == nil && (installLogRe.MatchString(log) || workflow.CallsPackageManager(log))
-		// A lockfile pin is AFFECTED only for a job that installed (log or its own workflow steps)
-		// from that lockfile: the root one or one in a directory its steps or log name. Else POSSIBLE.
+		// A lockfile pin is AFFECTED only for a job that installed (install output in its log or an
+		// install step of its own) from that lockfile: the root one or one in a directory its steps
+		// or log name. Else POSSIBLE.
 		unproven := false
 		if npmJob.Status == model.Affected {
-			installed := logInstall || wj != nil && wj.InstallsNPM()
+			installed := logErr == nil && installLogRe.MatchString(log) || wj != nil && wj.InstallsNPM()
 			related := slices.ContainsFunc(npmRes.Pinned, func(dir string) bool {
-				return dir == "." || rj != nil && rj.Mentions(dir) || logErr == nil && strings.Contains(log, dir)
+				return dir == "." || rj != nil && rj.Mentions(dir) || logErr == nil && pathInLog(log, dir)
 			})
 			if unproven = !installed || !related; unproven {
 				npmJob.Status = model.Possible
 				switch {
 				case logErr != nil:
 					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; install not confirmed (log unavailable)"))
+				case !installed && logInstall:
+					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; package manager called, install not confirmed"))
+				case !installed && rj != nil && rj.RunsOpaque():
+					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; job runs scripts that may install silently"))
 				case installed:
 					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; install from %s not confirmed", strings.Join(npmRes.Pinned, ", ")))
 				default:
@@ -405,9 +410,10 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		}
 		// A missing or unreadable lockfile, or an unproven pin, matters only to a job that installed:
 		// it is dropped when the log was read, shows no install and no package-manager call (output
-		// may be silenced), and the job (every job when unidentified) names no install.
-		noInstall := (npmJob.Status == model.Unchecked || unproven) && logErr == nil && !logInstall &&
-			len(installs) == 0 && (rj == nil || !rj.InstallsNPM())
+		// may be silenced), and the job (every job when unidentified) names no install. An unproven
+		// pin is kept for an unidentified job and one that runs opaque scripts (a silent install).
+		quiet := logErr == nil && !logInstall && len(installs) == 0 && (rj == nil || !rj.InstallsNPM())
+		noInstall := quiet && (npmJob.Status == model.Unchecked || unproven && wj != nil && !rj.RunsOpaque())
 		// Otherwise drop npm evidence only on positive evidence the job cannot install packages.
 		if npmJob.Status > model.Clean && !noInstall && (wj == nil || wj.MayInstallNPM() || logInstall) {
 			f.Status = model.Worse(f.Status, npmJob.Status)
@@ -492,6 +498,12 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		}
 	}
 	return out, len(jobs), nil
+}
+
+// pathInLog reports whether dir appears in log as a path: after a line start, space, quote, `/`
+// or `=`, and before `/`, space, quote or a line end.
+func pathInLog(log, dir string) bool {
+	return regexp.MustCompile(`(?m)(^|[\s"'/=])` + regexp.QuoteMeta(dir) + `($|[/\s"'])`).MatchString(log)
 }
 
 // maxCallDepth caps how many nested reusable-workflow calls are followed (GitHub allows ten
