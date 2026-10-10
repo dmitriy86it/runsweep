@@ -26,8 +26,8 @@ import (
 // installLogRe matches a job log line of package install output (not the command text) by npm, pnpm, yarn v1, yarn berry or bun.
 var installLogRe = regexp.MustCompile(`(added|removed|changed) \d+ packages?|audited \d+ packages?|up to date in \d|` +
 	`Packages: \+\d+|Progress: resolved|Lockfile is up to date|` +
-	`yarn install|success Saved lockfile|\[\d/\d\] (Resolving|Fetching) packages|YN0000: .*(Resolution step|Fetch step|Link step)|` +
-	`bun install|\d+ packages? installed|` +
+	`yarn install v\d|success Saved lockfile|\[\d/\d\] (Resolving|Fetching) packages|YN0000: .*(Resolution step|Fetch step|Link step)|` +
+	`bun install v\d|\d+ packages? installed|` +
 	// the actions toolkit prints this line just before it runs the process; step echo and env never do
 	`^\s*(?:\d{4}-\d\d-\d\dT[\d:.]+Z )?\[command\]\S*(?:npm|pnpm|yarn)(?:\.cmd|\.exe)? (?:ci|install|i|add)\b`)
 
@@ -52,6 +52,9 @@ func installLog(log string) bool {
 	}
 	return false
 }
+
+// errLogNotRead: the job log was not requested (yet).
+var errLogNotRead = errors.New("log not read")
 
 // concurrency is how many runs of a repository are scanned at once; tests set 1 for a fixed order.
 var concurrency = 10
@@ -413,7 +416,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			f.Evidence = append(f.Evidence, note("workflow file unavailable (%s): run-time installs not checked", wfReason))
 		}
 		var log string
-		var logErr = source.ErrGone
+		var logErr = errLogNotRead
 		if len(s.inc.Actions) > 0 || npmRes.Status > model.Clean || len(npmRes.Unlocked) > 0 || len(installs) > 0 {
 			log, logErr = s.src.JobLog(ctx, repo, job.ID)
 			if logErr != nil && !soft(logErr) {
@@ -439,7 +442,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			related := slices.ContainsFunc(npmRes.Pinned, func(dir string) bool {
 				return dir == "." || wj != nil && wj.Mentions(dir) || logErr == nil && pathInLog(log, dir)
 			})
-			drop := (!installed || !related) && quiet && wj != nil && !wj.MayInstallNPM()
+			drop := (!installed || !related) && quiet && wj != nil && !wj.MayInstallNPM() && !baseEvent
 			if drop && npmAll == nil {
 				all, err := s.npm.MatchAll(ctx, s.src, repo, run.HeadSHA, s.inc.NPM)
 				if err != nil && !soft(err) {
@@ -544,6 +547,12 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			f.Evidence = append(f.Evidence, note("workflow ran from the base branch; files read at head_sha (secrets, lockfile) may differ"))
 		}
 
+		if f.Status != model.Clean && errors.Is(logErr, errLogNotRead) { // for its GITHUB_TOKEN permissions
+			log, logErr = s.src.JobLog(ctx, repo, job.ID)
+			if logErr != nil && !soft(logErr) {
+				return out, len(jobs), logErr
+			}
+		}
 		if f.Status != model.Clean { // UNCHECKED too: its exposure cannot be ruled out
 			var e model.Exposure
 			switch {
@@ -553,6 +562,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			case wf != nil:
 				e = wf.ExposureAll()
 			default:
+				e.SecretsUnknown = true
 				f.Evidence = append(f.Evidence, note("workflow file unavailable (%s): secrets unknown", wfReason))
 			}
 			if logErr == nil {

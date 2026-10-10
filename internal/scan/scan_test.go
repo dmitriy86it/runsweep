@@ -1195,6 +1195,8 @@ func TestInstallLogRe(t *testing.T) {
 		"➤ YN0000: ┌ Link step":                                                  true,
 		"245 packages installed [1.20s]":                                         true,
 		"bun install v1.1.0":                                                     true,
+		"  CMD: yarn install":                                                    false,
+		"  CMD: bun install":                                                     false,
 		"   Compiling serde v1.0.210":                                            false,
 		"    Finished `release` profile [optimized] target(s) in 1m 02s":         false,
 		"     Running unittests src/lib.rs (target/debug/deps/net-1a2b3c)":       false,
@@ -1345,14 +1347,14 @@ func TestScanLockfileNeedsInstall(t *testing.T) {
 	if fd := scanOne(t, f, npmOnly); fd.Status != model.Possible {
 		t.Fatalf("unidentified: %+v", fd)
 	}
-	// a dropped pin keeps the rest: a package.json without a lockfile in a directory the job names
+	// a base-branch event keeps the pin of a quiet job: the head_sha workflow proves nothing (R3)
 	f = fx("      - uses: actions/checkout@v4\n        with: {path: web}\n", "package-lock.json", "2026-03-31T01:00:00Z ok\n", false)
-	f.Runs["o/a"][0].Event = "pull_request_target" // a job that cannot install keeps evidence only for base-branch events
+	f.Runs["o/a"][0].Event = "pull_request_target"
 	f.AddFile("o/a", "s1", "package.json", []byte(`{"workspaces":["packages/*"]}`))
 	f.AddFile("o/a", "s1", "web/package.json", []byte(`{"dependencies":{"axios":"^1"}}`))
-	if fd := scanOne(t, f, npmOnly); fd.Status != model.Possible || len(fd.Evidence) == 0 ||
-		slices.ContainsFunc(fd.Evidence, func(e model.Evidence) bool { return strings.Contains(e.Detail, "package-lock.json at") }) {
-		t.Fatalf("rest after a dropped pin: %+v", fd)
+	if fd := scanOne(t, f, npmOnly); fd.Status != model.Possible ||
+		!slices.ContainsFunc(fd.Evidence, func(e model.Evidence) bool { return strings.Contains(e.Detail, "package-lock.json at") }) {
+		t.Fatalf("base event dropped the pin: %+v", fd)
 	}
 	// a package manager called, but no install output and no install step
 	fd = scanOne(t, fx(action, "package-lock.json", "2026-03-31T01:00:00Z npm --version\n", false), npmOnly)
@@ -1538,5 +1540,58 @@ func TestScanNotesUnknownTokenPermsWithoutLog(t *testing.T) {
 	}
 	if !hasNote(res.Findings[0], "GITHUB_TOKEN permissions unknown (log unavailable)") {
 		t.Fatalf("%+v", res.Findings[0])
+	}
+}
+
+// R3: under a base-branch event the head_sha workflow proves nothing, so a quiet job keeps the pin.
+func TestBaseEventQuietJobKeepsPin(t *testing.T) {
+	wf := "on: pull_request_target\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps: [{uses: actions/checkout@v4}, {run: echo hi}]\n"
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Event: "pull_request_target", Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "build"}}
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(wf))
+	f.AddFile("o/a", "s1", "package-lock.json", []byte(scanBadLock))
+	f.Logs[10] = "hi\n"
+	res, err := Run(context.Background(), f, npmInc, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Status != model.Possible {
+		t.Fatalf("want POSSIBLE: %+v", res.Findings)
+	}
+}
+
+// An UNCHECKED job raised by the base-event floor alone still gets its GITHUB_TOKEN permissions from the log.
+func TestUncheckedJobReadsTokenPerms(t *testing.T) {
+	wf := "on: pull_request_target\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps: [{run: echo hi}]\n"
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Event: "pull_request_target", Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "build"}}
+	f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(wf))
+	f.AddFile("o/a", "s1", "package-lock.json", []byte(scanGoodLock))
+	f.Logs[10] = "##[group]GITHUB_TOKEN Permissions\nContents: write\n##[endgroup]\n"
+	res, err := Run(context.Background(), f, npmInc, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Exposure == nil || res.Findings[0].Exposure.TokenPerms["contents"] != "write" ||
+		hasNote(res.Findings[0], "permissions unknown") {
+		t.Fatalf("%+v", res.Findings)
+	}
+}
+
+// A job whose workflow file is unavailable has unknown secrets; the exposure says so.
+func TestWorkflowUnavailableSecretsUnknown(t *testing.T) {
+	f := sourcetest.New()
+	f.Runs["o/a"] = []source.Run{{ID: 1, Path: ".github/workflows/gone.yml", HeadSHA: "s1", CreatedAt: t0}}
+	f.Jobs[1] = []source.Job{{ID: 10, Name: "build"}}
+	f.AddFile("o/a", "s1", "package-lock.json", []byte(scanBadLock))
+	f.Logs[10] = "added 1 package in 1s\n"
+	res, err := Run(context.Background(), f, npmInc, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Exposure == nil || !res.Findings[0].Exposure.SecretsUnknown {
+		t.Fatalf("%+v", res.Findings)
 	}
 }

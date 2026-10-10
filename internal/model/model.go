@@ -70,6 +70,8 @@ type Exposure struct {
 	CloudRoles   []CloudRole       `json:"cloud_roles,omitempty"`
 	TokenPerms   map[string]string `json:"github_token_permissions,omitempty"`
 	JobMatched   bool              `json:"job_matched"`
+	// SecretsUnknown: the workflow file is unavailable, so Secrets cannot be listed.
+	SecretsUnknown bool `json:"secrets_unknown,omitempty"`
 }
 
 // Finding is the verdict for one job.
@@ -109,7 +111,7 @@ type Result struct {
 	Skipped    []Skip         `json:"skipped"`
 	// RetentionWarning: the window started more than 90 days ago, so missing runs prove nothing.
 	RetentionWarning bool `json:"retention_warning,omitempty"`
-	// Incomplete: the scan ended in a fatal error (Error), so an empty report proves nothing.
+	// Incomplete: the scan stopped early (Error), so an empty report proves nothing.
 	Incomplete bool   `json:"incomplete,omitempty"`
 	Error      string `json:"error,omitempty"`
 	// Lookback is how long before the window runs were listed to catch re-runs (text report only).
