@@ -38,6 +38,21 @@ const limits = `## Limits
 - npm and GitHub Actions only.
 `
 
+// unverifiedTitle heads what UNCHECKED jobs could read.
+const unverifiedTitle = "Not verified — could not rule out exposure"
+
+// nothingToRotate is the line for an empty Rotate first list, or "" when it has items: with
+// unverified items it says nothing is confirmed instead of nothing to rotate.
+func nothingToRotate(r *model.Result, indent, end string) string {
+	switch {
+	case len(r.Rotation) > 0:
+		return ""
+	case len(r.Unverified) > 0:
+		return fmt.Sprintf("%sNothing confirmed to rotate; %s in jobs that could not be checked.%s", indent, count(len(r.Unverified), "secret"), end)
+	}
+	return indent + "Nothing to rotate." + end
+}
+
 // RetentionNote explains why an old window can look clean.
 const RetentionNote = "incident window starts more than 90 days ago; GitHub may have deleted runs — absence of runs is not evidence"
 
@@ -54,14 +69,21 @@ func Markdown(w io.Writer, inc *incident.Incident, r *model.Result) error {
 		r.Count(model.Affected), r.Count(model.Possible), r.Count(model.Unchecked))
 
 	b.WriteString("## Rotate first\n\n")
-	if len(r.Rotation) == 0 {
-		b.WriteString("Nothing to rotate.\n\n")
-	} else {
+	b.WriteString(nothingToRotate(r, "", "\n\n"))
+	items := func(list []model.RotationItem) {
+		if len(list) == 0 {
+			return
+		}
 		b.WriteString("| # | Secret / role | Priority | Why | Seen in |\n|---|---|---|---|---|\n")
-		for i, it := range r.Rotation {
+		for i, it := range list {
 			fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n", i+1, code(it.Name), tier(it.Tier), cell(it.Reason), seenIn(it.Runs, code))
 		}
 		b.WriteString("\n")
+	}
+	items(r.Rotation)
+	if len(r.Unverified) > 0 {
+		b.WriteString("## " + unverifiedTitle + "\n\n")
+		items(r.Unverified)
 	}
 
 	b.WriteString("## Findings\n\n")
@@ -221,11 +243,15 @@ func normalize(r *model.Result) *model.Result {
 		}
 		c.Findings[i] = f
 	}
-	c.Rotation = make([]model.RotationItem, len(r.Rotation))
-	for i, it := range r.Rotation {
-		it.Runs = runs(it.Runs)
-		c.Rotation[i] = it
+	items := func(in []model.RotationItem) []model.RotationItem {
+		out := make([]model.RotationItem, len(in))
+		for i, it := range in {
+			it.Runs = runs(it.Runs)
+			out[i] = it
+		}
+		return out
 	}
+	c.Rotation, c.Unverified = items(r.Rotation), items(r.Unverified)
 	c.Skipped = append([]model.Skip{}, r.Skipped...)
 	return &c
 }

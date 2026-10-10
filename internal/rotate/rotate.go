@@ -4,16 +4,18 @@ package rotate
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/runsweep/runsweep/internal/model"
 )
 
-// Name-based tiers are a heuristic; the report says so.
+// Name-based tiers are a heuristic; the report says so. Each word starts the name or follows an
+// underscore; the short PAT and SIGN must also end there.
 var (
-	cloudRe   = regexp.MustCompile(`(?i)(AWS|AZURE|ARM_|GCP|GOOGLE|GCLOUD|GKE|SERVICE_ACCOUNT|DIGITALOCEAN|CLOUDFLARE|HCLOUD|OCI_|SECRET_ACCESS_KEY|ACCESS_KEY_ID)`)
-	publishRe = regexp.MustCompile(`(?i)(NPM|NODE_AUTH|PYPI|TWINE|DOCKER|REGISTRY|GHCR|PAT|GH_TOKEN|DEPLOY|SSH|KUBE|HELM|SIGN|GPG|COSIGN|RELEASE|PUBLISH|CARGO|RUBYGEMS|NUGET|PERSONAL_ACCESS|ACCESS_TOKEN|VAULT|TF_|TERRAFORM|PULUMI|PRIVATE_KEY|VERCEL|NETLIFY|FLY_|HEROKU|ARGOCD|PASSWORD)`)
+	cloudRe   = regexp.MustCompile(`(?i)(^|_)(AWS|AZURE|ARM_|GCP|GOOGLE|GCLOUD|GKE|SERVICE_ACCOUNT|DIGITALOCEAN|CLOUDFLARE|HCLOUD|OCI_|SECRET_ACCESS_KEY|ACCESS_KEY_ID)`)
+	publishRe = regexp.MustCompile(`(?i)(^|_)(NPM|NODE_AUTH|PYPI|TWINE|DOCKER|REGISTRY|GHCR|PAT($|_)|GH_TOKEN|DEPLOY|SSH|KUBE|HELM|SIGN(ING)?($|_)|GPG|COSIGN|RELEASE|PUBLISH|CARGO|RUBYGEMS|NUGET|PERSONAL_ACCESS|ACCESS_TOKEN|VAULT|TF_|TERRAFORM|PULUMI|PRIVATE_KEY|VERCEL|NETLIFY|FLY_|HEROKU|ARGOCD|PASSWORD)`)
 )
 
 // Tier returns the rotation priority of a secret name.
@@ -33,8 +35,22 @@ var reasons = map[int]string{
 	3: "third-party service credentials — rotate",
 }
 
-// Plan builds an ordered secret rotation plan from findings.
+// Plan builds an ordered secret rotation plan from the AFFECTED and POSSIBLE findings.
 func Plan(findings []model.Finding) []model.RotationItem {
+	return plan(findings, func(s model.Status) bool { return s >= model.Possible })
+}
+
+// Unverified is the plan for UNCHECKED findings, in the same order, without the items of Plan.
+func Unverified(findings []model.Finding) []model.RotationItem {
+	confirmed := map[string]bool{}
+	for _, it := range Plan(findings) {
+		confirmed[it.Name] = true
+	}
+	return slices.DeleteFunc(plan(findings, func(s model.Status) bool { return s == model.Unchecked }),
+		func(it model.RotationItem) bool { return confirmed[it.Name] })
+}
+
+func plan(findings []model.Finding, keep func(model.Status) bool) []model.RotationItem {
 	items := map[string]*model.RotationItem{}
 	add := func(name string, tier int, reason string, run model.RunRef) {
 		it, ok := items[name]
@@ -54,7 +70,7 @@ func Plan(findings []model.Finding) []model.RotationItem {
 		it.Runs = append(it.Runs, run)
 	}
 	for _, f := range findings {
-		if f.Status < model.Possible || f.Exposure == nil {
+		if !keep(f.Status) || f.Exposure == nil {
 			continue
 		}
 		e := f.Exposure

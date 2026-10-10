@@ -1260,3 +1260,21 @@ func TestScanNonWorkspaceManifestNotInstalled(t *testing.T) {
 		t.Fatalf("working-directory: %+v", fd)
 	}
 }
+
+// Secrets of UNCHECKED jobs are listed as not verified, apart from the confirmed list (R2).
+func TestScanUncheckedExposure(t *testing.T) {
+	f := fixture()
+	f.Trees["o/a@s1"] = f.Trees["o/a@s1"][:1] // keep only the workflow file: no npm hit
+	f.GoneLogs[10] = true
+	actOnly := &incident.Incident{ID: "t", Window: inc.Window, Actions: []incident.Action{{Uses: "x/y", SHAs: []string{actionSHA}}}}
+	res, err := Run(context.Background(), f, actOnly, Options{Repos: []string{"o/a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Status != model.Unchecked || res.Findings[0].Exposure == nil {
+		t.Fatalf("%+v", res.Findings)
+	}
+	if len(res.Rotation) != 0 || len(res.Unverified) != 1 || res.Unverified[0].Name != "NPM_TOKEN" {
+		t.Fatalf("rotation %+v, unverified %+v", res.Rotation, res.Unverified)
+	}
+}

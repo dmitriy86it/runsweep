@@ -11,6 +11,11 @@ Rotate first
      rotate
      seen in: o/app#42 build attempt 2
 
+Not verified — could not rule out exposure
+  1  DEPLOY_KEY  2 · publish/deploy
+     rotate
+     seen in: o/app#43 publish
+
 Findings
   AFFECTED   o/app  .github/workflows/ci.yml / build  #42 attempt 2
              axios@1.14.1 in package-lock.json at abcdef1

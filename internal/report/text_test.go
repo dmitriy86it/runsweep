@@ -155,3 +155,16 @@ func TestRepoLevelFindingHasNoRunNumber(t *testing.T) {
 		}
 	}
 }
+
+func TestTextOnlyUnverified(t *testing.T) {
+	inc, res := sample()
+	res.Rotation = nil
+	var b bytes.Buffer
+	if err := Text(&b, inc, res, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "Rotate first\n  Nothing confirmed to rotate; 1 secret in jobs that could not be checked.\n\n"+
+		"Not verified — could not rule out exposure\n  1  DEPLOY_KEY  2 · publish/deploy\n") || strings.Contains(b.String(), "Nothing to rotate") {
+		t.Fatal(b.String())
+	}
+}

@@ -11,6 +11,12 @@ Window: 2026-03-31 00:21:00 → 2026-03-31 03:21:00 UTC · runs scanned: 3 · jo
 | 1 | `OIDC token (id-token: write)` | 1 · cloud | review cloud roles | `o/app#42 build attempt 2` |
 | 2 | `NPM_TOKEN` | 2 · publish/deploy | rotate | `o/app#42 build attempt 2` |
 
+## Not verified — could not rule out exposure
+
+| # | Secret / role | Priority | Why | Seen in |
+|---|---|---|---|---|
+| 1 | `DEPLOY_KEY` | 2 · publish/deploy | rotate | `o/app#43 publish` |
+
 ## Findings
 
 | Status | Repo | Workflow / job | Run | Evidence |

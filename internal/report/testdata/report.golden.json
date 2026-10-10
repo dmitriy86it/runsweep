@@ -103,6 +103,24 @@
       ]
     }
   ],
+  "unverified_rotation": [
+    {
+      "name": "DEPLOY_KEY",
+      "tier": 2,
+      "reason": "rotate",
+      "runs": [
+        {
+          "repo": "o/app",
+          "run_id": 43,
+          "workflow": "",
+          "head_sha": "",
+          "run_url": "",
+          "created_at": "0001-01-01T00:00:00Z",
+          "job": "publish"
+        }
+      ]
+    }
+  ],
   "skipped": [
     {
       "repo": "o/private",
