@@ -1422,10 +1422,10 @@ jobs:
 `
 	for _, ev := range []string{"pull_request_target", "workflow_run"} {
 		res := runOne(t, ev, wf, scanGoodLock, "build")
-		if len(res.Findings) != 1 || res.Findings[0].Status < model.Unchecked {
+		if len(res.Findings) != 1 || res.Findings[0].Status != model.Unchecked {
 			t.Fatalf("%s: want an UNCHECKED finding, got %+v", ev, res.Findings)
 		}
-		if !strings.Contains(fmt.Sprint(res.Findings[0].Evidence), "files read at head_sha may differ") {
+		if !strings.Contains(fmt.Sprint(res.Findings[0].Evidence), "files read at head_sha (secrets, lockfile) may differ") {
 			t.Errorf("%s: no head_sha note: %+v", ev, res.Findings[0].Evidence)
 		}
 		if !slices.ContainsFunc(res.Unverified, func(r model.RotationItem) bool { return r.Name == "NPM_TOKEN" }) {
@@ -1439,9 +1439,51 @@ jobs:
 
 func TestPullRequestTargetPinIsOnlyPossible(t *testing.T) {
 	wf := "on: pull_request_target\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps: [{run: npm ci}]\n"
+	if res := runOne(t, "push", wf, scanBadLock, "build"); len(res.Findings) != 1 || res.Findings[0].Status != model.Affected {
+		t.Fatalf("push control must be AFFECTED: %+v", res.Findings)
+	}
 	res := runOne(t, "pull_request_target", wf, scanBadLock, "build")
 	if len(res.Findings) != 1 || res.Findings[0].Status != model.Possible ||
 		!strings.Contains(fmt.Sprint(res.Findings[0].Evidence), "the run used the base branch") {
 		t.Fatalf("want POSSIBLE with a note: %+v", res.Findings)
+	}
+}
+
+// A job that cannot install still keeps its npm evidence under a base-branch event.
+func TestBaseEventKeepsNPMEvidenceOfJobWithoutInstall(t *testing.T) {
+	wf := "on: pull_request_target\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps: [{run: echo hi}]\n"
+	for ev, want := range map[string]int{"push": 0, "pull_request_target": 1} {
+		f := sourcetest.New()
+		f.GoneLogs[10] = true
+		f.Runs["o/a"] = []source.Run{{ID: 1, Event: ev, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+		f.Jobs[1] = []source.Job{{ID: 10, Name: "build"}}
+		f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(wf))
+		f.AddFile("o/a", "s1", "package-lock.json", []byte(scanBadLock))
+		res, err := Run(context.Background(), f, npmInc, Options{Repos: []string{"o/a"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Findings) != want || want == 1 && !strings.Contains(fmt.Sprint(res.Findings[0].Evidence), "axios@1.14.1") {
+			t.Errorf("%s: %+v", ev, res.Findings)
+		}
+	}
+}
+
+// uses: read at head_sha cannot prove an action ran: POSSIBLE under a base-branch event.
+func TestBaseEventCapsUsesAtPossible(t *testing.T) {
+	wf := "on: pull_request_target\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: tj-actions/changed-files@" + actionSHA + "\n"
+	actInc := &incident.Incident{ID: "t", Window: inc.Window, Actions: []incident.Action{{Uses: "tj-actions/changed-files", SHAs: []string{actionSHA}}}}
+	for ev, want := range map[string]model.Status{"push": model.Affected, "pull_request_target": model.Possible} {
+		f := sourcetest.New()
+		f.Runs["o/a"] = []source.Run{{ID: 1, Event: ev, Path: ".github/workflows/ci.yml", HeadSHA: "s1", CreatedAt: t0}}
+		f.Jobs[1] = []source.Job{{ID: 10, Name: "build"}}
+		f.AddFile("o/a", "s1", ".github/workflows/ci.yml", []byte(wf))
+		res, err := Run(context.Background(), f, actInc, Options{Repos: []string{"o/a"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Findings) != 1 || res.Findings[0].Status < want || ev != "push" && res.Findings[0].Status > model.Unchecked && res.Findings[0].Status != want {
+			t.Errorf("%s: want %v, got %+v", ev, want, res.Findings)
+		}
 	}
 }

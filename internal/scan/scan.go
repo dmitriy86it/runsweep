@@ -338,6 +338,13 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 
 	// These events run the workflow from the base branch, so head_sha files may not be what ran.
 	baseEvent := run.Event == "pull_request_target" || run.Event == "workflow_run"
+	// uses: read from head_sha prove nothing about the file that ran
+	capUses := func(st model.Status) model.Status {
+		if baseEvent && st == model.Affected {
+			return model.Possible
+		}
+		return st
+	}
 	var npmAll *npm.Result // MatchAll, read once when a job drops a pin
 	var npmAllErr error
 	var out []model.Finding
@@ -473,13 +480,15 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 					return !strings.HasPrefix(u, "docker://") && !slices.Contains(call.read, u)
 				}) {
 					ust, uev := actions.MatchUses(uses, s.inc.Actions)
-					st = model.Worse(model.Worse(st, ust), model.Unchecked)
+					st = model.Worse(model.Worse(st, capUses(ust)), model.Unchecked)
 					ev = append(append(ev, uev...), note("job log has no action download records"))
 				}
 			case wj != nil:
 				st, ev = actions.MatchUses(wj.Uses, s.inc.Actions)
+				st = capUses(st)
 			case wf != nil: // job not identified: judge by every job's uses
 				st, ev = actions.MatchUses(allUses(wf), s.inc.Actions)
+				st = capUses(st)
 			default:
 				ev = []model.Evidence{note("workflow file unavailable (%s)", wfReason)}
 			}
@@ -490,7 +499,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			}
 			// the runner log never lists reusable workflows, so match the followed call refs themselves
 			cst, cev := actions.MatchCalls(call.calls, s.inc.Actions)
-			f.Status = model.Worse(model.Worse(f.Status, st), cst)
+			f.Status = model.Worse(model.Worse(f.Status, st), capUses(cst))
 			f.Evidence = append(append(f.Evidence, ev...), cev...)
 		}
 
@@ -498,7 +507,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 		f.Evidence = append(f.Evidence, call.notes...)
 		if baseEvent {
 			f.Status = model.Worse(f.Status, model.Unchecked)
-			f.Evidence = append(f.Evidence, note("workflow ran from the base branch; files read at head_sha may differ"))
+			f.Evidence = append(f.Evidence, note("workflow ran from the base branch; files read at head_sha (secrets, lockfile) may differ"))
 		}
 
 		if f.Status != model.Clean { // UNCHECKED too: its exposure cannot be ruled out
