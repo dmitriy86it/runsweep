@@ -846,3 +846,17 @@ func TestCallsPackageManagerPrefilter(t *testing.T) {
 		}
 	}
 }
+
+func TestRunInstallsCapsPackageManagerWords(t *testing.T) {
+	dyn := func(n int) bool {
+		for _, in := range runInstalls(strings.Repeat("npm run x;", n)) {
+			if in.Dynamic && strings.Contains(in.Cmd, "package manager words") {
+				return true
+			}
+		}
+		return false
+	}
+	if dyn(maxMatches) || !dyn(maxMatches+1) {
+		t.Error("the cap is maxMatches words")
+	}
+}

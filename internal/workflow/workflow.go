@@ -499,8 +499,11 @@ func runInstalls(script string) []RunInstall {
 		if m == nil {
 			break
 		}
-		if matches++; len(out) == maxInstalls || matches > maxMatches {
-			out = append(out, RunInstall{Cmd: "more than " + strconv.Itoa(maxInstalls) + " package manager commands", Dynamic: true})
+		if matches++; len(out) == maxInstalls {
+			out = append(out, RunInstall{Cmd: "more than " + strconv.Itoa(maxInstalls) + " package manager install commands", Dynamic: true})
+			break
+		} else if matches > maxMatches {
+			out = append(out, RunInstall{Cmd: "more than " + strconv.Itoa(maxMatches) + " package manager words", Dynamic: true})
 			break
 		}
 		tool, written := script[pos+m[2]:pos+m[3]], script[pos+m[2]:pos+m[5]]

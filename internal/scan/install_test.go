@@ -150,3 +150,11 @@ func TestScanStopsBetweenJobsOnCancel(t *testing.T) {
 		t.Errorf("logs %d res %+v", src.logs, res)
 	}
 }
+
+// A silenced install step is proof from the workflow alone, with a log that shows no output.
+func TestScanSilentNPMCiIsAffected(t *testing.T) {
+	log := "2026-03-31T01:00:00Z ##[group]Run npm ci --silent\n2026-03-31T01:00:00Z \x1b[36;1mnpm ci --silent\x1b[0m\n2026-03-31T01:00:00Z ##[endgroup]\n"
+	if fd := oneJob(t, runStep("npm ci --silent"), log, map[string]string{"package-lock.json": axiosLock}); fd.Status != model.Affected {
+		t.Errorf("%v %+v", fd.Status, fd.Evidence)
+	}
+}

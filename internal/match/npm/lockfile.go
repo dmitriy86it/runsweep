@@ -233,6 +233,7 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 	}
 	var out []Pkg
 	var unknown []string
+	mismatch := 0 // registry tarballs that name another package or version than the key
 	for key, node := range lf.Packages {
 		k := strings.TrimPrefix(key, "/")
 		if i := strings.IndexByte(k, '('); i >= 0 {
@@ -251,7 +252,7 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 			// pnpm installs the tarball of `resolution`, whatever the key says
 			if tb := res.Resolution.Tarball; tarballLike.MatchString(tb) {
 				if t, ok := registryTarball(tb); !ok || t != pkg {
-					unknown = append(unknown, key)
+					mismatch++
 					if ok {
 						out[len(out)-1] = t // pnpm installs the tarball
 					}
@@ -263,6 +264,9 @@ func ParsePnpmLock(b []byte) ([]Pkg, error) {
 	}
 	if len(unknown) > 0 {
 		return out, fmt.Errorf("pnpm-lock: %d package keys not understood, e.g. %q", len(unknown), slices.Min(unknown))
+	}
+	if mismatch > 0 {
+		return out, fmt.Errorf("pnpm-lock: %d entries with a resolution tarball that names no or another package@version", mismatch)
 	}
 	return out, nil
 }
