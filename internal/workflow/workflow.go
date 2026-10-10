@@ -85,6 +85,8 @@ var (
 	namedRe   = regexp.MustCompile(`^(\.[A-Za-z_]|\[\s*['"])`)
 	// package-manager binary as a word anywhere in a script; over-reports (e.g. `echo npm`) by design
 	installRe = regexp.MustCompile(`(?:^|[^\w./-])(npm|npx|yarn|pnpm|pnpx|bun|bunx)(?:$|[^\w.-])`)
+	// a package manager install command: an install subcommand after optional flags, or bare yarn
+	installCmdRe = regexp.MustCompile(`(?m)(?:^|[^\w./-])(?:(?:npm|pnpm|yarn|bun)(?:[ \t]+-\S+(?:[ \t]+[^-\s;&|]\S*)?)*[ \t]+(?:ci|cit|clean-install|install-clean|install-ci-test|install|isntall|i|it|install-test|add|update|up|upgrade)(?:$|[^\w.-])|yarn(?:[ \t]+-\S+)*[ \t]*(?:$|[;&|)]))`)
 	// opaque runners and scripts that may install npm packages without naming npm in the workflow
 	opaqueRe = regexp.MustCompile(`(?:^|[^\w./-])(?:(?:make|task|just|mise|nx|turbo|lerna|rush|corepack|python3?|node|docker(?:-compose)?|podman|buildah|mvnw?|gradlew?|sbt|bazel|dotnet|composer)(?:$|[^\w.-])|(?:ba|z)?sh\s+\S)|(?:^|[\s;&|(])\./[\w-]|\.sh\b`)
 	// a package manager command, up to a newline or shell separator; runInstalls reads its arguments
@@ -249,17 +251,24 @@ func (w *Workflow) findStaged(name string) (*Job, bool) {
 
 // InstallsNPM reports whether the job installs npm dependencies.
 func (j *Job) InstallsNPM() bool {
-	for _, u := range j.Uses {
-		name, _, _ := strings.Cut(strings.ToLower(u), "@")
-		switch name {
-		case "bahmutov/npm-install", "cypress-io/github-action", "pnpm/action-setup":
-			return true
-		}
-	}
-	if slices.ContainsFunc(slices.Concat(j.Runs, j.Scripts), installRe.MatchString) {
+	if j.installAction() || slices.ContainsFunc(slices.Concat(j.Runs, j.Scripts), installRe.MatchString) {
 		return true
 	}
 	return len(j.RunInstalls()) > 0
+}
+
+// InstallsNPMStrict reports whether the job surely installs dependencies: an install action or a
+// package manager install command (npm ci, pnpm i, bare yarn, ...). `npm test`, `npm run` and
+// runners such as npx do not count.
+func (j *Job) InstallsNPMStrict() bool {
+	return j.installAction() || slices.ContainsFunc(slices.Concat(j.Runs, j.Scripts), installCmdRe.MatchString)
+}
+
+func (j *Job) installAction() bool {
+	return slices.ContainsFunc(j.Uses, func(u string) bool {
+		name, _, _ := strings.Cut(strings.ToLower(u), "@")
+		return slices.Contains([]string{"bahmutov/npm-install", "cypress-io/github-action", "pnpm/action-setup"}, name)
+	})
 }
 
 // Mentions reports whether the job's `run:` scripts, working directories or `with:` inputs name dir.

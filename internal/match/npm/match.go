@@ -30,8 +30,21 @@ type Result struct {
 	// Unlocked: bad packages declared in a package.json below the root that no lockfile covers;
 	// whether that is POSSIBLE depends on the job installing it (Resolve).
 	Unlocked []Unlocked
-	// Pinned: directories of the lockfiles that pin a bad version (the AFFECTED evidence).
+	// Pinned: directories of the lockfiles that pin a bad version; Pins: that evidence, also in Evidence.
 	Pinned []string
+	Pins   []model.Evidence
+	rest   model.Status // Status without the pins
+}
+
+// mark raises the status for evidence other than a pin.
+func (r *Result) mark(s model.Status) {
+	r.Status, r.rest = model.Worse(r.Status, s), model.Worse(r.rest, s)
+}
+
+// WithoutPins returns r without the lockfile pins: the status and evidence of everything else.
+func (r Result) WithoutPins() Result {
+	ev := slices.DeleteFunc(slices.Clone(r.Evidence), func(e model.Evidence) bool { return slices.Contains(r.Pins, e) })
+	return Result{Status: r.rest, Evidence: ev, Unlocked: r.Unlocked, rest: r.rest}
 }
 
 // Unlocked is a bad package declared in Dir/package.json with no covering lockfile.
@@ -42,13 +55,13 @@ type Unlocked struct {
 // Resolve folds r.Unlocked into the status: POSSIBLE where installed(Dir), otherwise UNCHECKED
 // with a note that the job does not seem to install it.
 func (r Result) Resolve(installed func(dir string) bool) Result {
-	out := Result{Status: r.Status, Evidence: slices.Clone(r.Evidence), Pinned: r.Pinned}
+	out := Result{Status: r.Status, Evidence: slices.Clone(r.Evidence), Pinned: r.Pinned, Pins: r.Pins, rest: r.rest}
 	for _, u := range r.Unlocked {
 		if installed(u.Dir) {
-			out.Status = model.Worse(out.Status, model.Possible)
+			out.mark(model.Possible)
 			out.Evidence = append(out.Evidence, model.Evidence{Kind: "npm", Detail: u.Detail})
 		} else {
-			out.Status = model.Worse(out.Status, model.Unchecked)
+			out.mark(model.Unchecked)
 			out.Evidence = append(out.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("%s/package.json is not installed by this job as far as the workflow and log show; declared %s", u.Dir, u.Pkg)})
 		}
 	}
@@ -100,8 +113,19 @@ func (c *Cache) load(ctx context.Context, f Fetcher, repo string, e source.TreeE
 
 // Match checks every lockfile in repo@sha for bad versions. A package.json that lists a bad
 // package and has no lockfile in its directory yields POSSIBLE; one with dependencies and no
-// lockfile there or above, or a lockfile runsweep cannot read, yields UNCHECKED.
+// lockfile there or above, or a lockfile runsweep cannot read, yields UNCHECKED. Once a lockfile
+// pins a bad version, package.json files are not read.
 func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMPackage) (Result, error) {
+	return c.match(ctx, f, repo, sha, bad, false)
+}
+
+// MatchAll is Match that also reads the package.json files when a lockfile pins a bad version,
+// so WithoutPins tells what the rest of the tree gives.
+func (c *Cache) MatchAll(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMPackage) (Result, error) {
+	return c.match(ctx, f, repo, sha, bad, true)
+}
+
+func (c *Cache) match(ctx context.Context, f Fetcher, repo, sha string, bad []incident.NPMPackage, all bool) (Result, error) {
 	var r Result
 	entries, truncated, err := f.Tree(ctx, repo, sha)
 	if err != nil {
@@ -143,7 +167,7 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 		}
 		pkgs, err := p.pkgs, p.err
 		if err != nil {
-			r.Status = model.Worse(r.Status, model.Unchecked)
+			r.mark(model.Unchecked)
 			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("cannot parse %s: %v", e.Path, err)})
 			failedDirs[dir] = true
 		} else if lockNames[dir] == nil {
@@ -153,16 +177,17 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			if err == nil {
 				lockNames[dir][p.Name] = true
 			}
+			var pin model.Evidence
 			switch {
 			case badVer[p.Name]["*"]:
-				r.Status = model.Affected
-				r.Evidence = append(r.Evidence, model.Evidence{Kind: "npm", Detail: fmt.Sprintf("%s@%s in %s at %s (any version listed as malicious)", p.Name, p.Version, e.Path, short(sha))})
+				pin = model.Evidence{Kind: "npm", Detail: fmt.Sprintf("%s@%s in %s at %s (any version listed as malicious)", p.Name, p.Version, e.Path, short(sha))}
 			case badVer[p.Name][p.Version]:
-				r.Status = model.Affected
-				r.Evidence = append(r.Evidence, model.Evidence{Kind: "npm", Detail: fmt.Sprintf("%s@%s in %s at %s", p.Name, p.Version, e.Path, short(sha))})
+				pin = model.Evidence{Kind: "npm", Detail: fmt.Sprintf("%s@%s in %s at %s", p.Name, p.Version, e.Path, short(sha))}
 			default:
 				continue
 			}
+			r.Status = model.Affected
+			r.Evidence, r.Pins = append(r.Evidence, pin), append(r.Pins, pin)
 			if !slices.Contains(r.Pinned, dir) {
 				r.Pinned = append(r.Pinned, dir)
 			}
@@ -172,7 +197,7 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 		if !IsUnsupportedLockfile(e.Path) {
 			continue
 		}
-		r.Status = model.Worse(r.Status, model.Unchecked)
+		r.mark(model.Unchecked)
 		// next to a supported lockfile: that one was read, but the project may install with the other
 		if dir := path.Dir(e.Path); lockNames[dir] != nil {
 			r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("%s present but not read — %s may be stale", e.Path, lockPaths[dir])})
@@ -181,7 +206,7 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 			failedDirs[dir] = true
 		}
 	}
-	if r.Status != model.Affected {
+	if len(r.Pins) == 0 || all { // a pin makes the job AFFECTED; the rest is read only when asked
 		type pkgJSON struct {
 			path  string
 			names []string
@@ -222,7 +247,7 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 				return r, err
 			}
 			if p.err != nil {
-				r.Status = model.Worse(r.Status, model.Unchecked)
+				r.mark(model.Unchecked)
 				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("cannot parse %s: %v", e.Path, p.err)})
 				continue
 			}
@@ -265,21 +290,21 @@ func (c *Cache) Match(ctx context.Context, f Fetcher, repo, sha string, bad []in
 					r.Unlocked = append(r.Unlocked, Unlocked{Dir: pdir, Pkg: name, Detail: detail})
 					continue
 				}
-				r.Status = model.Worse(r.Status, model.Possible)
+				r.mark(model.Possible)
 				r.Evidence = append(r.Evidence, model.Evidence{Kind: "npm", Detail: detail})
 			}
 			if lockNames[dir] == nil && !failedDirs[dir] && len(names) > 0 {
-				r.Status = model.Worse(r.Status, model.Unchecked)
+				r.mark(model.Unchecked)
 				r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("no lockfile for %s — transitive dependencies unknown", pj.path)})
 			}
 		}
 	}
 	if manifests > maxManifests {
-		r.Status = model.Worse(r.Status, model.Unchecked)
+		r.mark(model.Unchecked)
 		r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: fmt.Sprintf("too many manifests (%d) — not all read", manifests)})
 	}
 	if truncated {
-		r.Status = model.Worse(r.Status, model.Unchecked)
+		r.mark(model.Unchecked)
 		r.Evidence = append(r.Evidence, model.Evidence{Kind: "note", Detail: "git tree truncated by GitHub; some lockfiles were not checked"})
 	}
 	return r, nil
