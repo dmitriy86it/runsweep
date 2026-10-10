@@ -134,14 +134,26 @@ func validateTargets(repos []string, org string) error {
 // client only talks to api.github.com, and a token for another host must not be sent there.
 func refuseEnterprise() error {
 	if v := strings.TrimSpace(os.Getenv("GITHUB_API_URL")); v != "" {
-		if u, err := url.Parse(v); err != nil || u.Scheme != "https" || !strings.EqualFold(u.Host, "api.github.com") {
-			return fmt.Errorf("GitHub Enterprise is not supported yet (GITHUB_API_URL=%s)", v)
+		u, err := url.Parse(v)
+		if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), "api.github.com") || (u.Port() != "" && u.Port() != "443") {
+			return fmt.Errorf("GitHub Enterprise is not supported yet (GITHUB_API_URL host %q)", hostOf(v))
 		}
 	}
-	if v := strings.TrimSpace(os.Getenv("GH_HOST")); v != "" && !strings.EqualFold(v, "github.com") {
-		return fmt.Errorf("GitHub Enterprise is not supported yet (GH_HOST=%s)", v)
+	if v := strings.TrimSpace(os.Getenv("GH_HOST")); v != "" && !strings.EqualFold(hostOf(v), "github.com") {
+		return fmt.Errorf("GitHub Enterprise is not supported yet (GH_HOST host %q)", hostOf(v))
 	}
 	return nil
+}
+
+// hostOf is the bare host name of a URL or host value: no scheme, userinfo, port or path.
+func hostOf(v string) string {
+	if !strings.Contains(v, "://") {
+		v = "https://" + v
+	}
+	if u, err := url.Parse(v); err == nil {
+		return u.Hostname()
+	}
+	return ""
 }
 
 func githubToken(ctx context.Context) (string, error) {
