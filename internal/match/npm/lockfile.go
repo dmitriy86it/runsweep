@@ -47,84 +47,145 @@ func InNodeModules(p string) bool {
 
 // ParseLockfile dispatches on the file's base name. Packages come back sorted and distinct.
 func ParseLockfile(p string, b []byte) ([]Pkg, error) {
-	var pkgs []Pkg
-	var err error
+	pkgs, _, err := parseLockfile(p, b)
+	return pkgs, err
+}
+
+// parseLockfile also returns the root specs of a package-lock (see parsePackageLock).
+func parseLockfile(p string, b []byte) (pkgs []Pkg, root []string, err error) {
 	switch path.Base(p) {
 	case "package-lock.json", "npm-shrinkwrap.json":
-		pkgs, err = ParsePackageLock(b)
+		pkgs, root, err = parsePackageLock(b)
 	case "pnpm-lock.yaml":
 		pkgs, err = ParsePnpmLock(b)
 	case "yarn.lock":
 		pkgs, err = ParseYarnLock(b)
 	default:
-		return nil, fmt.Errorf("not a lockfile: %s", p)
+		return nil, nil, fmt.Errorf("not a lockfile: %s", p)
 	}
 	slices.SortFunc(pkgs, func(a, b Pkg) int { return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Version, b.Version)) })
-	return slices.Compact(pkgs), err
+	return slices.Compact(pkgs), root, err
 }
 
-type depV1 struct {
-	Version      string           `json:"version"`
-	Dependencies map[string]depV1 `json:"dependencies"`
-}
-
-// ParsePackageLock extracts packages from a package-lock.json. An entry without a package name
-// (or a version, in lockfileVersion 2 and 3) is an error; the other packages are returned with it.
+// ParsePackageLock extracts packages from a package-lock.json, from both `packages` and
+// `dependencies` (lockfileVersion 2 has both; npm 6 reads the second). An entry without a package
+// name (or a version, in lockfileVersion 2 and 3) is an error; the other packages are returned
+// with it. Keys are read case-sensitively, as npm does: encoding/json would fold "Version" into
+// "version". A registry tarball in `resolved` that names another package or version is reported
+// too, because npm installs the tarball.
 func ParsePackageLock(b []byte) ([]Pkg, error) {
-	var lf struct {
-		Packages map[string]struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
-			Link    bool   `json:"link"`
-		} `json:"packages"`
-		Dependencies map[string]depV1 `json:"dependencies"`
-	}
+	pkgs, _, err := parsePackageLock(b)
+	return pkgs, err
+}
+
+// parsePackageLock also returns the dependency specs of the root package of lockfileVersion 2 and 3
+// (nil without a root entry).
+func parsePackageLock(b []byte) (out []Pkg, root []string, err error) {
+	var lf map[string]any
 	if err := json.Unmarshal(b, &lf); err != nil {
-		return nil, fmt.Errorf("package-lock: %w", err)
+		return nil, nil, fmt.Errorf("package-lock: %w", err)
 	}
-	if lf.Packages == nil && lf.Dependencies == nil {
-		return nil, fmt.Errorf("package-lock: neither packages nor dependencies")
+	packages, _ := lf["packages"].(map[string]any)
+	deps, _ := lf["dependencies"].(map[string]any)
+	if packages == nil && deps == nil {
+		return nil, nil, fmt.Errorf("package-lock: neither packages nor dependencies")
 	}
-	var out []Pkg
-	// malformed entries (no package name, a scope without a name, no version): the file is not fully read
-	unnamed := 0
-	if len(lf.Packages) > 0 { // lockfileVersion 2 and 3
-		for key, p := range lf.Packages {
-			i := strings.LastIndex(key, "node_modules/")
-			if i < 0 || p.Link {
-				continue
-			}
-			name := key[i+len("node_modules/"):]
-			if p.Name != "" { // npm alias: key is the alias, name is the real package
-				name = p.Name
-			}
-			if !validName(name) || p.Version == "" {
-				unnamed++
-				continue
-			}
-			out = append(out, Pkg{name, p.Version})
+	// malformed entries (no package name, a scope without a name, no version, a registry tarball
+	// URL that cannot be read): the file is not fully read
+	unnamed, unreadable := 0, 0
+	add := func(name, version, resolved string) {
+		out = append(out, Pkg{name, version})
+		if !tarballLike.MatchString(resolved) {
+			return
 		}
-		return out, unnamedErr(unnamed)
+		if t, ok := registryTarball(resolved); !ok {
+			unreadable++
+		} else if t != (Pkg{name, version}) {
+			out = append(out, t)
+		}
 	}
-	var walk func(map[string]depV1)
-	walk = func(deps map[string]depV1) {
-		for name, d := range deps {
-			v := d.Version
-			if target, ok := strings.CutPrefix(v, "npm:"); ok { // alias "npm:real@1.2.3"
+	for key, v := range packages { // lockfileVersion 2 and 3
+		if key == "" {
+			root = rootSpecs(v)
+			continue
+		}
+		i := strings.LastIndex(key, "node_modules/")
+		p, isObj := v.(map[string]any)
+		if i < 0 || link(p) {
+			continue
+		}
+		name := key[i+len("node_modules/"):]
+		if n := str(p, "name"); n != "" { // npm alias: key is the alias, name is the real package
+			name = n
+		}
+		if !isObj || !validName(name) || str(p, "version") == "" {
+			unnamed++
+			continue
+		}
+		add(name, str(p, "version"), str(p, "resolved"))
+	}
+	var walk func(map[string]any)
+	walk = func(deps map[string]any) {
+		for name, v := range deps {
+			d, _ := v.(map[string]any)
+			ver := str(d, "version")
+			if target, ok := strings.CutPrefix(ver, "npm:"); ok { // alias "npm:real@1.2.3"
 				if at := strings.LastIndex(target, "@"); at > 0 {
-					name, v = target[:at], target[at+1:]
+					name, ver = target[:at], target[at+1:]
 				}
 			}
 			if name == "" {
 				unnamed++
 			} else {
-				out = append(out, Pkg{name, v})
+				add(name, ver, str(d, "resolved"))
 			}
-			walk(d.Dependencies)
+			nested, _ := d["dependencies"].(map[string]any)
+			walk(nested)
 		}
 	}
-	walk(lf.Dependencies)
-	return out, unnamedErr(unnamed)
+	walk(deps)
+	return out, root, lockErr(unnamed, unreadable)
+}
+
+// tarballLike matches a registry tarball URL: its path ends in /-/<file>.tgz.
+var tarballLike = regexp.MustCompile(`/-/[^/#?]*\.tgz(?:[#?].*)?$`)
+
+func str(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return s
+}
+
+func link(m map[string]any) bool {
+	l, _ := m["link"].(bool)
+	return l
+}
+
+// rootSpecs lists the dependency specs of a package-lock root entry as depSpecs does for a package.json.
+func rootSpecs(v any) []string {
+	m, _ := v.(map[string]any)
+	return depSpecs(func(kind string) map[string]any {
+		o, _ := m[kind].(map[string]any)
+		return o
+	})
+}
+
+var depKinds = []string{"dependencies", "devDependencies", "optionalDependencies", "peerDependencies"}
+
+// depSpecs flattens the four dependency maps (kind -> name -> spec) into sorted "kind name spec"
+// strings; a spec that is not a string reads as "?". It is never nil.
+func depSpecs(kind func(string) map[string]any) []string {
+	out := []string{}
+	for _, k := range depKinds {
+		for name, v := range kind(k) {
+			spec, ok := v.(string)
+			if !ok {
+				spec = "?"
+			}
+			out = append(out, k+" "+name+" "+spec)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 // validName reports whether name is a package name: not empty, and a scoped name has both parts.
@@ -135,11 +196,16 @@ func validName(name string) bool {
 	return name != "" && name[0] != '@'
 }
 
-func unnamedErr(n int) error {
-	if n == 0 {
-		return nil
+func lockErr(unnamed, unreadable int) error {
+	switch {
+	case unnamed > 0 && unreadable > 0:
+		return fmt.Errorf("package-lock: %d entries without a package name or version, %d with a resolved URL that names no package@version", unnamed, unreadable)
+	case unnamed > 0:
+		return fmt.Errorf("package-lock: %d entries without a package name or version", unnamed)
+	case unreadable > 0:
+		return fmt.Errorf("package-lock: %d entries with a resolved URL that names no package@version", unreadable)
 	}
-	return fmt.Errorf("package-lock: %d entries without a package name or version", n)
+	return nil
 }
 
 var (
@@ -153,25 +219,41 @@ var (
 // names it; the packages read from the other keys are returned with it.
 func ParsePnpmLock(b []byte) ([]Pkg, error) {
 	var lf struct {
-		Packages map[string]yaml.Node `yaml:"packages"`
+		Packages  map[string]yaml.Node `yaml:"packages"`
+		Importers map[string]yaml.Node `yaml:"importers"`
 	}
 	if err := yaml.Unmarshal(b, &lf); err != nil {
 		return nil, fmt.Errorf("pnpm-lock: %w", err)
 	}
-	if len(lf.Packages) == 0 && len(bytes.TrimSpace(b)) > 0 {
+	// a project without dependencies has importers and no packages
+	if len(lf.Packages) == 0 && len(lf.Importers) == 0 && len(bytes.TrimSpace(b)) > 0 {
 		return nil, fmt.Errorf("pnpm-lock: no packages")
 	}
 	var out []Pkg
 	var unknown []string
-	for key := range lf.Packages {
+	for key, node := range lf.Packages {
 		k := strings.TrimPrefix(key, "/")
 		if i := strings.IndexByte(k, '('); i >= 0 {
 			k = k[:i]
 		}
+		var res struct{ Resolution struct{ Tarball string } }
+		_ = node.Decode(&res) // a shape it cannot read has no tarball
+		var pkg Pkg
 		if m := pnpmV5.FindStringSubmatch(k); m != nil {
-			out = append(out, Pkg{m[1], m[2]})
+			pkg = Pkg{m[1], m[2]}
 		} else if m := pnpmV6.FindStringSubmatch(k); m != nil {
-			out = append(out, Pkg{m[1], m[2]})
+			pkg = Pkg{m[1], m[2]}
+		}
+		if pkg != (Pkg{}) {
+			out = append(out, pkg)
+			// pnpm installs the tarball of `resolution`, whatever the key says
+			if tb := res.Resolution.Tarball; tarballLike.MatchString(tb) {
+				if t, ok := registryTarball(tb); !ok {
+					unknown = append(unknown, key)
+				} else if t != pkg {
+					out = append(out, t)
+				}
+			}
 		} else if !pnpmLocal.MatchString(k) || pnpmTarball.MatchString(k) {
 			unknown = append(unknown, key)
 		}
