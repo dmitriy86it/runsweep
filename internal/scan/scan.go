@@ -434,7 +434,7 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 			related := slices.ContainsFunc(npmRes.Pinned, func(dir string) bool {
 				return dir == "." || wj != nil && wj.Mentions(dir) || logErr == nil && pathInLog(log, dir)
 			})
-			drop := (!installed || !related) && quiet && wj != nil && !wj.RunsOpaque()
+			drop := (!installed || !related) && quiet && wj != nil && !wj.MayInstallNPM()
 			if drop && npmAll == nil {
 				all, err := s.npm.MatchAll(ctx, s.src, repo, run.HeadSHA, s.inc.NPM)
 				if err != nil && !soft(err) {
@@ -455,6 +455,8 @@ func (s *scanner) scanRun(ctx context.Context, repo string, run source.Run) ([]m
 					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; package manager called, install not confirmed"))
 				case !installed && rj != nil && rj.RunsOpaque():
 					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; job runs scripts that may install silently"))
+				case !installed && rj != nil && rj.MayInstallNPM():
+					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; job uses actions that may install silently"))
 				case installed:
 					npmJob.Evidence = append(npmJob.Evidence, note("lockfile pins a bad version; install from %s not confirmed", strings.Join(npmRes.Pinned, ", ")))
 				default:
