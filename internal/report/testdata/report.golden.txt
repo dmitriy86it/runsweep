@@ -4,7 +4,7 @@ runsweep · axios malicious release (axios-2026-03)
 AFFECTED 1   POSSIBLE 0   UNCHECKED 1
 
 Rotate first
-  Secrets unknown for 1 job (workflow or job list unavailable); review them manually: o/old#9.
+  Secrets unknown for 1 job (workflow file, job list or run not available); review them manually: o/old#9.
   1  OIDC token (id-token: write)  1 · cloud
      review cloud roles
      seen in: o/app#42 build attempt 2
